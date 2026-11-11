@@ -8,7 +8,6 @@ const FILES: Record<string, string> = {
   tomL: 'LT3D7', tomM: 'MT3D7', tomH: 'HT3D7', rim2: 'RIM127', snareSoft: 'ST0T3S3',
 };
 
-export type DJState = { eq: number[]; kill: boolean[]; filter: number; fx: { reverb: boolean; delay: boolean; dub: boolean } };
 type Meter = { peak: number; lufs: number; auto: number; gr: number; tracks: number[] };
 
 export class Engine {
@@ -32,7 +31,6 @@ export class Engine {
       this.node = node;
       await this.loadSamples();
       if (this.pending) this.update(this.pending);
-      if (this.djState) this.dj(this.djState);
     })();
     return this.ready;
   }
@@ -59,8 +57,6 @@ export class Engine {
   }
   stop() { this.node?.port.postMessage({ type: 'stop' }); this.playing = false; }
   preview(id: string, note: number) { this.node?.port.postMessage({ type: 'preview', id, note }); }
-  dj(state: DJState) { this.djState = state; this.node?.port.postMessage({ type: 'dj', ...state }); }
-  djState: DJState | null = null;
 }
 
 function mono(b: AudioBuffer) {

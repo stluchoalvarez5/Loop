@@ -158,85 +158,6 @@ class PingPong {
 }
 
 
-/* ---------- Modo DJ: isolator de 3 bandas con kills, filtro LP/HP y tres envíos: reverb, delay y dub echo ---------- */
-class DJDelay {
-  /* delay estéreo con realimentación cruzada; el dub echo además satura y oscurece cada repetición */
-  constructor(sr, steps, fb, lpHz, hpHz, sat) {
-    this.sr = sr; this.steps = steps; this.fb = fb; this.sat = sat;
-    this.bl = new Float32Array(sr * 3); this.br = new Float32Array(sr * 3); this.i = 0; this.D = sr * 0.3;
-    this.a = 1 - Math.exp(-TAU * lpHz / sr); this.lpL = 0; this.lpR = 0;
-    this.hpL = new Biquad(); this.hpR = new Biquad(); this.hpL.set('hp', hpHz, 0.7, 0, sr); this.hpR.set('hp', hpHz, 0.7, 0, sr);
-    this.inG = 0; this.on = 0; this.tail = 0; this.oL = 0; this.oR = 0;
-  }
-  setBpm(bpm) { this.D = Math.min(this.bl.length - 1, Math.round(this.sr * 60 / bpm / 4 * this.steps)); }
-  active() { return this.inG > 1e-4 || this.tail > 0; }
-  run(l, r) {
-    this.inG += (this.on - this.inG) * 0.003;
-    const N = this.bl.length, j = (this.i - this.D + N) % N, yl = this.bl[j], yr = this.br[j];
-    this.lpL += this.a * (yl - this.lpL); this.lpR += this.a * (yr - this.lpR);
-    let fl = this.hpL.run(this.lpL) * this.fb, fr = this.hpR.run(this.lpR) * this.fb;
-    if (this.sat) { fl = Math.tanh(fl * 1.4) / 1.4; fr = Math.tanh(fr * 1.4) / 1.4; }
-    this.bl[this.i] = l * this.inG + fr; this.br[this.i] = r * this.inG + fl;
-    if (++this.i >= N) this.i = 0;
-    this.oL = yl; this.oR = yr; this.tail = this.on ? this.sr * 10 : this.tail - 1;
-  }
-}
-class DJ {
-  constructor(sr) {
-    this.sr = sr; const mk = () => new Biquad();
-    this.lp = [mk(), mk(), mk(), mk()]; this.hp = [mk(), mk(), mk(), mk()];
-    this.lp.forEach((b) => b.set('lp', 250, 0.7071, 0, sr)); this.hp.forEach((b) => b.set('hp', 2500, 0.7071, 0, sr));
-    this.g = [1, 1, 1]; this.gt = [1, 1, 1];
-    this.f = 0; this.ft = 0; this.fL = new SVF(); this.fR = new SVF(); this.fg = 1; this.fk = 1.3; this.fmode = 0;
-    this.rev = new Freeverb(sr); this.rev.room = 0.93; this.rev.damp = 0.25; this.rin = 0; this.ron = 0; this.rTail = 0;
-    this.delay = new DJDelay(sr, 2, 0.45, 6500, 150, false);   // 1/8, limpio
-    this.dub = new DJDelay(sr, 3, 0.74, 1800, 280, true);      // 3/16, oscuro, saturado y con mucha repetición
-    this.oL = 0; this.oR = 0; this.busy = false;
-  }
-  setBpm(bpm) { this.delay.setBpm(bpm); this.dub.setBpm(bpm); }
-  set(m) {
-    const db = (v) => Math.pow(10, v / 20);
-    this.gt = [m.kill[0] ? 0 : db(m.eq[0]), m.kill[1] ? 0 : db(m.eq[1]), m.kill[2] ? 0 : db(m.eq[2])];
-    this.ft = m.filter; this.ron = m.fx.reverb ? 1 : 0; this.delay.on = m.fx.delay ? 1 : 0; this.dub.on = m.fx.dub ? 1 : 0;
-  }
-  onStep() {}
-  block() {
-    this.f += (this.ft - this.f) * 0.15; const f = this.f;
-    if (f < -0.02) { this.fmode = -1; const fc = 20000 * Math.pow(120 / 20000, -f); this.fg = Math.tan(Math.PI * Math.min(fc, this.sr * 0.45) / this.sr); }
-    else if (f > 0.02) { this.fmode = 1; const fc = 20 * Math.pow(6000 / 20, f); this.fg = Math.tan(Math.PI * fc / this.sr); }
-    else this.fmode = 0;
-    const neutral = this.gt[0] === 1 && this.gt[1] === 1 && this.gt[2] === 1 && Math.abs(this.ft) < 0.02 && !this.ron && !this.delay.on && !this.dub.on;
-    const settled = Math.abs(this.g[0] - 1) + Math.abs(this.g[1] - 1) + Math.abs(this.g[2] - 1) < 1e-3 && Math.abs(this.f) < 0.02;
-    this.busy = !(neutral && settled && this.rTail <= 0 && !this.delay.active() && !this.dub.active());
-  }
-  run(l, r) {
-    // isolator: graves + medios + agudos = señal original cuando todo está en 0 dB
-    const loL = this.lp[1].run(this.lp[0].run(l)), loR = this.lp[3].run(this.lp[2].run(r));
-    const restL = l - loL, restR = r - loR;
-    const hiL = this.hp[1].run(this.hp[0].run(restL)), hiR = this.hp[3].run(this.hp[2].run(restR));
-    const g = this.g, gt = this.gt; for (let k = 0; k < 3; k++) g[k] += (gt[k] - g[k]) * 0.003;
-    l = loL * g[0] + (restL - hiL) * g[1] + hiL * g[2]; r = loR * g[0] + (restR - hiR) * g[1] + hiR * g[2];
-    // filtro DJ (un solo control: izquierda pasa-bajos, derecha pasa-altos)
-    if (this.fmode !== 0) {
-      const G = this.fg, k = this.fk, a1 = 1 / (1 + G * (G + k)), a2 = G * a1, a3 = G * a2;
-      for (let c = 0; c < 2; c++) {
-        const F = c ? this.fR : this.fL, x = c ? r : l;
-        const v3 = x - F.ic2, v1 = a1 * F.ic1 + a2 * v3, v2 = F.ic2 + a2 * F.ic1 + a3 * v3;
-        F.ic1 = 2 * v1 - F.ic1; F.ic2 = 2 * v2 - F.ic2;
-        const y = this.fmode < 0 ? v2 : x - k * v1 - v2;
-        if (c) r = y; else l = y;
-      }
-    }
-    // envíos: al soltar el botón deja de entrar sonido y la cola se apaga sola
-    let wl = 0, wr = 0;
-    if (this.delay.active()) { this.delay.run(l, r); wl += this.delay.oL * 0.7; wr += this.delay.oR * 0.7; }
-    if (this.dub.active()) { this.dub.run(l, r); wl += this.dub.oL * 0.85; wr += this.dub.oR * 0.85; }
-    this.rin += (this.ron - this.rin) * 0.003;
-    if (this.rin > 1e-4 || this.rTail > 0) { this.rev.run((l + r) * 0.5 * this.rin * 1.4); wl += this.rev.outL * 1.2; wr += this.rev.outR * 1.2; this.rTail = this.ron ? this.sr * 8 : this.rTail - 1; }
-    this.oL = l + wl; this.oR = r + wr;
-  }
-}
-
 /* ---------- master ---------- */
 class KWeight { constructor(sr) { this.a = new Biquad(); this.a.set('hs', 1500, 0.7071, 4, sr); this.b = new Biquad(); this.b.set('hp', 38, 0.5, 0, sr); } run(x) { return this.b.run(this.a.run(x)); } }
 
@@ -253,7 +174,7 @@ class LoopEngine extends AudioWorkletProcessor {
     this.pkWin = new Float32Array(this.LA); this.ceil = dbToGain(-1);
     this.duck = 1; this.duckTarget = 1; this.meterN = 0; this.peak = 0; this.revRet = 0.8; this.dlyRet = 0.6;
     this.buf = { L: new Float32Array(128), R: new Float32Array(128), rL: new Float32Array(128), rR: new Float32Array(128), dL: new Float32Array(128), dR: new Float32Array(128), tL: new Float32Array(128), tR: new Float32Array(128), kd: new Float32Array(128) };
-    this.dj = new DJ(this.sr); this.stepAt = -1;
+    this.stepAt = -1;
     this.port.onmessage = (e) => this.onMsg(e.data);
   }
   setEq(gains) {
@@ -267,7 +188,7 @@ class LoopEngine extends AudioWorkletProcessor {
     if (m.type === 'project') {
       const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing;
       this.tracks = m.project.tracks.map((t) => { const o = old.find((x) => x.id === t.id); return { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, duckEnv: 1, meter: 0 }; });
-      const s16 = 60 / this.bpm / 4; this.dly.setTime(s16 * 3, s16 * 4); this.dj.setBpm(this.bpm); this.dly.fb = m.project.fx.dlyFb;
+      const s16 = 60 / this.bpm / 4; this.dly.setTime(s16 * 3, s16 * 4); this.dly.fb = m.project.fx.dlyFb;
       this.rev.room = m.project.fx.revSize; this.rev.damp = m.project.fx.revDamp; this.revRet = m.project.fx.revRet; this.dlyRet = m.project.fx.dlyRet;
       this.target = m.project.master.target; this.autoOn = m.project.master.auto; this.ceil = dbToGain(m.project.master.ceiling);
       this.setEq(m.project.master.eq);
@@ -275,7 +196,6 @@ class LoopEngine extends AudioWorkletProcessor {
     }
     if (m.type === 'play') { this.playing = true; this.pos = 0; this.next = 0; this.nextT = 0; this.step = -1; return; }
     if (m.type === 'stop') { this.playing = false; this.tracks.forEach((t) => t.voices.forEach((v) => { if (v.stage !== undefined) v.stage = 2; else v.g *= 0.2; })); return; }
-    if (m.type === 'dj') { this.dj.set(m); return; }
     if (m.type === 'preview') { const t = this.tracks.find((x) => x.id === m.id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); }
   }
   stepLen() { return this.sr * 60 / this.bpm / 4; }
@@ -342,7 +262,6 @@ class LoopEngine extends AudioWorkletProcessor {
     }
     // FX + master
     const rr = this.revRet, dr = this.dlyRet, fxDuck = this.compiled ? this.compiled.fx.duck : 0;
-    const dj = this.dj; dj.block();
     for (let i = 0; i < N; i++) {
       this.dly.run(B.dL[i]); this.rev.run(B.rL[i] + (this.dly.outL + this.dly.outR) * 0.25);
       const dk = 1 - fxDuck * kickDuck[i];
@@ -362,7 +281,6 @@ class LoopEngine extends AudioWorkletProcessor {
         this.auto += (want - this.auto) * (want < this.auto ? 2e-5 : 4e-6);
       }
       l *= this.auto; r *= this.auto;
-      if (dj.busy) { if (i === this.stepAt) dj.onStep(); dj.run(l, r); l = dj.oL; r = dj.oR; } else if (i === this.stepAt) dj.onStep();
       // limitador con lookahead
       const I = this.laI, dl = this.laL[I], drr = this.laR[I];
       this.laL[I] = l; this.laR[I] = r; this.pkWin[I] = Math.max(Math.abs(l), Math.abs(r)); this.laI = (I + 1) % this.LA;

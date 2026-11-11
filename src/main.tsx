@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import './style.css';
-import { Engine, type DJState } from './engine/engine';
+import { Engine } from './engine/engine';
 import {
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, nameScale, DRUM_GROUPS, type TrackType,
@@ -78,7 +78,6 @@ const Icon = {
   stop: <svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.5" y="5.5" width="13" height="13" rx="2.5" /></svg>,
   grid: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>,
   mix: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v18M12 3v18M18 3v18" /><rect x="3.5" y="13" width="5" height="3" rx="1" fill="currentColor" /><rect x="9.5" y="6" width="5" height="3" rx="1" fill="currentColor" /><rect x="15.5" y="10" width="5" height="3" rx="1" fill="currentColor" /></svg>,
-  dj: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /><path d="M12 3v4" /></svg>,
   master: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h3l3-7 4 14 3-9 2 2h3" /></svg>,
 };
 const pct = (v: number) => Math.round(v * 100) + '%';
@@ -87,8 +86,10 @@ const hz = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : Math.round(
 /* ---------- app ---------- */
 function App() {
   const [p, setP] = useState<Project>(() => load() ?? projectFromName('Loop'));
-  const [tab, setTab] = useState<'pat' | 'mix' | 'dj' | 'master'>('pat');
+  const [tab, setTab] = useState<'pat' | 'mix' | 'master'>('pat');
   const land = useLandscape();
+  const [tut, setTut] = useState(() => { try { return !localStorage.getItem('loop.noTutorial'); } catch { return true; } });
+  const closeTut = (never: boolean) => { if (never) { try { localStorage.setItem('loop.noTutorial', '1'); } catch { /* */ } } setTut(false); };
   const [sel, setSel] = useState('arp');
   const [playing, setPlaying] = useState(false);
   const [nameIn, setNameIn] = useState(p.name === 'Loop' ? '' : p.name);
@@ -239,13 +240,12 @@ function App() {
         <div class="hint">Deslizá para recorrer el mixer. Para mover un control, mantené el dedo quieto un instante sobre él hasta que se ilumine y después arrastrá. Doble toque lo vuelve a su valor inicial. Sidechain: cuánto se "agacha" la pista cuando pega el kick.</div>
       </div>}
 
-      {tab === 'dj' && <DJ playing={playing} onPlay={toggle} land={land} />}
       {tab === 'master' && <div class="page master"><Master p={p} up={up} stats={stats} /></div>}
 
+      {tut && <Tutorial onClose={closeTut} />}
       <nav class="nav">
         <button class={tab === 'pat' ? 'on' : ''} onClick={() => setTab('pat')}>{Icon.grid}Patrón</button>
         <button class={tab === 'mix' ? 'on' : ''} onClick={() => setTab('mix')}>{Icon.mix}Mixer</button>
-        <button class={tab === 'dj' ? 'on' : ''} onClick={() => setTab('dj')}>{Icon.dj}DJ</button>
         <button class={tab === 'master' ? 'on' : ''} onClick={() => setTab('master')}>{Icon.master}Master</button>
       </nav>
     </div>
@@ -357,61 +357,35 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
   </>;
 }
 
-/* ---------- Modo DJ ---------- */
-const DJ0: DJState = { eq: [0, 0, 0], kill: [false, false, false], filter: 0, fx: { reverb: false, delay: false, dub: false } };
-function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; land: boolean }) {
-  const [s, setS] = useState<DJState>(() => engine.djState ?? clone(DJ0));
-  const [latch, setLatch] = useState(false);
-  const set = (fn: (d: DJState) => void) => setS((cur) => { const d = clone(cur); fn(d); engine.dj(d); return d; });
-  const bands: [string, number][] = [['Agudos', 2], ['Medios', 1], ['Graves', 0]];
-  const fref = useRef<HTMLDivElement>(null);
-  const fset = (x: number) => { const r = fref.current!.getBoundingClientRect(); let v = ((x - r.left) / r.width) * 2 - 1; v = Math.max(-1, Math.min(1, v)); if (Math.abs(v) < 0.06) v = 0; set((d) => { d.filter = +v.toFixed(3); }); };
-  const fgrab = useGrab(false, { start: (e) => fset(e.clientX), move: (e) => fset(e.clientX), reset: () => set((d) => { d.filter = 0; }) });
-  type FxKey = 'reverb' | 'delay' | 'dub';
-  const pad = (label: string, sub: string, on: boolean, start: () => void, end: () => void, color: string) => (
-    <button class={'djpad' + (on ? ' on' : '')} style={{ '--c': color } as any}
-      onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as Element).setPointerCapture(e.pointerId); if (latch && on) end(); else start(); }}
-      onPointerUp={() => { if (!latch) end(); }} onPointerCancel={() => { if (!latch) end(); }}>
-      <b>{label}</b><span>{sub}</span>
-    </button>
-  );
-  const fx = (k: FxKey, label: string, sub: string, color: string) => pad(label, sub, s.fx[k], () => set((d) => { d.fx[k] = true; }), () => set((d) => { d.fx[k] = false; }), color);
-  const fl = s.filter;
-  return <>
-    <div class="card dj">
-      <div class="ct"><h3>Modo DJ</h3><button class={'chip' + (latch ? ' on' : '')} onClick={() => setLatch(!latch)}>{latch ? 'FX fijos' : 'FX al mantener'}</button><button class="chip" onClick={() => { const d = clone(DJ0); setS(d); engine.dj(d); }}>Resetear</button></div>
-      {!playing && <button class="btn hot" style={{ width: '100%', marginBottom: '10px' }} onClick={onPlay}>▶ Reproducir el loop</button>}
-      <div class="djw">
-      <div class="iso">
-        {bands.map(([lbl, k]) => (
-          <div class="band">
-            <div class="bl">{lbl}</div>
-            <Fader label={lbl} value={s.eq[k]} min={-26} max={6} def={0} h={land ? 118 : 170} color={s.kill[k] ? '#4c5368' : k === 0 ? '#ff5a36' : k === 1 ? '#8b6cff' : '#2fd8b4'} onChange={(v) => set((d) => { d.eq[k] = Math.round(v); })} />
-            <div class="bv">{s.kill[k] ? 'OFF' : (s.eq[k] > 0 ? '+' : '') + s.eq[k] + ' dB'}</div>
-            <button class={'kill' + (s.kill[k] ? ' on' : '')} onClick={() => set((d) => { d.kill[k] = !d.kill[k]; })}>{s.kill[k] ? 'Apagado' : 'Kill'}</button>
+/* ---------- tutorial de 3 pasos (aparece al abrir, salvo que marques "No mostrar al abrir") ---------- */
+const TUT = [
+  { title: 'Escribí un nombre', body: 'Cada letra es una tonalidad: de la A a la L son mayores y de la M a la X, menores. Tocá Generar y la app arma un loop en la tonalidad de ese nombre. Con "Otra versión" probás otra progresión, y con los géneros cambiás el estilo.',
+    art: <div class="art-name"><div class="an-in">Luciano</div><div class="an-row">{[['L', 'SI'], ['U', 'SOL#m'], ['C', 'RE'], ['I', 'SOL#']].map(([a, b]) => <span><b>{a}</b>{b}</span>)}</div><div class="an-key">FA# menor · F#m · Bm · Dmaj7 · C#m7</div></div> },
+  { title: 'Armá el patrón', body: 'Tocá los casilleros para poner golpes: un toque prende, dos acentúan y tres apagan. El interruptor de la izquierda enciende o apaga cada instrumento. Tocá el nombre de una pista para cambiarle el sonido, y con "+ Agregar pista" sumás más, incluida una melodía en piano roll.',
+    art: <div class="art-grid">{['#ff5a36', '#ffb020', '#f2e94e', '#3fa7ff'].map((c, r) => <div class="ag-row"><i class="ag-pw" style={{ background: c }} />{Array.from({ length: 8 }, (_, i) => <i class={'ag-pad' + ([[0, 4], [2, 6], [1, 3, 5, 7], [1, 3, 6]][r].includes(i) ? ' on' : '')} style={{ '--c': c } as any} />)}</div>)}</div> },
+  { title: 'Mezclá y dale brillo', body: 'En Mixer y Master ajustás volúmenes, efectos y ecualización. Para mover una perilla o un fader, mantené el dedo quieto un instante hasta que se ilumine y después arrastrá; si deslizás, solo se mueve la pantalla. El volumen general se mantiene parejo solo.',
+    art: <div class="art-mix">{[0.75, 0.45, 0.6, 0.3, 0.85].map((v, i) => <div class="am-f"><i style={{ bottom: v * 70 + 'px', background: ['#ff5a36', '#ffb020', '#3fa7ff', '#8b6cff', '#2fd8b4'][i] }} /></div>)}<div class="am-hand">mantené<br />y arrastrá</div></div> },
+];
+function Tutorial({ onClose }: { onClose: (never: boolean) => void }) {
+  const [i, setI] = useState(0), [never, setNever] = useState(false), st = TUT[i], last = i === TUT.length - 1;
+  return (
+    <div class="tut" role="dialog" aria-modal="true" aria-label="Tutorial">
+      <div class="tut-card">
+        <div class="tut-top"><span>Paso {i + 1} de {TUT.length}</span><button class="tut-skip" onClick={() => onClose(never)}>Omitir tutorial</button></div>
+        <div class="tut-art">{st.art}</div>
+        <h2>{st.title}</h2>
+        <p>{st.body}</p>
+        <div class="tut-dots">{TUT.map((_, k) => <button class={k === i ? 'on' : ''} aria-label={'Ir al paso ' + (k + 1)} onClick={() => setI(k)} />)}</div>
+        <div class="tut-foot">
+          <label><input type="checkbox" checked={never} onChange={(e) => setNever((e.target as HTMLInputElement).checked)} /> No mostrar al abrir</label>
+          <div class="tut-btns">
+            {i > 0 && <button class="btn" onClick={() => setI(i - 1)}>Atrás</button>}
+            <button class="btn hot" onClick={() => (last ? onClose(never) : setI(i + 1))}>{last ? 'Empezar' : 'Siguiente'}</button>
           </div>
-        ))}
+        </div>
       </div>
-      <div class="djr">
-      <div class="sub">Filtro {fl < 0 ? '· pasa-bajos' : fl > 0 ? '· pasa-altos' : '· abierto'}</div>
-      <div class="dfilter" ref={fref} role="slider" aria-label="Filtro DJ" aria-valuenow={fl} tabIndex={0}
-        {...(fgrab as any)}
-        onKeyDown={(e) => { if (e.key === 'ArrowLeft') set((d) => { d.filter = Math.max(-1, d.filter - 0.05); }); if (e.key === 'ArrowRight') set((d) => { d.filter = Math.min(1, d.filter + 0.05); }); }}>
-        <span class="lbl l">LPF</span><span class="lbl r">HPF</span><div class="mid" />
-        <div class="fill" style={{ left: (fl < 0 ? 50 + fl * 50 : 50) + '%', width: Math.abs(fl) * 50 + '%' }} />
-        <div class="knobcap" style={{ left: (50 + fl * 50) + '%' }} />
-      </div>
-      <div class="sub">Efectos</div>
-      <div class="pads6">
-        {fx('reverb', 'Reverb', 'sala grande', '#2fd8b4')}
-        {fx('delay', 'Delay', '1/8 limpio', '#3fa7ff')}
-        {fx('dub', 'Dub Echo', '3/16 oscuro', '#ffb020')}
-      </div>
-      </div>
-      </div>
-      <div class="hint">{latch ? 'Tocá un efecto para prenderlo y otra vez para apagarlo.' : 'Mantené apretado un efecto para usarlo; al soltar se apaga.'} Para mover una banda o el filtro, mantené el dedo quieto un instante hasta que se ilumine y arrastrá. Doble toque lo vuelve al centro.</div>
     </div>
-  </>;
+  );
 }
 
 const EQF = ['63', '160', '400', '1k', '2.5k', '6.3k', '10k', '16k'];

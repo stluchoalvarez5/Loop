@@ -8,6 +8,7 @@ with sync_playwright() as p:
     pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
     pg.goto(URL); pg.wait_for_timeout(800)
+    if pg.locator(".tut").count(): pg.click("text=Omitir tutorial")
     pg.fill("input", "Luciano"); pg.click("button[type=submit]")
     pg.wait_for_timeout(7000)
     full = pg.inner_text(".stat >> nth=0") if pg.locator(".stat").count() else None
