@@ -17,6 +17,7 @@ export type Track = {
   arp?: { mode: string; rate: '16' | '8' | 'tr'; oct: number; gate: boolean[] };
   chordMode?: 'pad' | 'stab';
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
+  autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
 export type Project = {
   name: string; genre: string; bpm: number; swing: number; kit: string;
@@ -26,7 +27,7 @@ export type Project = {
   master: { eq: number[]; target: number; auto: boolean; ceiling: number };
   seed?: number;
   harmony?: 'tonal' | 'puro'; // tonal: se busca la tonalidad del nombre; puro: solo las notas exactas de las letras
-  key?: string; progression?: string; letterNotes?: { ch: string; note: string; moved: boolean }[];
+  key?: string; progression?: string; scale?: number[]; tonic?: number; letterNotes?: { ch: string; note: string; moved: boolean }[];
 };
 
 /* ---------- teoría: cada letra es una tonalidad (24 = 12 mayores + 12 menores) ----------
@@ -72,6 +73,7 @@ function pureHarmony(c: string) {
   for (const ch of ls) { const k = letterNote(ch); if (seen.includes(k)) continue; seen.push(k); const root = letterPc(ch), mi = letterMinor(ch); prog.push({ root, ivs: [0, mi ? 3 : 4, 7], name: NOTE_EN[root] + (mi ? 'm' : ''), score: 9 }); if (prog.length === 4) break; }
   while (prog.length < 4) prog.push(prog[prog.length % Math.max(1, seen.length)] ?? prog[0]);
   return { letters: c, seq: ls.map((ch) => 60 + letterPc(ch)), chords: prog.map((ch) => ({ name: ch.name, tones: ch.ivs.map((i) => NOTE_ES[(ch.root + i) % 12]), midi: voice(ch) })),
+    scale: [...new Set(ls.map(letterPc))], tonic: letterPc(ls[0]),
     key: 'sin tonalidad (cada letra es un acorde)', progression: prog.map((x) => x.name).join(' – '), letterNotes: ls.map((ch) => ({ ch, note: letterNote(ch), moved: false })) };
 }
 
@@ -121,6 +123,7 @@ function tonalHarmony(c: string, salt = '') {
   const roman = best.mode === 'maj' ? ROMAN_MAJ : ROMAN_MIN;
   return {
     letters: c, seq: snapped.map((pc) => 60 + pc), chords: tpl.map(chordAt),
+    scale, tonic: best.t,
     key: NOTE_ES[best.t] + (best.mode === 'maj' ? ' mayor' : ' menor'), progression: tpl.map((d) => roman[d]).join(' – '),
     letterNotes: [...c].map((ch, i) => ({ ch, note: NOTE_ES[snapped[i]] + (mins[i] ? 'm' : ''), moved: snapped[i] !== pcs[i] })),
   };
@@ -131,7 +134,48 @@ export function harmonyFromName(raw: string, mode: 'tonal' | 'puro' = 'tonal', s
 }
 export function applyHarmony(p: Project, salt = '') {
   const h = harmonyFromName(p.name, p.harmony ?? 'tonal', salt);
-  p.seq = h.seq; p.chords = h.chords; p.key = h.key; p.progression = h.progression; p.letterNotes = h.letterNotes;
+  p.seq = h.seq; p.chords = h.chords; p.key = h.key; p.progression = h.progression; p.letterNotes = h.letterNotes; p.scale = h.scale; p.tonic = h.tonic;
+  p.tracks.forEach((t) => { if (t.type === 'melody' && t.autoMelody) t.notes = generateMelody(p, salt); });
+}
+
+/* ---------- melodía de 4 compases generada por el nombre ----------
+   Frase de pregunta y respuesta: compás 1 = motivo (el dibujo de las letras), compás 2 = respuesta con otro ritmo,
+   compás 3 = el motivo más agudo, compás 4 = cierre que baja hasta la tónica. Los tiempos fuertes caen en notas del acorde. */
+const RHYTHMS: [number, number][][] = [
+  [[0, 2], [2, 2], [4, 4], [10, 2], [12, 4]], [[0, 3], [3, 3], [6, 2], [8, 4], [14, 2]], [[0, 2], [4, 2], [6, 2], [8, 2], [10, 6]],
+  [[2, 2], [4, 2], [6, 4], [12, 2], [14, 2]], [[0, 4], [6, 2], [8, 2], [10, 2], [12, 4]], [[0, 1], [2, 1], [3, 3], [8, 2], [10, 2], [12, 2], [14, 2]],
+  [[0, 6], [6, 2], [8, 6], [14, 2]], [[0, 2], [3, 1], [4, 2], [7, 1], [8, 4], [12, 2], [14, 2]],
+];
+const CADENCES: [number, number][][] = [[[0, 2], [2, 2], [4, 2], [6, 10]], [[0, 4], [4, 4], [8, 8]], [[0, 2], [2, 2], [4, 4], [8, 8]], [[0, 3], [3, 3], [6, 2], [8, 8]]];
+export function generateMelody(p: Project, salt = ''): Note[] {
+  const r = seeded(clean(p.name || 'Loop') + '#mel' + salt);
+  const scale = (p.scale && p.scale.length ? p.scale : [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))]);
+  const tonic = p.tonic ?? ((p.seq[0] ?? 60) % 12);
+  const pool: number[] = []; for (let m = 62; m <= 81; m++) if (scale.includes(m % 12)) pool.push(m);
+  const nearestIdx = (m: number) => { let bi = 0; pool.forEach((x, i) => { if (Math.abs(x - m) < Math.abs(pool[bi] - m)) bi = i; }); return bi; };
+  const nearPc = (pc: number, ref: number) => { let best = pool[0], d = 1e9; pool.forEach((x) => { if (x % 12 === pc && Math.abs(x - ref) < d) { d = Math.abs(x - ref); best = x; } }); return best; };
+  let motif = p.seq.slice(0, 6).map((m) => ((m % 12) + 12) % 12);
+  if (new Set(motif).size < 3) { const sc = [...scale].sort((a, b) => ((a - tonic + 12) % 12) - ((b - tonic + 12) % 12)); motif = [...clean(p.name || 'Loop')].slice(0, 6).map((ch, i) => sc[(ch.charCodeAt(0) + i * 2) % sc.length]); }
+  const rA = pick(r, RHYTHMS); let rB = pick(r, RHYTHMS); if (rB === rA) rB = RHYTHMS[(RHYTHMS.indexOf(rA) + 3) % RHYTHMS.length];
+  const bars = [rA, rB, rA, pick(r, CADENCES)];
+  const notes: Note[] = []; let prev = 72 + (r() < 0.5 ? 0 : 3);
+  bars.forEach((rh, b) => {
+    const chordPcs = p.chords[b].midi.map((m) => m % 12), offset = b === 1 ? 2 : b === 3 ? 1 : 0;
+    rh.forEach(([st, len], k) => {
+      let m: number;
+      if (b === 3 && k === rh.length - 1) m = nearPc(tonic, prev); // cierre en la tónica
+      else {
+        m = nearPc(motif[(k + offset) % motif.length] ?? tonic, prev);
+        if (b === 2) m = pool[Math.min(pool.length - 1, nearestIdx(m) + 2)]; // el motivo, una tercera más arriba
+        if (b === 3) { const i = nearestIdx(prev); m = pool[Math.max(0, i - 1 - (k % 2))]; } // baja por grados
+        if ((st === 0 || st === 8) && !chordPcs.includes(m % 12)) { const up = pool[Math.min(pool.length - 1, nearestIdx(m) + 1)], dn = pool[Math.max(0, nearestIdx(m) - 1)]; m = chordPcs.includes(up % 12) ? up : chordPcs.includes(dn % 12) ? dn : m; }
+      }
+      if (Math.abs(m - prev) > 7) { const alt = m + (m > prev ? -12 : 12); if (alt >= 62 && alt <= 81) m = alt; }
+      m = Math.max(62, Math.min(81, m));
+      notes.push({ s: b * 16 + st, n: m, l: len }); prev = m;
+    });
+  });
+  return notes;
 }
 
 /* ---------- presets de sonido ---------- */
@@ -207,16 +251,14 @@ export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   if (type === 'bass') return mkTrack(id, 'Bajo 2', 'bass', sound ?? 'fmBass', { color, vol: 0.7, duck: 0.5 });
   if (type === 'chords') return mkTrack(id, 'Acordes 2', 'chords', sound ?? 'airy', { color, vol: 0.55, rev: 0.4, duck: 0.4, chordMode: 'pad', steps: [1, ...Array(15).fill(0)] });
   if (type === 'arp') return mkTrack(id, 'Arpegio 2', 'arp', sound ?? 'bell', { color, vol: 0.55, rev: 0.35, dly: 0.3, duck: 0.3, arp: { mode: 'up', rate: '8', oct: 2, gate: Array(16).fill(true) } });
-  const seq = [...new Set(p.seq)].sort((a, b) => a - b), notes: Note[] = [];
-  [0, 3, 6, 10, 12].forEach((st, i) => notes.push({ s: st, n: seq[(i * 2) % seq.length] + 12, l: i === 4 ? 4 : 2 }));
-  return mkTrack(id, 'Melodía', 'melody', sound ?? 'lead', { color, vol: 0.6, rev: 0.3, dly: 0.25, duck: 0.3, notes });
+  return mkTrack(id, 'Melodía', 'melody', sound ?? 'lead', { color, vol: 0.6, rev: 0.3, dly: 0.25, duck: 0.3, notes: generateMelody(p, id), autoMelody: true });
 }
 export const nameScale = (p: Project, octs = 2) => { const b = [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))].sort((a, c) => a - c), out: number[] = []; for (let o = 0; o < octs; o++) b.forEach((pc) => out.push(60 + pc + 12 * o)); return out.sort((a, c) => a - c); };
 
 export function newProject(name = '', genre = 'prog'): Project {
   const h = harmonyFromName(name, 'tonal');
   const p: Project = {
-    name, genre, bpm: 124, swing: 0, kit: 'tr909', seq: h.seq, chords: h.chords, harmony: 'tonal', key: h.key, progression: h.progression, letterNotes: h.letterNotes,
+    name, genre, bpm: 124, swing: 0, kit: 'tr909', seq: h.seq, chords: h.chords, harmony: 'tonal', key: h.key, progression: h.progression, letterNotes: h.letterNotes, scale: h.scale, tonic: h.tonic,
     tracks: [
       mkTrack('kick', 'Kick', 'drum', 'kick', { vol: 0.9 }),
       mkTrack('clap', 'Clap', 'drum', 'clap', { vol: 0.7, rev: 0.25 }),
@@ -253,12 +295,12 @@ export function seeded(str: string) {
 const pick = <T,>(r: () => number, a: T[]) => a[Math.floor(r() * a.length)];
 const wpick = (r: () => number, o: Record<string, number>) => { const ks = Object.keys(o), tot = ks.reduce((a, k) => a + o[k], 0); let x = r() * tot; for (const k of ks) { x -= o[k]; if (x <= 0) return k; } return ks[0]; };
 const STYLE: Record<string, any> = {
-  prog: { arp: ['pluck', 'bell', 'keys', 'marimba'], mode: { name: 3, mirror: 2, up: 1, jump: 1 }, oct: [2, 2, 3], rate: ['16', '16', 'tr'], chords: ['strings', 'glass', 'choir'], bass: ['bassSaw', 'bassSub', 'reese'], kit: ['tr909', 'tr909', 'tr808'], perc: ['rim', 'clave', 'shaker'] },
-  house: { arp: ['organ', 'keys', 'pluck', 'chip'], mode: { name: 3, mirror: 1, up: 1 }, oct: [1, 1, 2], rate: ['8', 'tr', '16'], chords: ['warm', 'glass'], bass: ['bassSaw', 'bassSub'], kit: ['tr909', 'tr909', 'tr808'], perc: ['tamb', 'conga', 'cowbell', 'shaker'] },
-  deep: { arp: ['keys', 'bell', 'marimba'], mode: { up: 2, name: 2, mirror: 1 }, oct: [1, 2, 2], rate: ['8', 'tr'], chords: ['warm', 'glass', 'choir'], bass: ['bassSub', 'reese'], kit: ['tr808', 'tr909'], perc: ['shaker', 'rim', 'clave', 'maraca'] },
-  techno: { arp: ['acid', 'pluck', 'chip'], mode: { jump: 2, name: 2, rand: 1, mirror: 1 }, oct: [1, 2, 2], rate: ['16', '16', 'tr'], chords: ['choir', 'strings'], bass: ['bassSub', 'acid', 'reese'], kit: ['tr909h', 'tr909h', 'tr808'], perc: ['rim', 'conga'] },
-  melodic: { arp: ['super', 'pluck', 'bell'], mode: { up: 2, name: 2, pp: 1, mirror: 1 }, oct: [2, 2, 3], rate: ['16', '16', 'tr'], chords: ['strings', 'choir', 'glass'], bass: ['reese', 'bassSub'], kit: ['tr909', 'tr808'], perc: ['clave', 'rim', 'shaker'] },
-  trance: { arp: ['super', 'pluck'], mode: { pp: 2, up: 2, name: 1 }, oct: [2, 3], rate: ['16'], chords: ['strings', 'glass'], bass: ['bassSaw', 'reese'], kit: ['tr909h', 'tr909'], perc: ['rim'] },
+  prog: { mel: ['lead', 'pluckHi', 'bell'], arp: ['pluck', 'bell', 'keys', 'marimba'], mode: { name: 3, mirror: 2, up: 1, jump: 1 }, oct: [2, 2, 3], rate: ['16', '16', 'tr'], chords: ['strings', 'glass', 'choir'], bass: ['bassSaw', 'bassSub', 'reese'], kit: ['tr909', 'tr909', 'tr808'], perc: ['rim', 'clave', 'shaker'] },
+  house: { mel: ['keys', 'organ', 'pluckHi'], arp: ['organ', 'keys', 'pluck', 'chip'], mode: { name: 3, mirror: 1, up: 1 }, oct: [1, 1, 2], rate: ['8', 'tr', '16'], chords: ['warm', 'glass'], bass: ['bassSaw', 'bassSub'], kit: ['tr909', 'tr909', 'tr808'], perc: ['tamb', 'conga', 'cowbell', 'shaker'] },
+  deep: { mel: ['keys', 'flute', 'bell'], arp: ['keys', 'bell', 'marimba'], mode: { up: 2, name: 2, mirror: 1 }, oct: [1, 2, 2], rate: ['8', 'tr'], chords: ['warm', 'glass', 'choir'], bass: ['bassSub', 'reese'], kit: ['tr808', 'tr909'], perc: ['shaker', 'rim', 'clave', 'maraca'] },
+  techno: { mel: ['pluckHi', 'chip', 'lead'], arp: ['acid', 'pluck', 'chip'], mode: { jump: 2, name: 2, rand: 1, mirror: 1 }, oct: [1, 2, 2], rate: ['16', '16', 'tr'], chords: ['choir', 'strings'], bass: ['bassSub', 'acid', 'reese'], kit: ['tr909h', 'tr909h', 'tr808'], perc: ['rim', 'conga'] },
+  melodic: { mel: ['lead', 'bell', 'pluckHi'], arp: ['super', 'pluck', 'bell'], mode: { up: 2, name: 2, pp: 1, mirror: 1 }, oct: [2, 2, 3], rate: ['16', '16', 'tr'], chords: ['strings', 'choir', 'glass'], bass: ['reese', 'bassSub'], kit: ['tr909', 'tr808'], perc: ['clave', 'rim', 'shaker'] },
+  trance: { mel: ['lead', 'super'], arp: ['super', 'pluck'], mode: { pp: 2, up: 2, name: 1 }, oct: [2, 3], rate: ['16'], chords: ['strings', 'glass'], bass: ['bassSaw', 'reese'], kit: ['tr909h', 'tr909'], perc: ['rim'] },
 };
 const GATES = [null, null, null, [3, 7, 11, 15], [2, 10], [5, 13], [1, 5, 9, 13], [3, 6, 11, 14]];
 export function projectFromName(name: string, variant = 0): Project {
@@ -273,6 +315,11 @@ export function projectFromName(name: string, variant = 0): Project {
   if (GENRES[g].swing) p.swing = +(GENRES[g].swing * (0.8 + r() * 0.4)).toFixed(2);
   T('perc').mute = r() < 0.4; if (g !== 'techno' && g !== 'trance') T('open').mute = r() < 0.5;
   [0, 4, 8, 12].forEach((i) => { if (T('bass').steps[i] && r() < 0.25) T('bass').steps[i] = 2; });
+  // melodía de 4 compases propia del nombre
+  const mel = newTrack(p, 'melody', pick(r, st.mel)); mel.id = 'melody'; mel.color = '#ffd166'; mel.vol = 0.58;
+  mel.notes = generateMelody(p, String(variant || '')); mel.autoMelody = true;
+  p.tracks.splice(p.tracks.findIndex((t) => t.id === 'arp') + 1, 0, mel);
+  arp.vol = 0.5; arp.rev = Math.max(arp.rev, 0.4);
   p.seed = r();
   return p;
 }

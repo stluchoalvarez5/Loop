@@ -4,7 +4,7 @@ import './style.css';
 import { Engine } from './engine/engine';
 import {
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  arpPlays, arpPreview, noteName, letterNote, clean, newTrack, nameScale, DRUM_GROUPS, type TrackType,
+  arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
@@ -330,7 +330,7 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
   const at = (s: number, n: number) => notes.find((x) => x.n === n && s >= x.s && s < x.s + x.l);
   const tap = (i: number, n: number) => {
     const s = bar * 16 + i, hit = at(s, n);
-    upT(t.id, (x) => { const ns = x.notes ?? []; if (hit) x.notes = ns.filter((y) => !(y.s === hit.s && y.n === hit.n)); else { x.notes = [...ns, { s, n, l: Math.min(len, 64 - s) }]; } });
+    upT(t.id, (x) => { x.autoMelody = false; const ns = x.notes ?? []; if (hit) x.notes = ns.filter((y) => !(y.s === hit.s && y.n === hit.n)); else { x.notes = [...ns, { s, n, l: Math.min(len, 64 - s) }]; } });
     if (!hit) engine.preview(t.id, n);
   };
   return <>
@@ -350,8 +350,9 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
       <button class={'chip' + (onlyName ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setOnlyName(!onlyName)}>Solo notas del nombre</button>
       <button class="chip" onClick={() => setOct(Math.max(-2, oct - 1))}>Octava −</button>
       <button class="chip" onClick={() => setOct(Math.min(1, oct + 1))}>Octava +</button>
-      <button class="chip" onClick={() => upT(t.id, (x) => { const src = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) === bar); x.notes = [0, 1, 2, 3].flatMap((b) => src.map((y) => ({ ...y, s: b * 16 + (y.s % 16) }))); })}>Copiar a los 4 compases</button>
-      <button class="chip" onClick={() => upT(t.id, (x) => { x.notes = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) !== bar); })}>Borrar compás</button>
+      <button class="chip" onClick={() => upT(t.id, (x) => { x.autoMelody = false; const src = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) === bar); x.notes = [0, 1, 2, 3].flatMap((b) => src.map((y) => ({ ...y, s: b * 16 + (y.s % 16) }))); })}>Copiar a los 4 compases</button>
+      <button class="chip" onClick={() => upT(t.id, (x) => { x.autoMelody = false; x.notes = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) !== bar); })}>Borrar compás</button>
+      <button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.notes = generateMelody(p, String(Date.now())); x.autoMelody = true; })}>Nueva melodía</button>
     </div>
     <div class="hint">Tocá un casillero para poner una nota (suena al agregarla) y tocala de nuevo para sacarla. "Solo notas del nombre" muestra únicamente las notas de tus letras.</div>
   </>;
