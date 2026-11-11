@@ -10,7 +10,9 @@ import {
 
 const engine = new Engine();
 const clone = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
-const load = (): Project | null => { try { const s = localStorage.getItem('loop.project'); return s ? JSON.parse(s) : null; } catch { return null; } };
+const load = (): Project | null => {
+  try { const s = localStorage.getItem('loop.project'); if (!s) return null; const p: Project = JSON.parse(s); if (!GENRES[p.genre]) applyGenre(p, 'prog'); return p; } catch { return null; }
+};
 const save = (p: Project) => { try { localStorage.setItem('loop.project', JSON.stringify(p)); } catch { /* sin almacenamiento */ } };
 
 /* ---------- controles ---------- */
