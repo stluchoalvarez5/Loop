@@ -172,7 +172,7 @@ class LoopEngine extends AudioWorkletProcessor {
     this.compEnv = 0; this.limG = 1; this.LA = 64; this.laL = new Float32Array(this.LA); this.laR = new Float32Array(this.LA); this.laI = 0;
     this.pkWin = new Float32Array(this.LA); this.ceil = dbToGain(-1);
     this.duck = 1; this.duckTarget = 1; this.meterN = 0; this.peak = 0; this.revRet = 0.8; this.dlyRet = 0.6;
-    this.buf = { L: new Float32Array(128), R: new Float32Array(128), rL: new Float32Array(128), rR: new Float32Array(128), dL: new Float32Array(128), dR: new Float32Array(128), tL: new Float32Array(128), tR: new Float32Array(128) };
+    this.buf = { L: new Float32Array(128), R: new Float32Array(128), rL: new Float32Array(128), rR: new Float32Array(128), dL: new Float32Array(128), dR: new Float32Array(128), tL: new Float32Array(128), tR: new Float32Array(128), kd: new Float32Array(128) };
     this.port.onmessage = (e) => this.onMsg(e.data);
   }
   setEq(gains) {
@@ -233,7 +233,7 @@ class LoopEngine extends AudioWorkletProcessor {
       }
     }
     // pistas
-    const kickDuck = new Float32Array(N); kickDuck.fill(1);
+    const kickDuck = B.kd; kickDuck.fill(0);
     if (this.duckHit >= 0 || this.duckEnv !== undefined) {
       const rel = Math.exp(-1 / (sr * (60 / this.bpm) * 0.12));
       let e = this.duckEnv ?? 0;
