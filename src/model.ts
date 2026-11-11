@@ -1,6 +1,6 @@
 /* Modelo de datos, teoría musical, presets y compilación a eventos para el motor. */
-import { GENRES, MEL_STYLES, GENRE_WEIGHTS, parseDrum, parseBass, parseGate } from './genres';
-export { GENRES };
+import { GENRES, MEL_STYLES, GENRE_WEIGHTS, parseDrum, parseBass, parseGate, styleOf } from './genres';
+export { GENRES, styleOf };
 
 export type Synth = {
   wave: 'saw' | 'square' | 'tri' | 'sine' | 'fm'; unison: number; detune: number; cutoff: number; reso: number;
@@ -25,7 +25,7 @@ export type Track = {
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
 export type Project = {
-  name: string; genre: string; bpm: number; swing: number; kit: string;
+  name: string; genre: string; style?: string; bpm: number; swing: number; kit: string;
   seq: number[]; chords: { name: string; tones: string[]; midi: number[] }[];
   tracks: Track[];
   fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number };
@@ -144,7 +144,7 @@ export function harmonyFromName(raw: string, mode: 'tonal' | 'puro' = 'tonal', s
   return mode === 'puro' ? pureHarmony(c) : tonalHarmony(c, salt, o);
 }
 export function applyHarmony(p: Project, salt = '') {
-  const h = harmonyFromName(p.name, p.harmony ?? 'tonal', salt, GENRES[p.genre]?.harm);
+  const h = harmonyFromName(p.name, p.harmony ?? 'tonal', salt, GENRES[p.genre] ? styleOf(p.genre, p.style).harm : {});
   p.seq = h.seq; p.chords = h.chords; p.key = h.key; p.progression = h.progression; p.letterNotes = h.letterNotes; p.scale = h.scale; p.tonic = h.tonic;
   p.tracks.forEach((t) => { if (t.type === 'melody' && t.autoMelody) t.notes = generateMelody(p, salt); });
 }
@@ -156,7 +156,7 @@ export function generateMelody(p: Project, salt = ''): Note[] {
   const r = seeded(clean(p.name || 'Loop') + '#mel' + salt);
   const scale = (p.scale && p.scale.length ? p.scale : [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))]);
   const tonic = p.tonic ?? ((p.seq[0] ?? 60) % 12);
-  const st = MEL_STYLES[GENRES[p.genre]?.mel.style ?? 'qa'] ?? MEL_STYLES.qa, LO = st.lo, HI = st.hi, hook = st.form === 'hook';
+  const st = MEL_STYLES[GENRES[p.genre] ? styleOf(p.genre, p.style).mel.style : 'qa'] ?? MEL_STYLES.qa, LO = st.lo, HI = st.hi, hook = st.form === 'hook';
   const pool: number[] = []; for (let m = LO; m <= HI; m++) if (scale.includes(m % 12)) pool.push(m);
   const nearestIdx = (m: number) => { let bi = 0; pool.forEach((x, i) => { if (Math.abs(x - m) < Math.abs(pool[bi] - m)) bi = i; }); return bi; };
   const nearPc = (pc: number, ref: number) => { let best = pool[0], d = 1e9; pool.forEach((x) => { if (x % 12 === pc && Math.abs(x - ref) < d) { d = Math.abs(x - ref); best = x; } }); return best; };
@@ -223,6 +223,13 @@ export const SYNTHS: Record<string, { label: string; for: TrackType[]; p: Synth 
   deepRhodes: { label: 'Rhodes', for: ['chords', 'melody'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.2, fmDecay: 0.6, cutoff: 3200, reso: 0.05, attack: 0.004, decay: 1.6, sustain: 0.3, release: 0.6, gain: 0.34 }) },
   deepBass: { label: 'Sub redondo', for: ['bass'], p: S({ wave: 'sine', sub: 0.2, cutoff: 900, reso: 0.05, attack: 0.008, decay: 0.6, sustain: 0.8, release: 0.15, gain: 0.5 }) },
   melodicPluck: { label: 'Pluck oscuro', for: ['arp', 'melody'], p: S({ unison: 2, detune: 10, cutoff: 450, reso: 0.4, envAmt: 2.6, fdecay: 0.2, decay: 0.35, release: 0.3, gain: 0.32, poles4: true }) },
+  psyBass: { label: 'Bajo psy', for: ['bass'], p: S({ sub: 0.35, cutoff: 420, reso: 0.35, envAmt: 2.4, fdecay: 0.06, attack: 0.001, decay: 0.09, sustain: 0.1, release: 0.03, gain: 0.6 }) },
+  psyAcid: { label: 'Acid psy', for: ['arp', 'melody'], p: S({ cutoff: 380, reso: 0.93, envAmt: 3.4, fdecay: 0.1, attack: 0.002, decay: 0.2, sustain: 0.5, release: 0.03, gain: 0.32 }) },
+  psyLead: { label: 'Lead psy', for: ['melody', 'arp'], p: S({ wave: 'square', unison: 2, detune: 14, cutoff: 1400, reso: 0.55, envAmt: 2.2, fdecay: 0.08, decay: 0.12, sustain: 0.3, release: 0.05, gain: 0.2 }) },
+  techHouseBass: { label: 'Bajo tech house', for: ['bass'], p: S({ sub: 0.55, cutoff: 480, reso: 0.35, envAmt: 1.6, fdecay: 0.1, attack: 0.002, decay: 0.18, sustain: 0.35, release: 0.05, gain: 0.5 }) },
+  mauBass: { label: 'Bajo bounce', for: ['bass'], p: S({ wave: 'square', unison: 2, detune: 10, sub: 0.6, cutoff: 600, reso: 0.45, envAmt: 2.4, fdecay: 0.09, attack: 0.001, decay: 0.15, sustain: 0.25, release: 0.04, gain: 0.42, poles4: true }) },
+  anymaArp: { label: 'Arp cinemático', for: ['arp', 'melody'], p: S({ unison: 4, detune: 16, cutoff: 1100, reso: 0.3, envAmt: 2.2, fdecay: 0.14, decay: 0.2, sustain: 0.05, release: 0.18, gain: 0.3 }) },
+  anymaLead: { label: 'Lead cinemático', for: ['melody', 'arp'], p: S({ unison: 4, detune: 14, cutoff: 2400, reso: 0.35, envAmt: 0.8, fdecay: 0.25, attack: 0.01, decay: 0.5, sustain: 0.8, release: 0.4, gain: 0.22, poles4: true }) },
   progPluck: { label: 'Pluck progressive', for: ['arp', 'melody'], p: S({ wave: 'square', unison: 2, detune: 9, cutoff: 800, reso: 0.3, envAmt: 1.8, fdecay: 0.2, decay: 0.28, release: 0.22, gain: 0.26 }) },
 };
 export const STAB = (p: Synth): Synth => ({ ...p, attack: 0.004, decay: 0.3, sustain: 0, release: 0.15, gain: p.gain * 1.6, envAmt: Math.max(p.envAmt, 0.8), fdecay: 0.2 });
@@ -280,9 +287,11 @@ export function newProject(name = '', genre = 'prog'): Project {
   return p;
 }
 /* aplica la receta completa del género. La semilla es nombre + género (+ versión): el mismo nombre en trance suena siempre igual */
-export function applyGenre(p: Project, g: string, variant = 0) {
-  const G = GENRES[g]; if (!G) return; p.genre = g;
-  const r = seeded(clean(p.name || 'Loop') + '#g:' + g + '#' + variant);
+export function applyGenre(p: Project, g: string, variant = 0, style?: string) {
+  if (!GENRES[g]) return;
+  const r = seeded(clean(p.name || 'Loop') + '#g:' + g + '#' + variant + '#' + (style ?? ''));
+  if (!style || !GENRES[g].styles[style]) style = pick(r, Object.keys(GENRES[g].styles)); // sin estilo elegido, lo elige el nombre
+  const G = styleOf(g, style); p.genre = g; p.style = style;
   const T = (id: string) => p.tracks.find((t) => t.id === id);
   p.bpm = Math.round(G.bpm[0] + r() * (G.bpm[1] - G.bpm[0])); p.swing = +(G.swing[0] + r() * (G.swing[1] - G.swing[0])).toFixed(2);
   p.kit = pick(r, G.kit); p.fx = { ...G.fx };
