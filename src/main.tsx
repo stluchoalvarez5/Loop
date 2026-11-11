@@ -4,7 +4,7 @@ import './style.css';
 import { Engine, type DJState } from './engine/engine';
 import {
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName,
-  arpPlays, arpPreview, noteName, toLetters, clean, NAMES, newTrack, nameScale, DRUM_GROUPS, type TrackType,
+  arpPlays, arpPreview, noteName, letterNote, clean, newTrack, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
@@ -129,7 +129,7 @@ function App() {
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(''), 1800); };
   const stepEdit = (t: Track, fn: (x: Track) => void) => { const wasMuted = t.mute; upT(t.id, (x) => { fn(x); if (x.mute) x.mute = false; }); if (wasMuted) flash(t.name + ' encendida'); };
   const upT = (id: string, fn: (t: Track) => void) => up((d) => fn(d.tracks.find((t) => t.id === id)!));
-  const letters = useMemo(() => { const c = clean(p.name || 'Loop'); const ls = toLetters(c); return [...c].map((ch, i) => [ch, NAMES['ABCDEFG'.indexOf(ls[i])]]); }, [p.name]);
+  const letters = useMemo(() => { const c = clean(p.name || 'Loop'); return [...c].map((ch) => [ch, letterNote(ch)]); }, [p.name]);
   const arpNotes = useMemo(() => { const o: Record<string, (s: number) => number> = {}; p.tracks.forEach((t) => { if (t.type === 'arp') o[t.id] = arpPreview(p, t); }); return o; }, [p]);
 
   return (

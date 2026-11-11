@@ -27,39 +27,43 @@ export type Project = {
   seed?: number;
 };
 
-/* ---------- teoría: cada letra es una nota ---------- */
-export const NAMES = ['LA', 'SI', 'DO', 'RE', 'MI', 'FA', 'SOL'], LET = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
-const PC: Record<string, number> = { A: 9, B: 11, C: 0, D: 2, E: 4, F: 5, G: 7 };
-const ARPM: Record<string, number> = { A: 69, B: 71, C: 72, D: 74, E: 64, F: 65, G: 67 };
-const QUAL: Record<string, string> = { C: '', D: 'm', E: 'm', F: '', G: '', A: 'm', B: 'dim' };
-const SEV: Record<string, string> = { C: 'maj7', D: 'm7', E: 'm7', F: 'maj7', G: '7', A: 'm7', B: 'm7b5' };
-const PREF = ['A', 'E', 'D', 'C', 'G', 'F', 'B'];
+/* ---------- teoría: cada letra es una tecla del piano ----------
+   El abecedario recorre las 12 teclas en orden cromático: A=DO, B=DO#, C=RE, D=RE#, E=MI, F=FA, G=FA#, H=SOL, I=SOL#,
+   J=LA, K=LA#, L=SI, y vuelve a empezar: M=DO, N=DO#, ... X=SI, Y=DO, Z=DO#. Así hay teclas negras y acordes de todo tipo. */
+export const NOTE_ES = ['DO', 'DO#', 'RE', 'RE#', 'MI', 'FA', 'FA#', 'SOL', 'SOL#', 'LA', 'LA#', 'SI'];
+const NOTE_EN = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export const clean = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z]/g, '');
-export const toLetters = (s: string) => [...s].map((c) => LET[(c.charCodeAt(0) - 65) % 7]);
-export const noteName = (m: number) => NAMES[LET.indexOf(Object.keys(ARPM).find((k) => ARPM[k] % 12 === ((m % 12) + 12) % 12)!)] ?? '?';
-const shift = (l: string, n: number) => LET[(LET.indexOf(l) + n) % 7];
-function buildChords(set: Set<string>) {
-  const tri: any[] = [], dy: any[] = [];
-  PREF.forEach((r) => {
-    if (!set.has(r)) return;
-    const t = shift(r, 2), f = shift(r, 4), s = shift(r, 6);
-    if (set.has(t) && set.has(f)) { const h7 = set.has(s); tri.push({ root: r, name: r + (h7 ? SEV[r] : QUAL[r]), tones: h7 ? [r, t, f, s] : [r, t, f], dim: r === 'B' }); }
-    else if (set.has(f) && r !== 'B') dy.push({ root: r, name: r + '5', tones: [r, f] });
-    else if (set.has(t)) dy.push({ root: r, name: r + '(' + NAMES[LET.indexOf(t)] + ')', tones: [r, t] });
-  });
-  let pool = tri.filter((c) => !c.dim);
-  if (!pool.length) pool = tri.concat(dy);
-  if (!pool.length) { const all = [...set].sort((a, b) => PREF.indexOf(a) - PREF.indexOf(b)); pool = [{ root: all[0], name: all.length > 1 ? all.join('+') : all[0], tones: all }]; }
-  const tonic = pool[0]; let rest = pool.slice(1); if (!rest.length) rest = dy.filter((d) => d !== tonic);
-  const order = ['F', 'C', 'G', 'E', 'D', 'A', 'B']; rest.sort((a, b) => order.indexOf(a.root) - order.indexOf(b.root));
-  const prog = [tonic]; for (let i = 0; i < 3; i++) prog.push(rest.length ? rest[i % rest.length] : tonic);
-  if (rest.length >= 3) prog[3] = rest[2]; else if (rest.length) prog[3] = tonic;
-  return prog;
+export const letterPc = (ch: string) => (ch.charCodeAt(0) - 65) % 12;
+export const letterNote = (ch: string) => NOTE_ES[letterPc(ch)];
+export const noteName = (m: number) => NOTE_ES[((m % 12) + 12) % 12];
+/* tipos de acorde: intervalos desde la fundamental, sufijo y "puntaje" (qué tan completo y musical es) */
+const CHORDS: [number[], string, number][] = [
+  [[0, 4, 7, 11], 'maj7', 10], [[0, 3, 7, 10], 'm7', 10], [[0, 4, 7, 10], '7', 8], [[0, 3, 7], 'm', 9], [[0, 4, 7], '', 9],
+  [[0, 2, 7], 'sus2', 7], [[0, 5, 7], 'sus4', 7], [[0, 4, 7, 9], '6', 7], [[0, 3, 7, 9], 'm6', 6], [[0, 3, 6, 10], 'm7b5', 5], [[0, 3, 6], 'dim', 4], [[0, 4, 8], 'aug', 3],
+  [[0, 7], '5', 2], [[0, 3], '(m3)', 1], [[0, 4], '(3)', 1], [[0, 5], '(4)', 1], [[0, 2], '(2)', 0.5],
+];
+type Ch = { root: number; ivs: number[]; name: string; score: number };
+function buildChords(order: number[]) {
+  const set = new Set(order), roots = [...new Set(order)];
+  const best: Ch[] = [];
+  roots.forEach((r) => { for (const [ivs, suf, sc] of CHORDS) if (ivs.every((i) => set.has((r + i) % 12))) { best.push({ root: r, ivs, name: NOTE_EN[r] + suf, score: sc }); break; } });
+  if (!best.length) best.push({ root: roots[0], ivs: [0, 12], name: NOTE_EN[roots[0]] + ' (8va)', score: 0 });
+  const good = best.filter((c) => c.score >= 6);
+  const tonic = good.length ? good[0] : [...best].sort((a, b) => b.score - a.score)[0]; // el primer acorde "lindo" según el orden de las letras
+  const PRI = [5, 7, 9, 3, 8, 10, 2, 4, 1, 6, 11];
+  const rank = (c: Ch) => PRI.indexOf((c.root - tonic.root + 12) % 12) - c.score * 0.6;
+  let rest = best.filter((c) => c !== tonic && c.score >= 6).sort((a, b) => rank(a) - rank(b));
+  if (rest.length < 3) rest = rest.concat(best.filter((c) => c !== tonic && c.score < 6).sort((a, b) => rank(a) - rank(b)));
+  rest = rest.slice(0, 3);
+  if (rest.length === 3) return [tonic, ...rest];
+  if (rest.length === 2) return [tonic, rest[0], rest[1], tonic];
+  if (rest.length === 1) return [tonic, rest[0], tonic, rest[0]];
+  return [tonic, tonic, tonic, tonic];
 }
-function voice(tones: string[]) { let root = 48 + PC[tones[0]]; if (root > 56) root -= 12; const out = [root]; let last = root; tones.slice(1).forEach((l) => { let m = last + 1; while (m % 12 !== PC[l]) m++; out.push(m); last = m; }); if (tones.length < 3) out.push(root + 12); return out; }
+function voice(c: Ch) { let root = 48 + c.root; if (root > 56) root -= 12; const out = c.ivs.map((i) => root + i); if (out.length < 3) out.push(root + 12); return out; }
 export function harmonyFromName(raw: string) {
-  const c = clean(raw) || 'LOOP'; const ls = toLetters(c);
-  return { letters: c, seq: ls.map((l) => ARPM[l]), chords: buildChords(new Set(ls)).map((p: any) => ({ name: p.name, tones: p.tones, midi: voice(p.tones) })) };
+  const c = clean(raw) || 'LOOP'; const pcs = [...c].map(letterPc);
+  return { letters: c, seq: pcs.map((pc) => 60 + pc), chords: buildChords(pcs).map((ch) => ({ name: ch.name, tones: ch.ivs.map((i) => NOTE_ES[(ch.root + i) % 12]), midi: voice(ch) })) };
 }
 
 /* ---------- presets de sonido ---------- */

@@ -1,6 +1,6 @@
 # Loop
 
-App web instalable (PWA) para crear loops de música electrónica: batería, bajo, sinte (arpegio) y acordes, con mixer, efectos y master. Uno de los modos genera el loop a partir de un nombre: cada letra es una nota (A H O V = LA, B I P W = SI, C J Q X = DO, D K R Y = RE, E L S Z = MI, F M T = FA, G N U = SOL), y el arpegio, los acordes y el bajo usan solo esas notas.
+App web instalable (PWA) para crear loops de música electrónica: batería, bajo, sinte (arpegio) y acordes, con mixer, efectos y master. Uno de los modos genera el loop a partir de un nombre: cada letra es una tecla del piano en orden cromático (A=DO, B=DO#, C=RE, D=RE#, E=MI, F=FA, G=FA#, H=SOL, I=SOL#, J=LA, K=LA#, L=SI, y se repite: M=DO … Y=DO, Z=DO#), y el arpegio, los acordes y el bajo usan solo esas notas. Los acordes se buscan entre mayores, menores, séptimas, sus, 6, disminuidos y aumentados que se puedan armar con esas teclas (`buildChords()` en `model.ts`).
 
 El dueño del proyecto es Luc. Habla en español rioplatense: respondé en ese idioma y con respuestas directas. Es un proyecto gratis y personal.
 
