@@ -351,7 +351,7 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
 }
 
 /* ---------- Modo DJ ---------- */
-const DJ0: DJState = { eq: [0, 0, 0], kill: [false, false, false], filter: 0, fx: { echo: false, wash: false, roll: 0, crush: false, gate: false } };
+const DJ0: DJState = { eq: [0, 0, 0], kill: [false, false, false], filter: 0, fx: { reverb: false, delay: false, dub: false } };
 function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; land: boolean }) {
   const [s, setS] = useState<DJState>(() => engine.djState ?? clone(DJ0));
   const [latch, setLatch] = useState(false);
@@ -360,7 +360,7 @@ function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; l
   const fref = useRef<HTMLDivElement>(null);
   const fset = (x: number) => { const r = fref.current!.getBoundingClientRect(); let v = ((x - r.left) / r.width) * 2 - 1; v = Math.max(-1, Math.min(1, v)); if (Math.abs(v) < 0.06) v = 0; set((d) => { d.filter = +v.toFixed(3); }); };
   const fgrab = useGrab(false, { start: (e) => fset(e.clientX), move: (e) => fset(e.clientX), reset: () => set((d) => { d.filter = 0; }) });
-  type FxKey = 'echo' | 'wash' | 'crush' | 'gate';
+  type FxKey = 'reverb' | 'delay' | 'dub';
   const pad = (label: string, sub: string, on: boolean, start: () => void, end: () => void, color: string) => (
     <button class={'djpad' + (on ? ' on' : '')} style={{ '--c': color } as any}
       onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as Element).setPointerCapture(e.pointerId); if (latch && on) end(); else start(); }}
@@ -369,7 +369,6 @@ function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; l
     </button>
   );
   const fx = (k: FxKey, label: string, sub: string, color: string) => pad(label, sub, s.fx[k], () => set((d) => { d.fx[k] = true; }), () => set((d) => { d.fx[k] = false; }), color);
-  const roll = (n: number, label: string) => pad('Roll', label, s.fx.roll === n, () => set((d) => { d.fx.roll = n; }), () => set((d) => { if (d.fx.roll === n) d.fx.roll = 0; }), '#ffb020');
   const fl = s.filter;
   return <>
     <div class="card dj">
@@ -397,15 +396,13 @@ function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; l
       </div>
       <div class="sub">Efectos</div>
       <div class="pads6">
-        {fx('echo', 'Eco', 'delay 3/16', '#3fa7ff')}
-        {fx('wash', 'Wash', 'reverb gigante', '#2fd8b4')}
-        {fx('gate', 'Gate', 'corta a 1/16', '#ff5fb3')}
-        {fx('crush', 'Crush', 'lo-fi', '#ff5a36')}
-        {roll(4, '1/4')}{roll(2, '1/8')}{roll(1, '1/16')}
+        {fx('reverb', 'Reverb', 'sala grande', '#2fd8b4')}
+        {fx('delay', 'Delay', '1/8 limpio', '#3fa7ff')}
+        {fx('dub', 'Dub Echo', '3/16 oscuro', '#ffb020')}
       </div>
       </div>
       </div>
-      <div class="hint">{latch ? 'Tocá un efecto para prenderlo y otra vez para apagarlo.' : 'Mantené apretado un efecto para usarlo; al soltar se apaga. El Roll repite el último tramo, sincronizado al tempo.'} Para mover una banda o el filtro, mantené el dedo quieto un instante hasta que se ilumine y arrastrá. Doble toque lo vuelve al centro.</div>
+      <div class="hint">{latch ? 'Tocá un efecto para prenderlo y otra vez para apagarlo.' : 'Mantené apretado un efecto para usarlo; al soltar se apaga.'} Para mover una banda o el filtro, mantené el dedo quieto un instante hasta que se ilumine y arrastrá. Doble toque lo vuelve al centro.</div>
     </div>
   </>;
 }

@@ -139,8 +139,8 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .dfilter .fill{position:absolute;top:24px;height:10px;border-radius:5px;background:var(--vio);opacity:.8}
 .dfilter .knobcap{position:absolute;top:7px;width:44px;height:44px;margin-left:-22px;border-radius:50%;background:#e9ebf2;box-shadow:0 3px 10px rgba(0,0,0,.6);pointer-events:none}
 .dfilter .knobcap::after{content:'';position:absolute;left:21px;top:6px;width:2px;height:14px;background:#333;border-radius:1px}
-.pads6{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.djpad{height:74px;border-radius:14px;background:#1b1f2b;border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;touch-action:none;user-select:none;-webkit-user-select:none;border-bottom:3px solid var(--c)}
+.pads6{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.djpad{height:96px;border-radius:14px;background:#1b1f2b;border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;touch-action:none;user-select:none;-webkit-user-select:none;border-bottom:3px solid var(--c)}
 .djpad b{font-family:Unbounded,sans-serif;font-size:13px}
 .djpad span{font-size:10.5px;color:var(--mut)}
 .djpad.on{background:var(--c);color:#0b0c10;box-shadow:0 0 22px color-mix(in srgb,var(--c) 60%,transparent)}
