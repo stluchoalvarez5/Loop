@@ -130,7 +130,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .band .bv{font-family:'JetBrains Mono',monospace;font-size:12px}
 .kill{width:86%;height:38px;border-radius:10px;background:#1b1f2b;border:1px solid var(--line);font-weight:700;font-size:13px;color:var(--mut);letter-spacing:.5px}
 .kill.on{background:#3a1209;border-color:var(--hot);color:var(--hot);box-shadow:0 0 14px rgba(255,90,54,.35)}
-.dfilter{position:relative;height:58px;border-radius:14px;background:linear-gradient(90deg,#1a1430,#141720 45%,#141720 55%,#0f2a25);border:1px solid var(--line);touch-action:none;cursor:ew-resize;margin-top:4px}
+.dfilter{position:relative;height:58px;border-radius:14px;background:linear-gradient(90deg,#1a1430,#141720 45%,#141720 55%,#0f2a25);border:1px solid var(--line);touch-action:pan-x pan-y;cursor:ew-resize;margin-top:4px;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;transition:box-shadow .12s}
+.dfilter.grab{box-shadow:0 0 0 3px rgba(139,108,255,.55)}
+.dfilter.grab .knobcap{background:#fff;box-shadow:0 0 0 5px rgba(139,108,255,.45),0 3px 10px rgba(0,0,0,.6)}
 .dfilter .lbl{position:absolute;top:50%;transform:translateY(-50%);font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--dim)}
 .dfilter .l{left:12px}.dfilter .r{right:12px}
 .dfilter .mid{position:absolute;left:50%;top:8px;bottom:8px;width:2px;background:#2c3350}

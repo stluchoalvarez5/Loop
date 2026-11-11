@@ -357,8 +357,9 @@ function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; l
   const [latch, setLatch] = useState(false);
   const set = (fn: (d: DJState) => void) => setS((cur) => { const d = clone(cur); fn(d); engine.dj(d); return d; });
   const bands: [string, number][] = [['Agudos', 2], ['Medios', 1], ['Graves', 0]];
-  const fref = useRef<HTMLDivElement>(null), fst = useRef({ drag: false, last: 0 });
+  const fref = useRef<HTMLDivElement>(null);
   const fset = (x: number) => { const r = fref.current!.getBoundingClientRect(); let v = ((x - r.left) / r.width) * 2 - 1; v = Math.max(-1, Math.min(1, v)); if (Math.abs(v) < 0.06) v = 0; set((d) => { d.filter = +v.toFixed(3); }); };
+  const fgrab = useGrab(false, { start: (e) => fset(e.clientX), move: (e) => fset(e.clientX), reset: () => set((d) => { d.filter = 0; }) });
   type FxKey = 'echo' | 'wash' | 'crush' | 'gate';
   const pad = (label: string, sub: string, on: boolean, start: () => void, end: () => void, color: string) => (
     <button class={'djpad' + (on ? ' on' : '')} style={{ '--c': color } as any}
@@ -379,7 +380,7 @@ function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; l
         {bands.map(([lbl, k]) => (
           <div class="band">
             <div class="bl">{lbl}</div>
-            <Fader instant label={lbl} value={s.eq[k]} min={-26} max={6} def={0} h={land ? 118 : 170} color={s.kill[k] ? '#4c5368' : k === 0 ? '#ff5a36' : k === 1 ? '#8b6cff' : '#2fd8b4'} onChange={(v) => set((d) => { d.eq[k] = Math.round(v); })} />
+            <Fader label={lbl} value={s.eq[k]} min={-26} max={6} def={0} h={land ? 118 : 170} color={s.kill[k] ? '#4c5368' : k === 0 ? '#ff5a36' : k === 1 ? '#8b6cff' : '#2fd8b4'} onChange={(v) => set((d) => { d.eq[k] = Math.round(v); })} />
             <div class="bv">{s.kill[k] ? 'OFF' : (s.eq[k] > 0 ? '+' : '') + s.eq[k] + ' dB'}</div>
             <button class={'kill' + (s.kill[k] ? ' on' : '')} onClick={() => set((d) => { d.kill[k] = !d.kill[k]; })}>{s.kill[k] ? 'Apagado' : 'Kill'}</button>
           </div>
@@ -388,8 +389,7 @@ function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; l
       <div class="djr">
       <div class="sub">Filtro {fl < 0 ? '· pasa-bajos' : fl > 0 ? '· pasa-altos' : '· abierto'}</div>
       <div class="dfilter" ref={fref} role="slider" aria-label="Filtro DJ" aria-valuenow={fl} tabIndex={0}
-        onPointerDown={(e) => { (e.currentTarget as Element).setPointerCapture(e.pointerId); fst.current.drag = true; const now = Date.now(); if (now - fst.current.last < 300) set((d) => { d.filter = 0; }); else fset(e.clientX); fst.current.last = now; }}
-        onPointerMove={(e) => fst.current.drag && fset(e.clientX)} onPointerUp={() => (fst.current.drag = false)} onPointerCancel={() => (fst.current.drag = false)}
+        {...(fgrab as any)}
         onKeyDown={(e) => { if (e.key === 'ArrowLeft') set((d) => { d.filter = Math.max(-1, d.filter - 0.05); }); if (e.key === 'ArrowRight') set((d) => { d.filter = Math.min(1, d.filter + 0.05); }); }}>
         <span class="lbl l">LPF</span><span class="lbl r">HPF</span><div class="mid" />
         <div class="fill" style={{ left: (fl < 0 ? 50 + fl * 50 : 50) + '%', width: Math.abs(fl) * 50 + '%' }} />
@@ -405,7 +405,7 @@ function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; l
       </div>
       </div>
       </div>
-      <div class="hint">{latch ? 'Tocá un efecto para prenderlo y otra vez para apagarlo.' : 'Mantené apretado un efecto para usarlo; al soltar se apaga. El Roll repite el último tramo, sincronizado al tempo.'} Doble toque en el filtro o en una banda la vuelve al centro.</div>
+      <div class="hint">{latch ? 'Tocá un efecto para prenderlo y otra vez para apagarlo.' : 'Mantené apretado un efecto para usarlo; al soltar se apaga. El Roll repite el último tramo, sincronizado al tempo.'} Para mover una banda o el filtro, mantené el dedo quieto un instante hasta que se ilumine y arrastrá. Doble toque lo vuelve al centro.</div>
     </div>
   </>;
 }
