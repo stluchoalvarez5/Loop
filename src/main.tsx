@@ -10,13 +10,7 @@ import {
 
 const engine = new Engine();
 const clone = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
-const load = (): Project | null => {
-  try {
-    const s = localStorage.getItem('loop.project'); if (!s) return null; const p: Project = JSON.parse(s);
-    if (!GENRES[p.genre]) applyGenre(p, 'techhouse'); // géneros que ya no existen (house, deep)
-    return p;
-  } catch { return null; }
-};
+const load = (): Project | null => { try { const s = localStorage.getItem('loop.project'); return s ? JSON.parse(s) : null; } catch { return null; } };
 const save = (p: Project) => { try { localStorage.setItem('loop.project', JSON.stringify(p)); } catch { /* sin almacenamiento */ } };
 
 /* ---------- controles ---------- */
@@ -146,7 +140,7 @@ function App() {
       <div class="top">
         <div class="logo" aria-label="Loop">L<i class={playing ? 'on' : ''} /><i class={'b' + (playing ? ' on' : '')} />P</div>
         <div class="sp" />
-        <span class="pill">{GENRES[p.genre]?.name}{p.style && GENRES[p.genre]?.styles[p.style] ? ' · ' + GENRES[p.genre].styles[p.style].name : ''}</span>
+        <span class="pill">{GENRES[p.genre]?.name}</span>
         <span class="pill">{KITS[p.kit]?.label}</span>
       </div>
 
@@ -187,11 +181,6 @@ function App() {
             <button class="chip" onClick={() => fromName(variant + 1)}>Otra versión</button>
             {Object.keys(GENRES).map((g) => <button class={'chip' + (p.genre === g ? ' on' : '')} onClick={() => up((d) => applyGenre(d, g))}>{GENRES[g].name}</button>)}
           </div>
-          {GENRES[p.genre] && <>
-            <div class="sub" style={{ marginTop: '12px' }}>Estilo de {GENRES[p.genre].name}</div>
-            <div class="chips">{Object.entries(GENRES[p.genre].styles).map(([k, st]) => <button class={'chip' + (p.style === k ? ' on' : '')} onClick={() => up((d) => applyGenre(d, d.genre, 0, k))}>{st.name}</button>)}</div>
-            <div class="hint">Inspirado en cómo producen: tempo, batería, bajo, sonidos y espacio. La melodía y los acordes siguen saliendo de tu nombre.</div>
-          </>}
         </div>
 
         <div class="card a-grid">
