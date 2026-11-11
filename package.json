@@ -1,0 +1,21 @@
+{
+  "name": "loop",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "test": "python3 tests/smoke.py"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vite-plugin-pwa": "^0.20.5"
+  },
+  "dependencies": {
+    "preact": "^10.29.8"
+  },
+  "private": true,
+  "type": "module"
+}
