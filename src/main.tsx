@@ -202,16 +202,16 @@ function App() {
                     const hit = (t.notes ?? []).filter((n) => n.s % 16 === i);
                     return <button class={'pad' + (hit.length ? ' v1' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`} onClick={() => setSel(t.id)}>{hit[0] && <span class="nn">{noteName(hit[0].n)}</span>}</button>;
                   }
-                  if (t.type === 'chords' && t.chordMode !== 'stab') return <button class={'pad' + (i % 16 === 0 ? ' v2' : ' v1')} style={{ '--c': t.color, opacity: i ? 0.35 : 1 } as any} aria-label="Acorde sostenido" onClick={() => setSel(t.id)} />;
+                  if (t.type === 'chords' && (t.chordMode ?? 'pad') === 'pad') return <button class={'pad' + (i % 16 === 0 ? ' v2' : ' v1')} style={{ '--c': t.color, opacity: i ? 0.35 : 1 } as any} aria-label="Acorde sostenido" onClick={() => setSel(t.id)} />;
                   const v = t.steps[i];
-                  return <button class={'pad' + (v === 1 ? ' v1' : v === 2 ? ' v2' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
+                  return <button class={'pad' + (v === 1 ? ' v1' : v === 2 ? ' v2' : v === 3 ? ' v1 gh' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
                     onClick={() => stepEdit(t, (x) => { x.steps[i] = (x.steps[i] + 1) % 3; })} />;
                 })}
               </div>
             </>)}
           </div>
           <AddTrack onAdd={(type, sound) => { let id = ''; up((d) => { if (d.tracks.length >= 16) return; const nt = newTrack(d, type, sound); id = nt.id; d.tracks.push(nt); }); setTimeout(() => id && setSel(id), 0); }} full={p.tracks.length >= 16} />
-          <div class="hint">El botón de la izquierda enciende o apaga cada instrumento. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga.</div>
+          <div class="hint">El botón de la izquierda enciende o apaga cada instrumento. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves que pone el género.</div>
         </div>
 
         {tr && <div class="a-ed"><TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); setSel(left[0].id); flash(tr.name + ' eliminada'); }} /></div>}
@@ -298,14 +298,14 @@ function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (
       <div class="chips">{presets.map((k) => <button class={'chip' + (t.sound === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.sound = k; x.synth = undefined; })}>{SYNTHS[k].label}</button>)}</div>
       {t.type === 'arp' && <>
         <div class="sub">Orden de las notas</div>
-        <div class="chips">{[['name', 'Nombre'], ['up', 'Sube'], ['down', 'Baja'], ['pp', 'Ping-pong'], ['mirror', 'Espejo'], ['jump', 'Saltos'], ['rand', 'Al azar']].map(([k, l]) => <button class={'chip' + (t.arp!.mode === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.arp!.mode = k; })}>{l}</button>)}</div>
+        <div class="chips">{[['name', 'Nombre'], ['up', 'Sube'], ['down', 'Baja'], ['pp', 'Ping-pong'], ['mirror', 'Espejo'], ['jump', 'Saltos'], ['rand', 'Al azar'], ['chord', 'Acorde'], ['chordpp', 'Acorde ida y vuelta'], ['acid', 'Acid 303']].map(([k, l]) => <button class={'chip' + (t.arp!.mode === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.arp!.mode = k; })}>{l}</button>)}</div>
         <div class="sub">Ritmo y octavas</div>
         <div class="chips">{[['16', '1/16'], ['8', '1/8'], ['tr', 'Galope']].map(([k, l]) => <button class={'chip' + (t.arp!.rate === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.arp!.rate = k as any; })}>{l}</button>)}
           {[1, 2, 3].map((o) => <button class={'chip' + (t.arp!.oct === o ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.arp!.oct = o; })}>{o} oct</button>)}</div>
       </>}
       {t.type === 'chords' && <>
         <div class="sub">Modo</div>
-        <div class="chips">{[['pad', 'Sostenido'], ['stab', 'Stabs']].map(([k, l]) => <button class={'chip' + (t.chordMode === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.chordMode = k as any; if (k === 'stab' && !x.steps.some(Boolean)) x.steps = [0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0]; })}>{l}</button>)}</div>
+        <div class="chips">{[['pad', 'Sostenido'], ['stab', 'Stabs'], ['gate', 'Gate']].map(([k, l]) => <button class={'chip' + (t.chordMode === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.chordMode = k as any; if (k === 'gate' && x.steps.filter(Boolean).length < 4) x.steps = [1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0]; if (k === 'stab' && !x.steps.some(Boolean)) x.steps = [0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0]; })}>{l}</button>)}</div>
       </>}
       {s && <><div class="sub">Sonido fino</div>
         <div class="knobs">

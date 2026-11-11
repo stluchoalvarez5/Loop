@@ -78,6 +78,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .pad.v2{background:var(--c);box-shadow:0 0 12px color-mix(in srgb,var(--c) 60%,transparent),inset 0 0 0 2px rgba(255,255,255,.55)}
 .pad.off{background:transparent;outline:1px dashed #2b3144;outline-offset:-2px}
 .pad.skip{opacity:.25}
+.pad.gh{opacity:.45}
 .pad .nn{position:absolute;inset:0;display:grid;place-items:center;font-family:'JetBrains Mono',monospace;font-size:9px;color:rgba(255,255,255,.85)}
 .pad.ph::after{content:'';position:absolute;inset:-2px;border-radius:8px;border:2px solid #fff}
 .hint{font-size:12px;color:var(--mut);line-height:1.5;margin-top:8px}

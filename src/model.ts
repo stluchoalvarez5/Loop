@@ -1,4 +1,6 @@
 /* Modelo de datos, teoría musical, presets y compilación a eventos para el motor. */
+import { GENRES, MEL_STYLES, GENRE_WEIGHTS, parseDrum, parseBass, parseGate } from './genres';
+export { GENRES };
 
 export type Synth = {
   wave: 'saw' | 'square' | 'tri' | 'sine' | 'fm'; unison: number; detune: number; cutoff: number; reso: number;
@@ -15,7 +17,10 @@ export type Track = {
   vol: number; pan: number; mute: boolean; solo: boolean; rev: number; dly: number; duck: number;
   synth?: Synth;
   arp?: { mode: string; rate: '16' | '8' | 'tr'; oct: number; gate: boolean[] };
-  chordMode?: 'pad' | 'stab';
+  chordMode?: 'pad' | 'stab' | 'gate';
+  chordLen?: number; // largo de cada golpe de acorde en pasos (stab y gate)
+  bassLine?: number[]; // bajo: semitonos sobre la fundamental en cada paso (0, 12 = octava, 7 = quinta…)
+  bassLen?: number; // bajo: largo de cada nota en pasos
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
@@ -86,7 +91,8 @@ const TEMPLATES: Record<'maj' | 'min', number[][]> = {
   maj: [[0, 4, 5, 3], [5, 3, 0, 4], [0, 5, 3, 4], [0, 3, 5, 4], [1, 4, 0, 5], [0, 3, 0, 4], [3, 4, 2, 5], [0, 2, 3, 4]],
   min: [[0, 5, 2, 6], [0, 3, 5, 4], [0, 6, 5, 6], [0, 5, 3, 6], [0, 2, 6, 5], [5, 6, 0, 0], [0, 3, 6, 2], [3, 6, 0, 5]],
 };
-function tonalHarmony(c: string, salt = '') {
+export type HarmOpts = { mode?: 'maj' | 'min'; ext?: number; tpl?: { maj?: number[][]; min?: number[][] } };
+function tonalHarmony(c: string, salt = '', o: HarmOpts = {}) {
   const pcs = [...c].map(letterPc), mins = [...c].map(letterMinor), w = new Array(12).fill(0);
   pcs.forEach((pc, i) => { const b = 1 + (i === 0 ? 1.5 : 0) + (i === pcs.length - 1 ? 0.4 : 0); w[pc] += b; w[(pc + (mins[i] ? 3 : 4)) % 12] += b * 0.45; w[(pc + 7) % 12] += b * 0.3; });
   const minorBias = (mins.filter(Boolean).length - mins.filter((x) => !x).length) * 0.35 + (mins[0] ? 0.8 : -0.8);
@@ -98,6 +104,8 @@ function tonalHarmony(c: string, salt = '') {
     v += w[t] * 0.9 + (t === pcs[0] ? 1.2 : 0) - fifthDist(t, pcs[0]) * 0.15 + (mode === 'min' ? minorBias : -minorBias);
     if (v > best.sc) best = { t, mode, sc: v };
   }
+  // el género pide modo menor (o mayor): se pasa a la relativa, que tiene exactamente las mismas notas
+  if (o.mode && o.mode !== best.mode) best = o.mode === 'min' ? { t: (best.t + 9) % 12, mode: 'min', sc: best.sc } : { t: (best.t + 3) % 12, mode: 'maj', sc: best.sc };
   const steps = best.mode === 'maj' ? MAJ : MIN, scale = steps.map((i) => (best.t + i) % 12);
   // 2) acomodar las notas de afuera al vecino más cercano de la escala (prefiere el que también está en el nombre)
   const inName = new Set(pcs);
@@ -110,14 +118,17 @@ function tonalHarmony(c: string, salt = '') {
   // 3) progresión: plantilla clásica de la tonalidad que más usa las notas del nombre
   const r = seeded(c + '#prog' + salt);
   const tScore = (tp: number[]) => tp.reduce((a, d) => a + (present.has(scale[d]) ? 1 : 0) + (present.has(scale[(d + 2) % 7]) ? 0.3 : 0), 0) + r() * 0.9;
-  const ranked = [...TEMPLATES[best.mode]].map((tp) => [tScore(tp), tp] as [number, number[]]).sort((a, b) => b[0] - a[0]);
-  const tpl = ranked[(Number(salt) || 0) % 3][1]; // "Otra versión" recorre las 3 progresiones que mejor le quedan al nombre
+  const ranked = [...(o.tpl?.[best.mode] ?? TEMPLATES[best.mode])].map((tp) => [tScore(tp), tp] as [number, number[]]).sort((a, b) => b[0] - a[0]);
+  const tpl = ranked[(Number(salt) || 0) % Math.min(3, ranked.length)][1]; // "Otra versión" recorre las 3 progresiones que mejor le quedan al nombre
   const chordAt = (d: number) => {
     const root = scale[d], third = scale[(d + 2) % 7], fifth = scale[(d + 4) % 7], sev = scale[(d + 6) % 7];
     const iv = (x: number) => (x - root + 12) % 12, ivs = [0, iv(third), iv(fifth)];
     const q3 = ivs[1] === 4 ? 'maj' : 'min', dim = ivs[2] === 6;
     let name = NOTE_EN[root] + (dim ? 'dim' : q3 === 'min' ? 'm' : '');
-    if (present.has(sev)) { ivs.push(iv(sev)); const s7 = iv(sev); name = NOTE_EN[root] + (dim ? 'm7b5' : q3 === 'maj' ? (s7 === 11 ? 'maj7' : '7') : 'm7'); }
+    const ext = o.ext ?? 0;
+    if ((present.has(sev) && ext >= 0) || ext >= 7) { ivs.push(iv(sev)); const s7 = iv(sev); name = NOTE_EN[root] + (dim ? 'm7b5' : q3 === 'maj' ? (s7 === 11 ? 'maj7' : '7') : 'm7'); }
+    const ninth = scale[(d + 1) % 7];
+    if (ext >= 9 && !dim && iv(ninth) === 2) { ivs.push(14); name = name.replace(/maj7$/, 'maj9').replace(/m7$/, 'm9').replace(/7$/, '9'); }
     return { name, tones: ivs.map((i) => NOTE_ES[(root + i) % 12]), midi: voice({ root, ivs, name, score: 0 }) };
   };
   const roman = best.mode === 'maj' ? ROMAN_MAJ : ROMAN_MIN;
@@ -128,12 +139,12 @@ function tonalHarmony(c: string, salt = '') {
     letterNotes: [...c].map((ch, i) => ({ ch, note: NOTE_ES[snapped[i]] + (mins[i] ? 'm' : ''), moved: snapped[i] !== pcs[i] })),
   };
 }
-export function harmonyFromName(raw: string, mode: 'tonal' | 'puro' = 'tonal', salt = '') {
+export function harmonyFromName(raw: string, mode: 'tonal' | 'puro' = 'tonal', salt = '', o: HarmOpts = {}) {
   const c = clean(raw) || 'LOOP';
-  return mode === 'puro' ? pureHarmony(c) : tonalHarmony(c, salt);
+  return mode === 'puro' ? pureHarmony(c) : tonalHarmony(c, salt, o);
 }
 export function applyHarmony(p: Project, salt = '') {
-  const h = harmonyFromName(p.name, p.harmony ?? 'tonal', salt);
+  const h = harmonyFromName(p.name, p.harmony ?? 'tonal', salt, GENRES[p.genre]?.harm);
   p.seq = h.seq; p.chords = h.chords; p.key = h.key; p.progression = h.progression; p.letterNotes = h.letterNotes; p.scale = h.scale; p.tonic = h.tonic;
   p.tracks.forEach((t) => { if (t.type === 'melody' && t.autoMelody) t.notes = generateMelody(p, salt); });
 }
@@ -141,37 +152,32 @@ export function applyHarmony(p: Project, salt = '') {
 /* ---------- melodía de 4 compases generada por el nombre ----------
    Frase de pregunta y respuesta: compás 1 = motivo (el dibujo de las letras), compás 2 = respuesta con otro ritmo,
    compás 3 = el motivo más agudo, compás 4 = cierre que baja hasta la tónica. Los tiempos fuertes caen en notas del acorde. */
-const RHYTHMS: [number, number][][] = [
-  [[0, 2], [2, 2], [4, 4], [10, 2], [12, 4]], [[0, 3], [3, 3], [6, 2], [8, 4], [14, 2]], [[0, 2], [4, 2], [6, 2], [8, 2], [10, 6]],
-  [[2, 2], [4, 2], [6, 4], [12, 2], [14, 2]], [[0, 4], [6, 2], [8, 2], [10, 2], [12, 4]], [[0, 1], [2, 1], [3, 3], [8, 2], [10, 2], [12, 2], [14, 2]],
-  [[0, 6], [6, 2], [8, 6], [14, 2]], [[0, 2], [3, 1], [4, 2], [7, 1], [8, 4], [12, 2], [14, 2]],
-];
-const CADENCES: [number, number][][] = [[[0, 2], [2, 2], [4, 2], [6, 10]], [[0, 4], [4, 4], [8, 8]], [[0, 2], [2, 2], [4, 4], [8, 8]], [[0, 3], [3, 3], [6, 2], [8, 8]]];
 export function generateMelody(p: Project, salt = ''): Note[] {
   const r = seeded(clean(p.name || 'Loop') + '#mel' + salt);
   const scale = (p.scale && p.scale.length ? p.scale : [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))]);
   const tonic = p.tonic ?? ((p.seq[0] ?? 60) % 12);
-  const pool: number[] = []; for (let m = 62; m <= 81; m++) if (scale.includes(m % 12)) pool.push(m);
+  const st = MEL_STYLES[GENRES[p.genre]?.mel.style ?? 'qa'] ?? MEL_STYLES.qa, LO = st.lo, HI = st.hi, hook = st.form === 'hook';
+  const pool: number[] = []; for (let m = LO; m <= HI; m++) if (scale.includes(m % 12)) pool.push(m);
   const nearestIdx = (m: number) => { let bi = 0; pool.forEach((x, i) => { if (Math.abs(x - m) < Math.abs(pool[bi] - m)) bi = i; }); return bi; };
   const nearPc = (pc: number, ref: number) => { let best = pool[0], d = 1e9; pool.forEach((x) => { if (x % 12 === pc && Math.abs(x - ref) < d) { d = Math.abs(x - ref); best = x; } }); return best; };
   let motif = p.seq.slice(0, 6).map((m) => ((m % 12) + 12) % 12);
   if (new Set(motif).size < 3) { const sc = [...scale].sort((a, b) => ((a - tonic + 12) % 12) - ((b - tonic + 12) % 12)); motif = [...clean(p.name || 'Loop')].slice(0, 6).map((ch, i) => sc[(ch.charCodeAt(0) + i * 2) % sc.length]); }
-  const rA = pick(r, RHYTHMS); let rB = pick(r, RHYTHMS); if (rB === rA) rB = RHYTHMS[(RHYTHMS.indexOf(rA) + 3) % RHYTHMS.length];
-  const bars = [rA, rB, rA, pick(r, CADENCES)];
-  const notes: Note[] = []; let prev = 72 + (r() < 0.5 ? 0 : 3);
+  const RH = st.rh, rA = pick(r, RH); let rB = pick(r, RH); if (rB === rA) rB = RH[(RH.indexOf(rA) + 1) % RH.length];
+  const bars = hook ? [rA, rA, rA, pick(r, st.cad)] : [rA, rB, rA, pick(r, st.cad)];
+  const notes: Note[] = []; let prev = Math.round((LO + HI) / 2) + (r() < 0.5 ? 0 : 3);
   bars.forEach((rh, b) => {
-    const chordPcs = p.chords[b].midi.map((m) => m % 12), offset = b === 1 ? 2 : b === 3 ? 1 : 0;
+    const chordPcs = p.chords[b].midi.map((m) => m % 12), offset = hook ? 0 : b === 1 ? 2 : b === 3 ? 1 : 0;
     rh.forEach(([st, len], k) => {
       let m: number;
       if (b === 3 && k === rh.length - 1) m = nearPc(tonic, prev); // cierre en la tónica
       else {
         m = nearPc(motif[(k + offset) % motif.length] ?? tonic, prev);
-        if (b === 2) m = pool[Math.min(pool.length - 1, nearestIdx(m) + 2)]; // el motivo, una tercera más arriba
-        if (b === 3) { const i = nearestIdx(prev); m = pool[Math.max(0, i - 1 - (k % 2))]; } // baja por grados
+        if (b === 2 && !hook) m = pool[Math.min(pool.length - 1, nearestIdx(m) + 2)]; // el motivo, una tercera más arriba
+        if (b === 3 && !hook) { const i = nearestIdx(prev); m = pool[Math.max(0, i - 1 - (k % 2))]; } // baja por grados
         if ((st === 0 || st === 8) && !chordPcs.includes(m % 12)) { const up = pool[Math.min(pool.length - 1, nearestIdx(m) + 1)], dn = pool[Math.max(0, nearestIdx(m) - 1)]; m = chordPcs.includes(up % 12) ? up : chordPcs.includes(dn % 12) ? dn : m; }
       }
-      if (Math.abs(m - prev) > 7) { const alt = m + (m > prev ? -12 : 12); if (alt >= 62 && alt <= 81) m = alt; }
-      m = Math.max(62, Math.min(81, m));
+      if (Math.abs(m - prev) > 7) { const alt = m + (m > prev ? -12 : 12); if (alt >= LO && alt <= HI) m = alt; }
+      m = Math.max(LO, Math.min(HI, m));
       notes.push({ s: b * 16 + st, n: m, l: len }); prev = m;
     });
   });
@@ -204,6 +210,20 @@ export const SYNTHS: Record<string, { label: string; for: TrackType[]; p: Synth 
   warm: { label: 'Cálido', for: ['chords'], p: S({ wave: 'square', unison: 2, detune: 6, cutoff: 900, reso: 0.1, attack: 0.4, decay: 1, sustain: 0.8, release: 1, gain: 0.14 }) },
   glass: { label: 'Vidrio', for: ['chords'], p: S({ wave: 'fm', fmRatio: 3, fmIndex: 0.8, fmDecay: 2, cutoff: 6000, reso: 0.05, attack: 0.3, decay: 1, sustain: 0.7, release: 1.2, gain: 0.2 }) },
   choir: { label: 'Coro', for: ['chords'], p: S({ wave: 'tri', unison: 3, detune: 10, cutoff: 2000, reso: 0.15, attack: 0.7, decay: 1, sustain: 0.8, release: 1.5, gain: 0.2 }) },
+  // sonidos de género
+  tranceLead: { label: 'Lead trance', for: ['melody', 'arp'], p: S({ unison: 6, detune: 28, cutoff: 6500, reso: 0.12, envAmt: 0.3, fdecay: 0.4, attack: 0.005, decay: 0.4, sustain: 0.75, release: 0.3, gain: 0.2 }) },
+  trancePluck: { label: 'Pluck trance', for: ['arp', 'melody'], p: S({ unison: 5, detune: 20, cutoff: 900, reso: 0.25, envAmt: 2.4, fdecay: 0.16, decay: 0.22, release: 0.15, gain: 0.34 }) },
+  tranceGate: { label: 'Pad gate', for: ['chords'], p: S({ unison: 6, detune: 24, cutoff: 4200, reso: 0.1, envAmt: 0.3, fdecay: 0.15, attack: 0.003, decay: 0.3, sustain: 0.85, release: 0.04, gain: 0.13 }) },
+  tranceBass: { label: 'Rolling', for: ['bass'], p: S({ sub: 0.5, cutoff: 380, reso: 0.3, envAmt: 2, fdecay: 0.09, decay: 0.15, sustain: 0.2, release: 0.04, gain: 0.5 }) },
+  acid303: { label: 'Acid 303', for: ['arp', 'bass'], p: S({ cutoff: 230, reso: 0.9, envAmt: 3, fdecay: 0.14, attack: 0.002, decay: 0.3, sustain: 0.6, release: 0.03, gain: 0.4, octave: -1 }) },
+  technoSub: { label: 'Sub techno', for: ['bass'], p: S({ wave: 'tri', sub: 0.6, cutoff: 260, reso: 0.15, envAmt: 0.6, fdecay: 0.1, attack: 0.003, decay: 0.3, sustain: 0.7, release: 0.08, gain: 0.6 }) },
+  techStab: { label: 'Stab techno', for: ['chords'], p: S({ unison: 3, detune: 12, cutoff: 650, reso: 0.4, envAmt: 2.2, fdecay: 0.12, attack: 0.002, decay: 0.2, sustain: 0, release: 0.1, gain: 0.3 }) },
+  housePiano: { label: 'Piano house', for: ['chords', 'melody', 'arp'], p: S({ wave: 'fm', fmRatio: 2, fmIndex: 2.2, fmDecay: 0.25, cutoff: 7000, reso: 0.05, attack: 0.002, decay: 0.9, sustain: 0.1, release: 0.3, gain: 0.36 }) },
+  houseBass: { label: 'Bajo house', for: ['bass'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.6, fmDecay: 0.12, sub: 0.3, cutoff: 1800, reso: 0.05, decay: 0.3, sustain: 0.35, release: 0.06, gain: 0.55 }) },
+  deepRhodes: { label: 'Rhodes', for: ['chords', 'melody'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.2, fmDecay: 0.6, cutoff: 3200, reso: 0.05, attack: 0.004, decay: 1.6, sustain: 0.3, release: 0.6, gain: 0.34 }) },
+  deepBass: { label: 'Sub redondo', for: ['bass'], p: S({ wave: 'sine', sub: 0.2, cutoff: 900, reso: 0.05, attack: 0.008, decay: 0.6, sustain: 0.8, release: 0.15, gain: 0.5 }) },
+  melodicPluck: { label: 'Pluck oscuro', for: ['arp', 'melody'], p: S({ unison: 2, detune: 10, cutoff: 450, reso: 0.4, envAmt: 2.6, fdecay: 0.2, decay: 0.35, release: 0.3, gain: 0.32, poles4: true }) },
+  progPluck: { label: 'Pluck progressive', for: ['arp', 'melody'], p: S({ wave: 'square', unison: 2, detune: 9, cutoff: 800, reso: 0.3, envAmt: 1.8, fdecay: 0.2, decay: 0.28, release: 0.22, gain: 0.26 }) },
 };
 export const STAB = (p: Synth): Synth => ({ ...p, attack: 0.004, decay: 0.3, sustain: 0, release: 0.15, gain: p.gain * 1.6, envAmt: Math.max(p.envAmt, 0.8), fdecay: 0.2 });
 
@@ -221,23 +241,7 @@ export const DRUM_SOUNDS: Record<string, string> = {
 export const DRUM_GROUPS: [string, string[]][] = [['Bombo', ['kick']], ['Golpes', ['clap', 'snare', 'snare808', 'snareSoft', 'rim', 'rim2']], ['Platillos', ['hat', 'open', 'ride', 'crash']], ['Percusión', ['cowbell', 'clave', 'conga', 'shaker', 'tamb', 'maraca']], ['Toms', ['tomL', 'tomM', 'tomH']]];
 export const sampleKey = (kit: string, sound: string) => KITS[kit]?.map[sound] ?? sound;
 
-/* ---------- géneros ---------- */
 const R = (on: number[], acc: number[] = []) => { const s = Array(16).fill(0); on.forEach((i) => (s[i] = 1)); acc.forEach((i) => (s[i] = 2)); return s; };
-const ALL = [...Array(16).keys()];
-export const GENRES: Record<string, any> = {
-  prog: { name: 'Progressive', bpm: 124, swing: 0, kit: 'tr909', arp: 'pluck', mode: 'name', rate: '16', oct: 2, chords: 'strings', chordMode: 'pad', bass: 'bassSaw',
-    st: { kick: R([0, 4, 8, 12]), clap: R([4, 12]), hat: R([2, 6, 10, 14]), open: R([]), perc: R([3, 6, 10, 13]), bass: R([2, 6, 10, 14]) }, perc: 'rim', fx: { rev: 0.32, dly: 0.28 } },
-  house: { name: 'House', bpm: 124, swing: 0.22, kit: 'tr909', arp: 'organ', mode: 'name', rate: '8', oct: 1, chords: 'warm', chordMode: 'stab', chordSteps: R([2, 5, 10, 13]), bass: 'bassSaw',
-    st: { kick: R([0, 4, 8, 12]), clap: R([4, 12]), hat: R([2, 6, 10, 14]), open: R([2, 6, 10, 14]), perc: R(ALL, [2, 6, 10, 14]), bass: R([3, 6, 10, 14]) }, perc: 'tamb', fx: { rev: 0.18, dly: 0.12 } },
-  deep: { name: 'Deep House', bpm: 120, swing: 0.32, kit: 'tr808', arp: 'keys', mode: 'up', rate: '8', oct: 2, chords: 'warm', chordMode: 'stab', chordSteps: R([3, 7, 10, 14]), bass: 'bassSub',
-    st: { kick: R([0, 4, 8, 12]), clap: R([4, 12]), hat: R([2, 6, 10, 14]), open: R([14]), perc: R([1, 3, 5, 7, 9, 11, 13, 15]), bass: R([3, 7, 11, 14]) }, perc: 'shaker', fx: { rev: 0.35, dly: 0.2 } },
-  techno: { name: 'Techno', bpm: 132, swing: 0, kit: 'tr909h', arp: 'acid', mode: 'jump', rate: '16', oct: 2, chords: 'choir', chordMode: 'pad', bass: 'bassSub',
-    st: { kick: R([0, 4, 8, 12]), clap: R([4, 12]), hat: R(ALL, [2, 6, 10, 14]), open: R([2, 6, 10, 14]), perc: R([3, 5, 10, 11, 14]), bass: R([1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15]) }, perc: 'rim', fx: { rev: 0.2, dly: 0.18 } },
-  melodic: { name: 'Melodic Techno', bpm: 124, swing: 0, kit: 'tr909', arp: 'super', mode: 'up', rate: '16', oct: 2, chords: 'strings', chordMode: 'pad', bass: 'reese',
-    st: { kick: R([0, 4, 8, 12]), clap: R([]), hat: R([2, 6, 10, 14]), open: R([]), perc: R([3, 6, 10, 13]), bass: R([1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15]) }, perc: 'clave', fx: { rev: 0.38, dly: 0.3 } },
-  trance: { name: 'Trance', bpm: 138, swing: 0, kit: 'tr909h', arp: 'super', mode: 'pp', rate: '16', oct: 3, chords: 'strings', chordMode: 'pad', bass: 'bassSaw',
-    st: { kick: R([0, 4, 8, 12]), clap: R([4, 12]), hat: R([2, 6, 10, 14]), open: R([2, 6, 10, 14]), perc: R([]), bass: R([2, 3, 6, 7, 10, 11, 14, 15]) }, perc: 'rim', fx: { rev: 0.32, dly: 0.26 } },
-};
 
 const COLORS: Record<string, string> = { kick: '#ff5a36', clap: '#ffb020', hat: '#f2e94e', open: '#9be15d', perc: '#2fd8b4', bass: '#3fa7ff', arp: '#8b6cff', chords: '#ff5fb3' };
 const mkTrack = (id: string, name: string, type: TrackType, sound: string, extra: Partial<Track> = {}): Track => ({
@@ -275,14 +279,33 @@ export function newProject(name = '', genre = 'prog'): Project {
   applyGenre(p, genre);
   return p;
 }
-export function applyGenre(p: Project, g: string) {
-  const G = GENRES[g]; p.genre = g; p.bpm = G.bpm; p.swing = G.swing; p.kit = G.kit;
-  const T = (id: string) => p.tracks.find((t) => t.id === id) ?? mkTrack(id, '', 'drum', 'kick');
-  ['kick', 'clap', 'hat', 'open', 'perc', 'bass'].forEach((id) => (T(id).steps = [...G.st[id]]));
-  T('perc').sound = G.perc; T('bass').sound = G.bass; T('arp').sound = G.arp; T('chords').sound = G.chords;
-  T('arp').arp = { mode: G.mode, rate: G.rate, oct: G.oct, gate: Array(16).fill(true) };
-  T('chords').chordMode = G.chordMode; T('chords').steps = G.chordSteps ? [...G.chordSteps] : R([0]);
-  T('arp').rev = G.fx.rev * 1.2; T('arp').dly = G.fx.dly * 1.2; T('chords').rev = G.fx.rev * 1.3;
+/* aplica la receta completa del género. La semilla es nombre + género (+ versión): el mismo nombre en trance suena siempre igual */
+export function applyGenre(p: Project, g: string, variant = 0) {
+  const G = GENRES[g]; if (!G) return; p.genre = g;
+  const r = seeded(clean(p.name || 'Loop') + '#g:' + g + '#' + variant);
+  const T = (id: string) => p.tracks.find((t) => t.id === id);
+  p.bpm = Math.round(G.bpm[0] + r() * (G.bpm[1] - G.bpm[0])); p.swing = +(G.swing[0] + r() * (G.swing[1] - G.swing[0])).toFixed(2);
+  p.kit = pick(r, G.kit); p.fx = { ...G.fx };
+  // batería
+  const d = pick(r, G.drums);
+  (['kick', 'clap', 'hat', 'open', 'perc'] as const).forEach((id) => { const t = T(id); if (t) { t.steps = parseDrum(d[id]); t.mute = !t.steps.some(Boolean); } });
+  const kick = T('kick'); if (kick) { kick.pitch = G.kick.pitch; kick.decay = G.kick.decay; }
+  const clap = T('clap'); if (clap) { clap.sound = pick(r, G.clap); clap.name = DRUM_SOUNDS[clap.sound] ?? 'Clap'; }
+  const perc = T('perc'); if (perc) { perc.sound = pick(r, G.perc); perc.name = DRUM_SOUNDS[perc.sound] ?? 'Percu'; }
+  const mix = (t: Track | undefined, m: { vol: number; rev: number; dly: number; duck: number }) => { if (t) { t.vol = m.vol; t.rev = m.rev; t.dly = m.dly; t.duck = m.duck; t.mute = false; t.synth = undefined; } };
+  // bajo
+  const bass = T('bass');
+  if (bass) { const b = pick(r, G.bass), pb = parseBass(b.line); bass.steps = pb.steps; bass.bassLine = pb.line; bass.bassLen = b.l; bass.sound = pick(r, G.bassSound); mix(bass, G.mix.bass); }
+  // acordes
+  const ch = T('chords');
+  if (ch) { const c = pick(r, G.chords); ch.chordMode = c.mode; ch.steps = c.steps ? parseDrum(c.steps).map((v) => (v ? 1 : 0)) : R([0]); ch.chordLen = c.len; ch.sound = pick(r, G.chordSound); mix(ch, G.mix.chords); }
+  // arpegio
+  const arp = T('arp');
+  if (arp) { const a = pick(r, G.arp); arp.sound = pick(r, G.arpSound); arp.arp = { mode: a.mode, rate: a.rate, oct: a.oct, gate: a.gate ? parseGate(a.gate) : Array(16).fill(true) }; mix(arp, G.mix.arp);
+    if (a.mode === 'acid') arp.arp.gate = acidPattern(p).gate; }
+  // melodía
+  const mel = T('melody'); if (mel) { mel.sound = pick(r, G.mel.sound); mix(mel, G.mix.melody); }
+  applyHarmony(p, variant ? String(variant) : '');
 }
 
 /* ---------- semilla por nombre: un loop distinto (y lindo) por nombre ---------- */
@@ -294,32 +317,14 @@ export function seeded(str: string) {
 }
 const pick = <T,>(r: () => number, a: T[]) => a[Math.floor(r() * a.length)];
 const wpick = (r: () => number, o: Record<string, number>) => { const ks = Object.keys(o), tot = ks.reduce((a, k) => a + o[k], 0); let x = r() * tot; for (const k of ks) { x -= o[k]; if (x <= 0) return k; } return ks[0]; };
-const STYLE: Record<string, any> = {
-  prog: { mel: ['lead', 'pluckHi', 'bell'], arp: ['pluck', 'bell', 'keys', 'marimba'], mode: { name: 3, mirror: 2, up: 1, jump: 1 }, oct: [2, 2, 3], rate: ['16', '16', 'tr'], chords: ['strings', 'glass', 'choir'], bass: ['bassSaw', 'bassSub', 'reese'], kit: ['tr909', 'tr909', 'tr808'], perc: ['rim', 'clave', 'shaker'] },
-  house: { mel: ['keys', 'organ', 'pluckHi'], arp: ['organ', 'keys', 'pluck', 'chip'], mode: { name: 3, mirror: 1, up: 1 }, oct: [1, 1, 2], rate: ['8', 'tr', '16'], chords: ['warm', 'glass'], bass: ['bassSaw', 'bassSub'], kit: ['tr909', 'tr909', 'tr808'], perc: ['tamb', 'conga', 'cowbell', 'shaker'] },
-  deep: { mel: ['keys', 'flute', 'bell'], arp: ['keys', 'bell', 'marimba'], mode: { up: 2, name: 2, mirror: 1 }, oct: [1, 2, 2], rate: ['8', 'tr'], chords: ['warm', 'glass', 'choir'], bass: ['bassSub', 'reese'], kit: ['tr808', 'tr909'], perc: ['shaker', 'rim', 'clave', 'maraca'] },
-  techno: { mel: ['pluckHi', 'chip', 'lead'], arp: ['acid', 'pluck', 'chip'], mode: { jump: 2, name: 2, rand: 1, mirror: 1 }, oct: [1, 2, 2], rate: ['16', '16', 'tr'], chords: ['choir', 'strings'], bass: ['bassSub', 'acid', 'reese'], kit: ['tr909h', 'tr909h', 'tr808'], perc: ['rim', 'conga'] },
-  melodic: { mel: ['lead', 'bell', 'pluckHi'], arp: ['super', 'pluck', 'bell'], mode: { up: 2, name: 2, pp: 1, mirror: 1 }, oct: [2, 2, 3], rate: ['16', '16', 'tr'], chords: ['strings', 'choir', 'glass'], bass: ['reese', 'bassSub'], kit: ['tr909', 'tr808'], perc: ['clave', 'rim', 'shaker'] },
-  trance: { mel: ['lead', 'super'], arp: ['super', 'pluck'], mode: { pp: 2, up: 2, name: 1 }, oct: [2, 3], rate: ['16'], chords: ['strings', 'glass'], bass: ['bassSaw', 'reese'], kit: ['tr909h', 'tr909'], perc: ['rim'] },
-};
-const GATES = [null, null, null, [3, 7, 11, 15], [2, 10], [5, 13], [1, 5, 9, 13], [3, 6, 11, 14]];
 export function projectFromName(name: string, variant = 0): Project {
   const r = seeded(clean(name) + '#' + variant);
-  const g = wpick(r, { prog: 3, melodic: 3, deep: 2, house: 2, trance: 2, techno: 1 }), st = STYLE[g];
-  const p = newProject(name, g); if (variant) applyHarmony(p, String(variant)); const T = (id: string) => p.tracks.find((t) => t.id === id) ?? mkTrack(id, '', 'drum', 'kick');
-  const arp = T('arp'); arp.sound = pick(r, st.arp);
-  arp.arp = { mode: wpick(r, st.mode), rate: pick(r, st.rate), oct: pick(r, st.oct), gate: Array(16).fill(true) };
-  const gt = pick(r, GATES); if (gt) gt.forEach((i) => (arp.arp!.gate[i] = false));
-  T('chords').sound = pick(r, st.chords); T('bass').sound = pick(r, st.bass); p.kit = pick(r, st.kit); T('perc').sound = pick(r, st.perc);
-  p.bpm = GENRES[g].bpm + Math.round((r() - 0.5) * 4);
-  if (GENRES[g].swing) p.swing = +(GENRES[g].swing * (0.8 + r() * 0.4)).toFixed(2);
-  T('perc').mute = r() < 0.4; if (g !== 'techno' && g !== 'trance') T('open').mute = r() < 0.5;
-  [0, 4, 8, 12].forEach((i) => { if (T('bass').steps[i] && r() < 0.25) T('bass').steps[i] = 2; });
+  const g = wpick(r, GENRE_WEIGHTS);
+  const p = newProject(name, g);
   // melodía de 4 compases propia del nombre
-  const mel = newTrack(p, 'melody', pick(r, st.mel)); mel.id = 'melody'; mel.color = '#ffd166'; mel.vol = 0.58;
-  mel.notes = generateMelody(p, String(variant || '')); mel.autoMelody = true;
+  const mel = newTrack(p, 'melody'); mel.id = 'melody'; mel.color = '#ffd166';
   p.tracks.splice(p.tracks.findIndex((t) => t.id === 'arp') + 1, 0, mel);
-  arp.vol = 0.5; arp.rev = Math.max(arp.rev, 0.4);
+  applyGenre(p, g, variant);
   p.seed = r();
   return p;
 }
@@ -330,8 +335,19 @@ function arpNotes(p: Project, t: Track) {
   const up = () => { const b = [...new Set(nm)].sort((x, y) => x - y), o: number[] = []; for (let k = 0; k < a.oct; k++) b.forEach((m) => o.push(m + 12 * k)); return o; };
   const r = seeded(p.name + '#arp');
   const rs = Array.from({ length: 64 }, () => { const u = up(); return u[Math.floor(r() * u.length)]; });
+  const ac = a.mode === 'acid' ? acidPattern(p) : null;
+  const chordTones = (s: number, pp: boolean) => {
+    const c = p.chords[Math.floor(s / 16) % 4]?.midi ?? [60]; const pcs = [...new Set(c.map((m) => ((m % 12) + 12) % 12))];
+    const base = [...pcs].map((pc) => { let m = 57 + ((pc - 57) % 12 + 12) % 12; return m; }).sort((x, y) => x - y);
+    const u: number[] = []; for (let k = 0; k < a.oct; k++) base.forEach((m) => u.push(m + 12 * k));
+    const seq = pp && u.length > 2 ? u.concat(u.slice(1, -1).reverse()) : u;
+    return seq[(s % 16) % seq.length];
+  };
   return (s: number) => {
     switch (a.mode) {
+      case 'chord': return chordTones(s, false);
+      case 'chordpp': return chordTones(s, true);
+      case 'acid': return ac!.n[s % 16];
       case 'up': { const u = up(); return u[s % u.length]; }
       case 'down': { const u = up().reverse(); return u[s % u.length]; }
       case 'pp': { const u = up(); if (u.length < 2) return u[0]; const c = u.concat(u.slice(1, -1).reverse()); return c[s % c.length]; }
@@ -341,6 +357,19 @@ function arpNotes(p: Project, t: Track) {
       default: return nm[s % L] + oc(Math.floor(s / L));
     }
   };
+}
+/* línea acid tipo 303: casi todo en la tónica, saltos de octava, quinta y séptima, con acentos, slides y silencios */
+export function acidPattern(p: Project) {
+  const r = seeded(clean(p.name || 'Loop') + '#acid'), t = p.tonic ?? ((p.seq[0] ?? 60) % 12), sc = p.scale ?? [];
+  const deg = (k: number) => (sc.length >= 7 ? ((sc[k] - t + 12) % 12) : [0, 2, 3, 5, 7, 8, 10][k]);
+  const pool = [0, 0, 0, 0, 12, 12, deg(2), deg(4), deg(6), deg(4) + 12, -12 + deg(6)];
+  const base = 48 + t > 55 ? 36 + t : 48 + t;
+  const n: number[] = [], acc: boolean[] = [], slide: boolean[] = [], gate: boolean[] = [];
+  for (let i = 0; i < 16; i++) {
+    n.push(base + (i === 0 ? 0 : pick(r, pool))); acc.push(i % 4 === 0 ? r() < 0.6 : r() < 0.22);
+    gate.push(i === 0 || r() > 0.22); slide.push(i > 0 && gate[i - 1] && r() < 0.25);
+  }
+  return { n, acc, slide, gate };
 }
 export const arpPlays = (t: Track, i: number) => { const a = t.arp!; if (!a.gate[i]) return false; if (a.rate === '8') return i % 2 === 0; if (a.rate === 'tr') return i % 4 !== 1; return true; };
 export function arpPreview(p: Project, t: Track) { const f = arpNotes(p, t); return (s: number) => f(s); }
@@ -353,24 +382,33 @@ export function compile(p: Project) {
     let kind = 'synth', synth: Synth | undefined, sample: string | undefined;
     if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(p.kit, t.sound);
-      for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (v) ev[s].push({ v: v === 2 ? 1 : 0.72 }); }
+      for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (v) ev[s].push({ v: v === 2 ? 1 : v === 3 ? 0.38 : 0.72 }); }
     } else if (t.type === 'bass') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.bassSaw.p;
-      for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (!v) continue; let m = p.chords[Math.floor(s / 16)].midi[0]; while (m > 47) m -= 12; while (m < 36) m += 12; ev[s].push({ n: m - 12, v: v === 2 ? 1 : 0.8, l: 0.85 }); }
+      for (let s = 0; s < 64; s++) {
+        const v = t.steps[s % 16]; if (!v) continue; let m = p.chords[Math.floor(s / 16)].midi[0]; while (m > 47) m -= 12; while (m < 36) m += 12;
+        ev[s].push({ n: m - 12 + (t.bassLine?.[s % 16] ?? 0), v: v === 2 ? 1 : 0.8, l: t.bassLen ?? 0.85 });
+      }
     } else if (t.type === 'arp') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.pluck.p; const f = arpNotes(p, t);
-      for (let s = 0; s < 64; s++) if (arpPlays(t, s % 16)) ev[s].push({ n: f(s), v: s % 4 === 0 ? 0.95 : 0.78, l: t.arp!.rate === '8' ? 1.8 : 0.9 });
+      if (t.arp!.mode === 'acid') {
+        const ac = acidPattern(p);
+        for (let s = 0; s < 64; s++) { const i = s % 16; if (!t.arp!.gate[i]) continue; const nx = (i + 1) % 16, tie = t.arp!.gate[nx] && ac.slide[nx];
+          ev[s].push({ n: f(s), v: ac.acc[i] ? 1 : 0.7, l: tie ? 1.15 : 0.6, g: ac.slide[i] && t.arp!.gate[(i + 15) % 16] ? 1 : 0 }); }
+      } else for (let s = 0; s < 64; s++) if (arpPlays(t, s % 16)) ev[s].push({ n: f(s), v: s % 4 === 0 ? 0.95 : 0.78, l: t.arp!.rate === '8' ? 1.8 : 0.9 });
     } else if (t.type === 'melody') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.lead.p;
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - 0.1) }); });
     } else {
       const base = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.strings.p;
-      if (t.chordMode === 'stab') { synth = STAB(base); for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: 0.8, l: 1 })); }
+      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: 0.8, l: t.chordLen ?? 1 })); }
+      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05) }; for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: 0.8, l: t.chordLen ?? 0.8 })); }
       else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
     }
     return {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: t.mute, solo: t.solo,
       rev: t.rev, dly: t.dly, duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
+      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'),
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : 0.05,
     };
   });

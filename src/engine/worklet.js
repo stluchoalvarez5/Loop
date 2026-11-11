@@ -64,7 +64,8 @@ class SynthVoice {
   constructor() { this.on = false; this.f = new SVF(); this.f2 = new SVF(); this.ph = new Float64Array(6); }
   start(p, note, vel, lenSamp, sr, pan) {
     this.p = p; this.sr = sr; this.on = true; this.t = 0; this.len = lenSamp; this.vel = vel;
-    this.freq = mtof(note + (p.octave || 0) * 12); this.env = 0; this.stage = 0; this.fenv = 1;
+    this.freq = mtof(note + (p.octave || 0) * 12); this.tf = this.freq; this.env = 0; this.stage = 0; this.fenv = vel > 0.95 ? 1.6 : 1; // acento: abre más el filtro
+    this.gk = 1 - Math.exp(-1 / (sr * 0.045));
     const n = Math.max(1, Math.min(6, p.unison | 0));
     for (let k = 0; k < n; k++) this.ph[k] = Math.random();
     this.n = n; this.fm = 0; this.mph = 0; this.sph = 0;
@@ -73,6 +74,8 @@ class SynthVoice {
     this.rK = Math.exp(-1 / Math.max(1, p.release * sr * 0.3)); this.fK = Math.exp(-1 / Math.max(1, p.fdecay * sr * 0.3));
     this.mK = Math.exp(-1 / Math.max(1, (p.fmDecay || 0.3) * sr * 0.3)); this.mEnv = 1;
   }
+  /* slide (303): la voz que suena se desliza a la nota nueva sin volver a atacar */
+  glideTo(p, note, vel, lenSamp) { this.tf = mtof(note + (p.octave || 0) * 12); this.len = this.t + lenSamp; this.vel = vel; }
   render(L, R, a, b) {
     const p = this.p, sr = this.sr, n = this.n, wave = p.wave;
     const k = 2 - 2 * Math.min(0.97, p.reso);
@@ -83,6 +86,7 @@ class SynthVoice {
       else { this.env *= this.rK; if (this.env < 1e-4) { this.on = false; return; } }
       if (this.stage === 0 && this.t >= this.len) this.stage = 2;
       this.fenv *= this.fK; this.mEnv *= this.mK;
+      if (this.tf !== this.freq) this.freq += (this.tf - this.freq) * this.gk;
       // osciladores
       let s = 0;
       const base = this.freq;
@@ -193,7 +197,7 @@ class LoopEngine extends AudioWorkletProcessor {
     if (m.type === 'sample') { this.samples[m.key] = m.data; return; }
     if (m.type === 'project') {
       const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing;
-      this.tracks = m.project.tracks.map((t) => { const o = old.find((x) => x.id === t.id); return { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, duckEnv: 1, meter: 0 }; });
+      this.tracks = m.project.tracks.map((t) => { const o = old.find((x) => x.id === t.id); return { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0 }; });
       const s16 = 60 / this.bpm / 4; this.dly.setTime(s16 * 3, s16 * 4); this.dly.fb = m.project.fx.dlyFb;
       this.rev.room = m.project.fx.revSize; this.rev.damp = m.project.fx.revDamp; this.revRet = m.project.fx.revRet; this.dlyRet = m.project.fx.dlyRet;
       this.target = m.project.master.target; this.autoOn = m.project.master.auto; this.ceil = dbToGain(m.project.master.ceiling);
@@ -206,6 +210,12 @@ class LoopEngine extends AudioWorkletProcessor {
   }
   stepLen() { return this.sr * 60 / this.bpm / 4; }
   trigger(t, ev, offset) {
+    if (t.mono && t.kind !== 'sample') {
+      // monofónico: con slide, la voz activa se desliza; si no, se sueltan las voces anteriores
+      const cur = t.last && t.last.on && t.last.stage < 2 ? t.last : null;
+      if (cur && ev.g) { cur.glideTo(t.synth, ev.n, ev.v, ev.l * this.stepLen()); return; }
+      for (const x of t.voices) if (x.on && x.stage < 2) { x.len = Math.min(x.len, x.t + offset); if (x.stage === 0) x.stage = 2; }
+    }
     let v = t.voices.find((x) => !x.on);
     if (!v) { if (t.voices.length < MAXV) { v = t.kind === 'sample' ? new SampleVoice() : new SynthVoice(); t.voices.push(v); } else { v = t.voices[t.vi++ % t.voices.length]; } }
     const pan = (t.spread || 0) * (Math.random() * 2 - 1);
@@ -216,7 +226,7 @@ class LoopEngine extends AudioWorkletProcessor {
       v.delay = offset;
     } else {
       v.start(t.synth, ev.n, ev.v, ev.l * this.stepLen(), this.sr, pan);
-      v.delay = offset;
+      v.delay = offset; t.last = v;
     }
     if (t.isKick) this.duckHit = offset;
   }

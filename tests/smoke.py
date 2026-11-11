@@ -14,8 +14,8 @@ with sync_playwright() as p:
     full = pg.inner_text(".stat >> nth=0") if pg.locator(".stat").count() else None
     lufs = lambda: pg.evaluate("document.querySelector('.lcd .l1 span:last-child b').textContent")
     print("bar:", pg.evaluate("document.querySelector('.lcd b').textContent"), "| LUFS todo:", lufs())
-    # silenciar kick y bajo
-    for nm in ["Kick", "Bajo", "Clap", "Hat"]:
+    # silenciar kick, golpe, hat y bajo
+    for nm in ["Kick", "Bajo", "Hat"]:
         pg.click(f".tname:has-text('{nm}')")
     pg.click("nav button:has-text('Mixer')")
     for i in [0, 1, 2, 5]:
