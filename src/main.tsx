@@ -2,6 +2,7 @@ import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import './style.css';
 import { Engine } from './engine/engine';
+import { renderAudio, wav, mp3, abletonZip, baseName } from './engine/export';
 import {
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
@@ -389,6 +390,49 @@ function Tutorial({ onClose }: { onClose: (never: boolean) => void }) {
   );
 }
 
+/* ---------- exportar ---------- */
+type Out = { url: string; file: File; name: string; size: number };
+function Export({ p }: { p: Project }) {
+  const [loops, setLoops] = useState(1), [busy, setBusy] = useState(''), [out, setOut] = useState<Out | null>(null), [err, setErr] = useState('');
+  const make = async (kind: 'wav' | 'mp3' | 'zip') => {
+    if (busy) return; setErr(''); if (out) { URL.revokeObjectURL(out.url); setOut(null); }
+    try {
+      let data: Uint8Array, ext: string, mime: string;
+      if (kind === 'zip') { data = await abletonZip(engine, p, loops, setBusy); ext = 'zip'; mime = 'application/zip'; }
+      else {
+        setBusy('Renderizando el loop…'); const a = await renderAudio(engine, p, loops);
+        if (kind === 'wav') { data = wav(a, 24); ext = 'wav'; mime = 'audio/wav'; } else { setBusy('Codificando MP3…'); data = await mp3(a); ext = 'mp3'; mime = 'audio/mpeg'; }
+      }
+      const name = baseName(p) + (kind === 'zip' ? '_ableton' : '') + '.' + ext, file = new File([data as BlobPart], name, { type: mime });
+      setOut({ url: URL.createObjectURL(file), file, name, size: data.length });
+    } catch (e: any) { console.error(e); setErr('No se pudo exportar en este navegador. Probá desde Chrome o Safari actualizados.'); }
+    setBusy('');
+  };
+  const canShare = typeof navigator !== 'undefined' && (navigator as any).canShare && out && (navigator as any).canShare({ files: [out.file] });
+  return (
+    <div class="card">
+      <div class="ct"><h3>Exportar</h3></div>
+      <div class="sub" style={{ marginTop: 0 }}>Largo</div>
+      <div class="chips">{[[1, '4 compases'], [2, '8 compases'], [4, '16 compases']].map(([v, l]) => <button class={'chip' + (loops === v ? ' on' : '')} onClick={() => setLoops(v as number)}>{l}</button>)}</div>
+      <div class="exp-btns">
+        <button class="btn hot" disabled={!!busy} onClick={() => make('wav')}>WAV</button>
+        <button class="btn hot" disabled={!!busy} onClick={() => make('mp3')}>MP3</button>
+        <button class="btn vio" disabled={!!busy} onClick={() => make('zip')}>Para Ableton (.zip)</button>
+      </div>
+      {busy && <div class="exp-status"><i class="spin" />{busy}</div>}
+      {err && <div class="exp-status" style={{ color: '#ff7b7b' }}>{err}</div>}
+      {out && <div class="exp-out">
+        <div><b>{out.name}</b><span>{(out.size / 1048576).toFixed(1)} MB</span></div>
+        <div class="exp-btns">
+          <a class="btn hot" href={out.url} download={out.name}>Descargar</a>
+          {canShare && <button class="btn" onClick={() => (navigator as any).share({ files: [out.file], title: out.name }).catch(() => {})}>Compartir / Guardar en el celu</button>}
+        </div>
+      </div>}
+      <div class="hint">El WAV y el MP3 empalman perfecto si los ponés en loop. El paquete para Ableton trae un WAV por pista (stems), la mezcla, los MIDI de cada pista y de la batería, y un LEEME con el tempo y la tonalidad: arrastrás todo al compás 1 y queda alineado.</div>
+    </div>
+  );
+}
+
 const EQF = ['63', '160', '400', '1k', '2.5k', '6.3k', '10k', '16k'];
 const EQPRE: Record<string, number[]> = { Plano: [0, 0, 0, 0, 0, 0, 0, 0], 'Más graves': [5, 3, 0, -1, 0, 0, 0, 0], Brillo: [0, 0, -1, 0, 1, 3, 4, 3], Club: [4, 2, -2, -2, 0, 2, 3, 2], 'Cálido': [2, 3, 1, 0, -1, -2, -3, -3], 'Lo-fi': [-12, -4, 2, 3, 2, -4, -10, -12], 'Sin barro': [0, -1, -4, -1, 1, 1, 0, 0] };
 function Master({ p, up, stats }: { p: Project; up: (fn: (d: Project) => void) => void; stats: { lufs: number; auto: number; gr: number } }) {
@@ -400,6 +444,7 @@ function Master({ p, up, stats }: { p: Project; up: (fn: (d: Project) => void) =
     return d;
   }, [p.master.eq]);
   return <>
+    <Export p={p} />
     <div class="card">
       <div class="ct"><h3>Salida</h3></div>
       <div class="stats">

@@ -35,7 +35,8 @@ export class Engine {
     return this.ready;
   }
 
-  private send(key: string, data: Float32Array) { this.node!.port.postMessage({ type: 'sample', key, data }, [data.buffer]); }
+  sampleData: Record<string, Float32Array> = {};
+  private send(key: string, data: Float32Array) { this.sampleData[key] = data; const copy = data.slice(); this.node!.port.postMessage({ type: 'sample', key, data: copy }, [copy.buffer]); }
 
   private async loadSamples() {
     const ctx = this.ctx!;

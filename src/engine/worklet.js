@@ -162,7 +162,7 @@ class PingPong {
 class KWeight { constructor(sr) { this.a = new Biquad(); this.a.set('hs', 1500, 0.7071, 4, sr); this.b = new Biquad(); this.b.set('hp', 38, 0.5, 0, sr); } run(x) { return this.b.run(this.a.run(x)); } }
 
 class LoopEngine extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
     this.sr = sampleRate; this.samples = {}; this.tracks = []; this.playing = false; this.pos = 0; this.step = -1;
     this.bpm = 124; this.swing = 0; this.compiled = null;
@@ -174,8 +174,14 @@ class LoopEngine extends AudioWorkletProcessor {
     this.pkWin = new Float32Array(this.LA); this.ceil = dbToGain(-1);
     this.duck = 1; this.duckTarget = 1; this.meterN = 0; this.peak = 0; this.revRet = 0.8; this.dlyRet = 0.6;
     this.buf = { L: new Float32Array(128), R: new Float32Array(128), rL: new Float32Array(128), rR: new Float32Array(128), dL: new Float32Array(128), dR: new Float32Array(128), tL: new Float32Array(128), tR: new Float32Array(128), kd: new Float32Array(128) };
-    this.stepAt = -1;
+    this.stepAt = -1; this.clock = 0; this.freezeAt = 0; this.quiet = false;
     this.port.onmessage = (e) => this.onMsg(e.data);
+    // modo exportación (OfflineAudioContext): el proyecto y los samples llegan en el constructor y arranca a sonar en la muestra 0
+    const o = options && options.processorOptions;
+    if (o && o.export) {
+      this.samples = o.samples; this.onMsg({ type: 'project', project: o.project }); this.quiet = true; this.freezeAt = o.freezeAt || 0;
+      this.playing = true; this.pos = 0; this.next = 0; this.nextT = 0;
+    }
   }
   setEq(gains) {
     const F = [[63, 'ls'], [160, 'peak'], [400, 'peak'], [1000, 'peak'], [2500, 'peak'], [6300, 'peak'], [10000, 'peak'], [16000, 'hs']];
@@ -226,7 +232,7 @@ class LoopEngine extends AudioWorkletProcessor {
         while (this.pos >= this.nextT) {
           const st = this.next; this.step = st;
           for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (evs) for (const ev of evs) this.trigger(t, ev, i); }
-          this.port.postMessage({ type: 'step', step: st }); this.stepAt = i;
+          if (!this.quiet) this.port.postMessage({ type: 'step', step: st }); this.stepAt = i;
           this.next = st + 1;
           if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; }
           this.nextT = this.next * sl + swOff(this.next);
@@ -276,7 +282,8 @@ class LoopEngine extends AudioWorkletProcessor {
       // sonoridad (K-weighting) y ganancia automática
       const kl = this.kwL.run(l), kr = this.kwR.run(r);
       if (this.playing) this.ms = this.ms * this.msK + (kl * kl + kr * kr) * (1 - this.msK);
-      if (this.autoOn && this.playing && this.ms > 1e-7) {
+      this.clock++;
+      if (this.autoOn && this.playing && this.ms > 1e-7 && !(this.freezeAt && this.clock > this.freezeAt)) {
         const lufs = -0.691 + 10 * Math.log10(this.ms), want = Math.min(dbToGain(6), Math.max(dbToGain(-18), dbToGain(this.target - lufs)));
         this.auto += (want - this.auto) * (want < this.auto ? 2e-5 : 4e-6);
       }
@@ -293,7 +300,7 @@ class LoopEngine extends AudioWorkletProcessor {
       OL[i] = ol; OR[i] = or;
       const ap = Math.max(Math.abs(ol), Math.abs(or)); if (ap > this.peak) this.peak = ap;
     }
-    if (++this.meterN >= 30) {
+    if (!this.quiet && ++this.meterN >= 30) {
       this.meterN = 0;
       this.port.postMessage({ type: 'meter', peak: this.peak, lufs: this.ms > 1e-9 ? -0.691 + 10 * Math.log10(this.ms) : -70, auto: 20 * Math.log10(this.auto), gr: 20 * Math.log10(this.limG), tracks: this.tracks.map((t) => t.meter) });
       this.peak *= 0.5;
