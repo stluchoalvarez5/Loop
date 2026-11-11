@@ -5,7 +5,8 @@ export type Synth = {
   envAmt: number; fdecay: number; attack: number; decay: number; sustain: number; release: number; gain: number;
   octave?: number; sub?: number; fmRatio?: number; fmIndex?: number; fmDecay?: number; poles4?: boolean;
 };
-export type TrackType = 'drum' | 'bass' | 'arp' | 'chords';
+export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody';
+export type Note = { s: number; n: number; l: number };
 export type Track = {
   id: string; name: string; color: string; type: TrackType;
   steps: number[]; // 16 pasos: 0 apagado, 1 golpe, 2 acento
@@ -15,6 +16,7 @@ export type Track = {
   synth?: Synth;
   arp?: { mode: string; rate: '16' | '8' | 'tr'; oct: number; gate: boolean[] };
   chordMode?: 'pad' | 'stab';
+  notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
 };
 export type Project = {
   name: string; genre: string; bpm: number; swing: number; kit: string;
@@ -63,17 +65,25 @@ export function harmonyFromName(raw: string) {
 /* ---------- presets de sonido ---------- */
 const S = (o: Partial<Synth>): Synth => ({ wave: 'saw', unison: 1, detune: 0, cutoff: 2000, reso: 0.2, envAmt: 0, fdecay: 0.3, attack: 0.003, decay: 0.3, sustain: 0, release: 0.2, gain: 0.35, ...o });
 export const SYNTHS: Record<string, { label: string; for: TrackType[]; p: Synth }> = {
-  pluck: { label: 'Pluck', for: ['arp'], p: S({ unison: 2, detune: 8, cutoff: 700, reso: 0.35, envAmt: 1.4, fdecay: 0.22, decay: 0.3, release: 0.2, gain: 0.32 }) },
-  bell: { label: 'Campana', for: ['arp'], p: S({ wave: 'fm', fmRatio: 3.5, fmIndex: 3, fmDecay: 0.5, cutoff: 9000, reso: 0.05, decay: 1.2, release: 0.8, gain: 0.4, octave: 1 }) },
-  super: { label: 'Supersaw', for: ['arp', 'chords'], p: S({ unison: 5, detune: 22, cutoff: 3800, reso: 0.12, envAmt: 0.5, fdecay: 0.35, attack: 0.008, decay: 0.5, sustain: 0.25, release: 0.35, gain: 0.26 }) },
+  pluck: { label: 'Pluck', for: ['arp', 'melody'], p: S({ unison: 2, detune: 8, cutoff: 700, reso: 0.35, envAmt: 1.4, fdecay: 0.22, decay: 0.3, release: 0.2, gain: 0.32 }) },
+  bell: { label: 'Campana', for: ['arp', 'melody'], p: S({ wave: 'fm', fmRatio: 3.5, fmIndex: 3, fmDecay: 0.5, cutoff: 9000, reso: 0.05, decay: 1.2, release: 0.8, gain: 0.4, octave: 1 }) },
+  super: { label: 'Supersaw', for: ['arp', 'chords', 'melody'], p: S({ unison: 5, detune: 22, cutoff: 3800, reso: 0.12, envAmt: 0.5, fdecay: 0.35, attack: 0.008, decay: 0.5, sustain: 0.25, release: 0.35, gain: 0.26 }) },
   acid: { label: 'Acid', for: ['arp', 'bass'], p: S({ cutoff: 280, reso: 0.86, envAmt: 2.6, fdecay: 0.16, decay: 0.25, release: 0.08, gain: 0.32, octave: -1 }) },
-  keys: { label: 'Keys', for: ['arp', 'chords'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.7, fmDecay: 0.35, cutoff: 6000, reso: 0.05, decay: 1.4, sustain: 0.15, release: 0.5, gain: 0.42 }) },
-  organ: { label: 'Órgano', for: ['arp', 'chords'], p: S({ wave: 'tri', unison: 2, detune: 4, sub: 0.5, cutoff: 4500, reso: 0.05, attack: 0.005, decay: 0.2, sustain: 0.8, release: 0.1, gain: 0.32 }) },
-  marimba: { label: 'Marimba', for: ['arp'], p: S({ wave: 'fm', fmRatio: 4, fmIndex: 1.3, fmDecay: 0.04, cutoff: 9000, reso: 0.05, attack: 0.001, decay: 0.35, release: 0.2, gain: 0.55 }) },
-  chip: { label: 'Chip', for: ['arp'], p: S({ wave: 'square', cutoff: 7000, reso: 0.05, attack: 0.001, decay: 0.2, sustain: 0.5, release: 0.05, gain: 0.2 }) },
+  keys: { label: 'Keys', for: ['arp', 'chords', 'melody'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.7, fmDecay: 0.35, cutoff: 6000, reso: 0.05, decay: 1.4, sustain: 0.15, release: 0.5, gain: 0.42 }) },
+  organ: { label: 'Órgano', for: ['arp', 'chords', 'melody'], p: S({ wave: 'tri', unison: 2, detune: 4, sub: 0.5, cutoff: 4500, reso: 0.05, attack: 0.005, decay: 0.2, sustain: 0.8, release: 0.1, gain: 0.32 }) },
+  marimba: { label: 'Marimba', for: ['arp', 'melody'], p: S({ wave: 'fm', fmRatio: 4, fmIndex: 1.3, fmDecay: 0.04, cutoff: 9000, reso: 0.05, attack: 0.001, decay: 0.35, release: 0.2, gain: 0.55 }) },
+  chip: { label: 'Chip', for: ['arp', 'melody'], p: S({ wave: 'square', cutoff: 7000, reso: 0.05, attack: 0.001, decay: 0.2, sustain: 0.5, release: 0.05, gain: 0.2 }) },
   bassSaw: { label: 'Saw', for: ['bass'], p: S({ sub: 0.6, cutoff: 520, reso: 0.3, envAmt: 0.9, fdecay: 0.2, decay: 0.3, sustain: 0.5, release: 0.08, gain: 0.45 }) },
   bassSub: { label: 'Sub', for: ['bass'], p: S({ wave: 'sine', cutoff: 2000, reso: 0.05, attack: 0.005, decay: 0.4, sustain: 0.85, release: 0.08, gain: 0.8 }) },
   reese: { label: 'Reese', for: ['bass'], p: S({ unison: 2, detune: 18, sub: 0.4, cutoff: 650, reso: 0.2, attack: 0.01, decay: 0.3, sustain: 0.9, release: 0.1, gain: 0.38, poles4: true }) },
+  lead: { label: 'Lead', for: ['melody', 'arp'], p: S({ unison: 3, detune: 12, cutoff: 3200, reso: 0.2, envAmt: 0.6, fdecay: 0.3, attack: 0.008, decay: 0.4, sustain: 0.7, release: 0.25, gain: 0.24 }) },
+  brass: { label: 'Brass', for: ['melody', 'chords'], p: S({ unison: 2, detune: 8, cutoff: 900, reso: 0.15, envAmt: 1.6, fdecay: 0.25, attack: 0.04, decay: 0.4, sustain: 0.6, release: 0.2, gain: 0.26 }) },
+  flute: { label: 'Flauta', for: ['melody'], p: S({ wave: 'tri', cutoff: 3500, reso: 0.05, attack: 0.06, decay: 0.3, sustain: 0.8, release: 0.25, gain: 0.45 }) },
+  pluckHi: { label: 'Pluck brillante', for: ['arp', 'melody'], p: S({ wave: 'square', unison: 2, detune: 6, cutoff: 1800, reso: 0.25, envAmt: 2, fdecay: 0.12, decay: 0.2, release: 0.15, gain: 0.22 }) },
+  fmBass: { label: 'FM', for: ['bass'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 2.4, fmDecay: 0.18, cutoff: 3000, reso: 0.05, decay: 0.35, sustain: 0.4, release: 0.08, gain: 0.6 }) },
+  pluckBass: { label: 'Pluck', for: ['bass'], p: S({ sub: 0.5, cutoff: 350, reso: 0.4, envAmt: 2.2, fdecay: 0.1, decay: 0.2, sustain: 0.1, release: 0.06, gain: 0.5 }) },
+  airy: { label: 'Aire', for: ['chords'], p: S({ unison: 4, detune: 25, cutoff: 3000, reso: 0.05, attack: 1.2, decay: 1, sustain: 0.8, release: 1.8, gain: 0.11 }) },
+  dark: { label: 'Oscuro', for: ['chords'], p: S({ unison: 2, detune: 10, cutoff: 500, reso: 0.25, attack: 0.5, decay: 1, sustain: 0.8, release: 1.2, gain: 0.18, poles4: true }) },
   strings: { label: 'Cuerdas', for: ['chords'], p: S({ unison: 3, detune: 14, cutoff: 1400, reso: 0.1, envAmt: 0.2, fdecay: 1, attack: 0.6, decay: 1, sustain: 0.8, release: 1.2, gain: 0.14 }) },
   warm: { label: 'Cálido', for: ['chords'], p: S({ wave: 'square', unison: 2, detune: 6, cutoff: 900, reso: 0.1, attack: 0.4, decay: 1, sustain: 0.8, release: 1, gain: 0.14 }) },
   glass: { label: 'Vidrio', for: ['chords'], p: S({ wave: 'fm', fmRatio: 3, fmIndex: 0.8, fmDecay: 2, cutoff: 6000, reso: 0.05, attack: 0.3, decay: 1, sustain: 0.7, release: 1.2, gain: 0.2 }) },
@@ -90,7 +100,9 @@ export const KITS: Record<string, { label: string; map: Record<string, string> }
 export const DRUM_SOUNDS: Record<string, string> = {
   kick: 'Kick', clap: 'Clap', snare: 'Snare', snare808: 'Snare 808', hat: 'Hat', open: 'Open hat', ride: 'Ride', rim: 'Rim', crash: 'Crash',
   cowbell: 'Cowbell', clave: 'Clave', conga: 'Conga', shaker: 'Shaker', tamb: 'Pandereta', maraca: 'Maraca',
+  tomL: 'Tom grave', tomM: 'Tom medio', tomH: 'Tom agudo', rim2: 'Rim fuerte', snareSoft: 'Snare suave',
 };
+export const DRUM_GROUPS: [string, string[]][] = [['Bombo', ['kick']], ['Golpes', ['clap', 'snare', 'snare808', 'snareSoft', 'rim', 'rim2']], ['Platillos', ['hat', 'open', 'ride', 'crash']], ['Percusión', ['cowbell', 'clave', 'conga', 'shaker', 'tamb', 'maraca']], ['Toms', ['tomL', 'tomM', 'tomH']]];
 export const sampleKey = (kit: string, sound: string) => KITS[kit]?.map[sound] ?? sound;
 
 /* ---------- géneros ---------- */
@@ -116,6 +128,19 @@ const mkTrack = (id: string, name: string, type: TrackType, sound: string, extra
   id, name, color: COLORS[id], type, steps: Array(16).fill(0), sound, pitch: 0, decay: 1, vol: 0.8, pan: 0, mute: false, solo: false, rev: 0, dly: 0, duck: 0, ...extra,
 });
 
+const PALETTE = ['#ff5a36', '#ffb020', '#f2e94e', '#9be15d', '#2fd8b4', '#3fa7ff', '#8b6cff', '#ff5fb3', '#ff8a5c', '#5ce1e6', '#c38bff', '#ffd166'];
+export function newTrack(p: Project, type: TrackType, sound?: string): Track {
+  const n = p.tracks.length, id = type + '-' + Date.now().toString(36), color = PALETTE[n % PALETTE.length];
+  if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
+  if (type === 'bass') return mkTrack(id, 'Bajo 2', 'bass', sound ?? 'fmBass', { color, vol: 0.7, duck: 0.5 });
+  if (type === 'chords') return mkTrack(id, 'Acordes 2', 'chords', sound ?? 'airy', { color, vol: 0.55, rev: 0.4, duck: 0.4, chordMode: 'pad', steps: [1, ...Array(15).fill(0)] });
+  if (type === 'arp') return mkTrack(id, 'Arpegio 2', 'arp', sound ?? 'bell', { color, vol: 0.55, rev: 0.35, dly: 0.3, duck: 0.3, arp: { mode: 'up', rate: '8', oct: 2, gate: Array(16).fill(true) } });
+  const seq = [...new Set(p.seq)].sort((a, b) => a - b), notes: Note[] = [];
+  [0, 3, 6, 10, 12].forEach((st, i) => notes.push({ s: st, n: seq[(i * 2) % seq.length] + 12, l: i === 4 ? 4 : 2 }));
+  return mkTrack(id, 'Melodía', 'melody', sound ?? 'lead', { color, vol: 0.6, rev: 0.3, dly: 0.25, duck: 0.3, notes });
+}
+export const nameScale = (p: Project, octs = 2) => { const b = [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))].sort((a, c) => a - c), out: number[] = []; for (let o = 0; o < octs; o++) b.forEach((pc) => out.push(60 + pc + 12 * o)); return out.sort((a, c) => a - c); };
+
 export function newProject(name = '', genre = 'prog'): Project {
   const h = harmonyFromName(name);
   const p: Project = {
@@ -138,7 +163,7 @@ export function newProject(name = '', genre = 'prog'): Project {
 }
 export function applyGenre(p: Project, g: string) {
   const G = GENRES[g]; p.genre = g; p.bpm = G.bpm; p.swing = G.swing; p.kit = G.kit;
-  const T = (id: string) => p.tracks.find((t) => t.id === id)!;
+  const T = (id: string) => p.tracks.find((t) => t.id === id) ?? mkTrack(id, '', 'drum', 'kick');
   ['kick', 'clap', 'hat', 'open', 'perc', 'bass'].forEach((id) => (T(id).steps = [...G.st[id]]));
   T('perc').sound = G.perc; T('bass').sound = G.bass; T('arp').sound = G.arp; T('chords').sound = G.chords;
   T('arp').arp = { mode: G.mode, rate: G.rate, oct: G.oct, gate: Array(16).fill(true) };
@@ -167,7 +192,7 @@ const GATES = [null, null, null, [3, 7, 11, 15], [2, 10], [5, 13], [1, 5, 9, 13]
 export function projectFromName(name: string, variant = 0): Project {
   const r = seeded(clean(name) + '#' + variant);
   const g = wpick(r, { prog: 3, melodic: 3, deep: 2, house: 2, trance: 2, techno: 1 }), st = STYLE[g];
-  const p = newProject(name, g); const T = (id: string) => p.tracks.find((t) => t.id === id)!;
+  const p = newProject(name, g); const T = (id: string) => p.tracks.find((t) => t.id === id) ?? mkTrack(id, '', 'drum', 'kick');
   const arp = T('arp'); arp.sound = pick(r, st.arp);
   arp.arp = { mode: wpick(r, st.mode), rate: pick(r, st.rate), oct: pick(r, st.oct), gate: Array(16).fill(true) };
   const gt = pick(r, GATES); if (gt) gt.forEach((i) => (arp.arp!.gate[i] = false));
@@ -203,6 +228,7 @@ export function arpPreview(p: Project, t: Track) { const f = arpNotes(p, t); ret
 
 export function compile(p: Project) {
   const anyGain = (v: number) => v * v * 1.6;
+  const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !t.mute) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
     let kind = 'synth', synth: Synth | undefined, sample: string | undefined;
@@ -210,19 +236,22 @@ export function compile(p: Project) {
       kind = 'sample'; sample = sampleKey(p.kit, t.sound);
       for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (v) ev[s].push({ v: v === 2 ? 1 : 0.72 }); }
     } else if (t.type === 'bass') {
-      synth = SYNTHS[t.sound]?.p ?? SYNTHS.bassSaw.p;
+      synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.bassSaw.p;
       for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (!v) continue; let m = p.chords[Math.floor(s / 16)].midi[0]; while (m > 47) m -= 12; while (m < 36) m += 12; ev[s].push({ n: m - 12, v: v === 2 ? 1 : 0.8, l: 0.85 }); }
     } else if (t.type === 'arp') {
-      synth = SYNTHS[t.sound]?.p ?? SYNTHS.pluck.p; const f = arpNotes(p, t);
+      synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.pluck.p; const f = arpNotes(p, t);
       for (let s = 0; s < 64; s++) if (arpPlays(t, s % 16)) ev[s].push({ n: f(s), v: s % 4 === 0 ? 0.95 : 0.78, l: t.arp!.rate === '8' ? 1.8 : 0.9 });
+    } else if (t.type === 'melody') {
+      synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.lead.p;
+      (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - 0.1) }); });
     } else {
-      const base = SYNTHS[t.sound]?.p ?? SYNTHS.strings.p;
+      const base = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.strings.p;
       if (t.chordMode === 'stab') { synth = STAB(base); for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: 0.8, l: 1 })); }
       else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
     }
     return {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: t.mute, solo: t.solo,
-      rev: t.rev, dly: t.dly, duck: t.id === 'kick' ? 0 : t.duck, isKick: t.id === 'kick', play: true,
+      rev: t.rev, dly: t.dly, duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : 0.05,
     };
   });

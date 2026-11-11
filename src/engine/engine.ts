@@ -5,6 +5,7 @@ import { compile, type Project } from '../model';
 const FILES: Record<string, string> = {
   kA909: 'BT0A0DA', kBh: 'BTAAADA', clap1: 'HANDCLP1', clap2: 'HANDCLP2', hat1: 'HHCD2', hatH: 'HHCD0', open: 'HHOD6', openH: 'HHOD4',
   ride: 'RIDED6', snare: 'ST3T3S7', snareH: 'ST7T7SA', rim: 'RIM63', crash: 'CSHD8',
+  tomL: 'LT3D7', tomM: 'MT3D7', tomH: 'HT3D7', rim2: 'RIM127', snareSoft: 'ST0T3S3',
 };
 
 type Meter = { peak: number; lufs: number; auto: number; gr: number; tracks: number[] };

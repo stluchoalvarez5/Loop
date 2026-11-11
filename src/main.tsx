@@ -4,7 +4,7 @@ import './style.css';
 import { Engine } from './engine/engine';
 import {
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName,
-  arpPlays, arpPreview, noteName, toLetters, clean, NAMES,
+  arpPlays, arpPreview, noteName, toLetters, clean, NAMES, newTrack, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
@@ -94,11 +94,13 @@ function App() {
     const np = projectFromName(nameIn || 'Loop', v); setVariant(v); setP(np); engine.update(np); save(np);
     if (!engine.playing) { await engine.play(np); setPlaying(true); }
   };
-  const T = (id: string) => p.tracks.find((t) => t.id === id)!;
-  const tr = T(sel);
+  const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
+  const [toast, setToast] = useState('');
+  const flash = (m: string) => { setToast(m); setTimeout(() => setToast(''), 1800); };
+  const stepEdit = (t: Track, fn: (x: Track) => void) => { const wasMuted = t.mute; upT(t.id, (x) => { fn(x); if (x.mute) x.mute = false; }); if (wasMuted) flash(t.name + ' encendida'); };
   const upT = (id: string, fn: (t: Track) => void) => up((d) => fn(d.tracks.find((t) => t.id === id)!));
   const letters = useMemo(() => { const c = clean(p.name || 'Loop'); const ls = toLetters(c); return [...c].map((ch, i) => [ch, NAMES['ABCDEFG'.indexOf(ls[i])]]); }, [p.name]);
-  const arpNote = useMemo(() => { const t = T('arp'); return arpPreview(p, t); }, [p]);
+  const arpNotes = useMemo(() => { const o: Record<string, (s: number) => number> = {}; p.tracks.forEach((t) => { if (t.type === 'arp') o[t.id] = arpPreview(p, t); }); return o; }, [p]);
 
   return (
     <div class="app">
@@ -146,28 +148,35 @@ function App() {
           <div class="ct"><h3>Patrón</h3><button class="chip" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type === 'drum') t.steps = Array(16).fill(0); }))}>Vaciar batería</button></div>
           <div class="grid">
             {p.tracks.map((t) => <>
+              <button class={'pw' + (t.mute ? '' : ' on')} style={{ '--c': t.color } as any} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} />
               <button class={'tname' + (sel === t.id ? ' sel' : '') + (t.mute ? ' mute' : '')} style={{ '--c': t.color } as any} onClick={() => setSel(t.id)}>
                 <span class="dot" />{t.name}<i class="vu" ref={(el) => { vuRefs.current[t.id] = el; }} />
               </button>
               <div class="pads">
                 {Array.from({ length: 16 }, (_, i) => {
                   if (t.type === 'arp') {
-                    const on = t.arp!.gate[i], plays = arpPlays(t, i);
-                    return <button class={'pad' + (!on ? ' off' : plays ? ' v1' : ' skip')} style={{ '--c': t.color } as any} aria-label={`Sinte paso ${i + 1}`}
-                      onClick={() => upT('arp', (x) => { x.arp!.gate[i] = !x.arp!.gate[i]; })}>{on && plays && <span class="nn">{noteName(arpNote(i))}</span>}</button>;
+                    const on = t.arp!.gate[i], plays = arpPlays(t, i), nf = arpNotes[t.id];
+                    return <button class={'pad' + (!on ? ' off' : plays ? ' v1' : ' skip')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
+                      onClick={() => stepEdit(t, (x) => { x.arp!.gate[i] = !x.arp!.gate[i]; })}>{on && plays && nf && <span class="nn">{noteName(nf(i))}</span>}</button>;
                   }
-                  if (t.type === 'chords' && t.chordMode !== 'stab') return <button class={'pad' + (i % 16 === 0 ? ' v2' : ' v1')} style={{ '--c': t.color, opacity: i ? 0.35 : 1 } as any} aria-label="Acorde sostenido" onClick={() => setSel('chords')} />;
+                  if (t.type === 'melody') {
+                    const hit = (t.notes ?? []).filter((n) => n.s % 16 === i);
+                    return <button class={'pad' + (hit.length ? ' v1' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`} onClick={() => setSel(t.id)}>{hit[0] && <span class="nn">{noteName(hit[0].n)}</span>}</button>;
+                  }
+                  if (t.type === 'chords' && t.chordMode !== 'stab') return <button class={'pad' + (i % 16 === 0 ? ' v2' : ' v1')} style={{ '--c': t.color, opacity: i ? 0.35 : 1 } as any} aria-label="Acorde sostenido" onClick={() => setSel(t.id)} />;
                   const v = t.steps[i];
                   return <button class={'pad' + (v === 1 ? ' v1' : v === 2 ? ' v2' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
-                    onClick={() => upT(t.id, (x) => { x.steps[i] = (x.steps[i] + 1) % 3; })} />;
+                    onClick={() => stepEdit(t, (x) => { x.steps[i] = (x.steps[i] + 1) % 3; })} />;
                 })}
               </div>
             </>)}
           </div>
-          <div class="hint">Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. En el sinte, cada toque prende o silencia esa nota.</div>
+          <AddTrack onAdd={(type, sound) => { let id = ''; up((d) => { if (d.tracks.length >= 16) return; const nt = newTrack(d, type, sound); id = nt.id; d.tracks.push(nt); }); setTimeout(() => id && setSel(id), 0); }} full={p.tracks.length >= 16} />
+          <div class="hint">El botón de la izquierda enciende o apaga cada instrumento. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga.</div>
         </div>
 
-        <TrackEditor p={p} t={tr} upT={upT} up={up} />
+        {tr && <TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); setSel(left[0].id); flash(tr.name + ' eliminada'); }} />}
+        {toast && <div class="toast">{toast}</div>}
       </>}
 
       {tab === 'mix' && <div class="card">
@@ -202,20 +211,38 @@ function App() {
   );
 }
 
-function TrackEditor({ p, t, upT, up }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void }) {
+function DeleteBtn({ onDelete }: { onDelete: () => void }) {
+  const [sure, setSure] = useState(false);
+  return <button class={'chip' + (sure ? ' on' : '')} style={{ '--c': '#ff5a36' } as any} onClick={() => { if (sure) onDelete(); else { setSure(true); setTimeout(() => setSure(false), 2500); } }}>{sure ? 'Tocá de nuevo para borrar' : 'Eliminar pista'}</button>;
+}
+function AddTrack({ onAdd, full }: { onAdd: (t: TrackType, s?: string) => void; full: boolean }) {
+  const [open, setOpen] = useState(false), [drums, setDrums] = useState(false);
+  if (full) return <div class="hint">Llegaste al máximo de 16 pistas.</div>;
+  if (!open) return <button class="btn vio" style={{ marginTop: '10px', width: '100%' }} onClick={() => setOpen(true)}>+ Agregar pista</button>;
+  return <div style={{ marginTop: '10px' }}>
+    <div class="chips">
+      <button class={'chip' + (drums ? ' on' : '')} onClick={() => setDrums(!drums)}>Batería / percusión</button>
+      {([['bass', 'Bajo'], ['arp', 'Arpegio'], ['chords', 'Acordes'], ['melody', 'Melodía (piano roll)']] as [TrackType, string][]).map(([k, l]) => <button class="chip" onClick={() => { onAdd(k); setOpen(false); }}>{l}</button>)}
+      <button class="chip" onClick={() => { setOpen(false); setDrums(false); }}>Cancelar</button>
+    </div>
+    {drums && DRUM_GROUPS.map(([g, list]) => <><div class="sub">{g}</div><div class="chips">{list.map((k) => <button class="chip" onClick={() => { onAdd('drum', k); setOpen(false); setDrums(false); }}>{DRUM_SOUNDS[k]}</button>)}</div></>)}
+  </div>;
+}
+function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; onDelete: () => void }) {
+  const power = <button class={'pw' + (t.mute ? '' : ' on')} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} />;
   if (t.type === 'drum') {
-    const opts = t.id === 'kick' ? ['kick'] : t.id === 'clap' ? ['clap', 'snare', 'snare808'] : t.id === 'hat' ? ['hat'] : t.id === 'open' ? ['open', 'ride', 'crash'] : ['rim', 'cowbell', 'clave', 'conga', 'shaker', 'tamb', 'maraca'];
     return (
       <div class="card" style={{ '--c': t.color } as any}>
-        <div class="ct"><h3>{t.name}</h3></div>
-        <div class="sub">Kit</div>
+        <div class="ct"><h3>{t.name}</h3>{power}</div>
+        <div class="sub">Kit (para kick, clap, hats y snare)</div>
         <div class="chips">{Object.keys(KITS).map((k) => <button class={'chip' + (p.kit === k ? ' on' : '')} onClick={() => up((d) => { d.kit = k; })}>{KITS[k].label}</button>)}</div>
-        {opts.length > 1 && <><div class="sub">Sonido</div><div class="chips">{opts.map((o) => <button class={'chip' + (t.sound === o ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.sound = o; })}>{DRUM_SOUNDS[o]}</button>)}</div></>}
+        {DRUM_GROUPS.map(([g, list]) => <><div class="sub">{g}</div><div class="chips">{list.map((o) => <button class={'chip' + (t.sound === o ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.sound = o; if (x.name === DRUM_SOUNDS[x.sound] || Object.values(DRUM_SOUNDS).includes(x.name)) x.name = DRUM_SOUNDS[o]; })}>{DRUM_SOUNDS[o]}</button>)}</div></>)}
         <div class="sub">Ajustes</div>
         <div class="knobs">
           <Knob label="Afinación" value={t.pitch} min={-12} max={12} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
           <Knob label="Largo" value={t.decay} min={0.05} max={1} def={1} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.decay = v; })} />
         </div>
+        <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
       </div>
     );
   }
@@ -224,7 +251,7 @@ function TrackEditor({ p, t, upT, up }: { p: Project; t: Track; upT: (id: string
   const setS = (k: string, v: number) => upT(t.id, (x) => { x.synth = { ...(x.synth ?? SYNTHS[x.sound].p), [k]: v }; });
   return (
     <div class="card" style={{ '--c': t.color } as any}>
-      <div class="ct"><h3>{t.name}</h3>{t.synth && <button class="chip" onClick={() => upT(t.id, (x) => { x.synth = undefined; })}>Restablecer</button>}</div>
+      <div class="ct"><h3>{t.name}</h3>{t.synth && <button class="chip" onClick={() => upT(t.id, (x) => { x.synth = undefined; })}>Restablecer</button>}{power}</div>
       <div class="sub">Sonido</div>
       <div class="chips">{presets.map((k) => <button class={'chip' + (t.sound === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.sound = k; x.synth = undefined; })}>{SYNTHS[k].label}</button>)}</div>
       {t.type === 'arp' && <>
@@ -248,8 +275,45 @@ function TrackEditor({ p, t, upT, up }: { p: Project; t: Track; upT: (id: string
           <Knob label="Release" value={s.release} min={0.02} max={3} log def={SYNTHS[t.sound].p.release} color={t.color} fmt={(v) => (v < 1 ? Math.round(v * 1000) + 'ms' : v.toFixed(1) + 's')} onChange={(v) => setS('release', v)} />
           {s.wave !== 'fm' && <Knob label="Ancho" value={s.detune} min={0} max={40} step={1} def={SYNTHS[t.sound].p.detune} color={t.color} fmt={(v) => Math.round(v) + 'ct'} onChange={(v) => setS('detune', v)} />}
         </div></>}
+      {t.type === 'melody' && <PianoRoll p={p} t={t} upT={upT} />}
+      <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
     </div>
   );
+}
+
+const CHROM = ['DO', 'DO#', 'RE', 'RE#', 'MI', 'FA', 'FA#', 'SOL', 'SOL#', 'LA', 'LA#', 'SI'];
+function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const [bar, setBar] = useState(0), [len, setLen] = useState(2), [onlyName, setOnlyName] = useState(true), [oct, setOct] = useState(0);
+  const rows = (onlyName ? nameScale(p, 2) : Array.from({ length: 24 }, (_, i) => 60 + i)).map((m) => m + oct * 12).reverse();
+  const notes = t.notes ?? [];
+  const at = (s: number, n: number) => notes.find((x) => x.n === n && s >= x.s && s < x.s + x.l);
+  const tap = (i: number, n: number) => {
+    const s = bar * 16 + i, hit = at(s, n);
+    upT(t.id, (x) => { const ns = x.notes ?? []; if (hit) x.notes = ns.filter((y) => !(y.s === hit.s && y.n === hit.n)); else { x.notes = [...ns, { s, n, l: Math.min(len, 64 - s) }]; } });
+    if (!hit) engine.preview(t.id, n);
+  };
+  return <>
+    <div class="sub">Piano roll · compás {bar + 1}</div>
+    <div class="chips">
+      {[0, 1, 2, 3].map((b) => <button class={'chip' + (bar === b ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setBar(b)}>Compás {b + 1}</button>)}
+    </div>
+    <div class="roll" style={{ '--c': t.color } as any}>
+      {rows.map((n) => <>
+        <div class={'rk' + ([1, 3, 6, 8, 10].includes(((n % 12) + 12) % 12) ? ' blk' : '')}>{CHROM[((n % 12) + 12) % 12]}<small>{Math.floor(n / 12) - 1}</small></div>
+        {Array.from({ length: 16 }, (_, i) => { const s = bar * 16 + i, h = at(s, n); return <button class={'rc' + (h ? (h.s === s ? ' st' : ' tl') : '') + (i % 4 === 0 ? ' q' : '')} aria-label={`${CHROM[((n % 12) + 12) % 12]} paso ${i + 1}`} onClick={() => tap(i, n)} />; })}
+      </>)}
+    </div>
+    <div class="sub">Largo de las notas nuevas</div>
+    <div class="chips">{[[1, '1/16'], [2, '1/8'], [4, '1/4'], [8, '1/2'], [16, 'Compás']].map(([v, l]) => <button class={'chip' + (len === v ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setLen(v as number)}>{l}</button>)}</div>
+    <div class="chips" style={{ marginTop: '8px' }}>
+      <button class={'chip' + (onlyName ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setOnlyName(!onlyName)}>Solo notas del nombre</button>
+      <button class="chip" onClick={() => setOct(Math.max(-2, oct - 1))}>Octava −</button>
+      <button class="chip" onClick={() => setOct(Math.min(1, oct + 1))}>Octava +</button>
+      <button class="chip" onClick={() => upT(t.id, (x) => { const src = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) === bar); x.notes = [0, 1, 2, 3].flatMap((b) => src.map((y) => ({ ...y, s: b * 16 + (y.s % 16) }))); })}>Copiar a los 4 compases</button>
+      <button class="chip" onClick={() => upT(t.id, (x) => { x.notes = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) !== bar); })}>Borrar compás</button>
+    </div>
+    <div class="hint">Tocá un casillero para poner una nota (suena al agregarla) y tocala de nuevo para sacarla. "Solo notas del nombre" muestra únicamente las notas de tus letras.</div>
+  </>;
 }
 
 const EQF = ['63', '160', '400', '1k', '2.5k', '6.3k', '10k', '16k'];
