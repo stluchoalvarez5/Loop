@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import './style.css';
-import { Engine } from './engine/engine';
+import { Engine, type DJState } from './engine/engine';
 import {
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName,
   arpPlays, arpPreview, noteName, toLetters, clean, NAMES, newTrack, nameScale, DRUM_GROUPS, type TrackType,
@@ -50,6 +50,7 @@ const Icon = {
   stop: <svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.5" y="5.5" width="13" height="13" rx="2.5" /></svg>,
   grid: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>,
   mix: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v18M12 3v18M18 3v18" /><rect x="3.5" y="13" width="5" height="3" rx="1" fill="currentColor" /><rect x="9.5" y="6" width="5" height="3" rx="1" fill="currentColor" /><rect x="15.5" y="10" width="5" height="3" rx="1" fill="currentColor" /></svg>,
+  dj: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /><path d="M12 3v4" /></svg>,
   master: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h3l3-7 4 14 3-9 2 2h3" /></svg>,
 };
 const pct = (v: number) => Math.round(v * 100) + '%';
@@ -58,7 +59,7 @@ const hz = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : Math.round(
 /* ---------- app ---------- */
 function App() {
   const [p, setP] = useState<Project>(() => load() ?? projectFromName('Loop'));
-  const [tab, setTab] = useState<'pat' | 'mix' | 'master'>('pat');
+  const [tab, setTab] = useState<'pat' | 'mix' | 'dj' | 'master'>('pat');
   const [sel, setSel] = useState('arp');
   const [playing, setPlaying] = useState(false);
   const [nameIn, setNameIn] = useState(p.name === 'Loop' ? '' : p.name);
@@ -200,11 +201,13 @@ function App() {
         <div class="hint">Sidechain: cuánto se "agacha" cada pista cuando pega el kick. Doble toque en un control lo vuelve a su valor inicial.</div>
       </div>}
 
+      {tab === 'dj' && <DJ playing={playing} onPlay={toggle} />}
       {tab === 'master' && <Master p={p} up={up} stats={stats} />}
 
       <nav class="nav">
         <button class={tab === 'pat' ? 'on' : ''} onClick={() => setTab('pat')}>{Icon.grid}Patrón</button>
         <button class={tab === 'mix' ? 'on' : ''} onClick={() => setTab('mix')}>{Icon.mix}Mixer</button>
+        <button class={tab === 'dj' ? 'on' : ''} onClick={() => setTab('dj')}>{Icon.dj}DJ</button>
         <button class={tab === 'master' ? 'on' : ''} onClick={() => setTab('master')}>{Icon.master}Master</button>
       </nav>
     </div>
@@ -313,6 +316,62 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
       <button class="chip" onClick={() => upT(t.id, (x) => { x.notes = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) !== bar); })}>Borrar compás</button>
     </div>
     <div class="hint">Tocá un casillero para poner una nota (suena al agregarla) y tocala de nuevo para sacarla. "Solo notas del nombre" muestra únicamente las notas de tus letras.</div>
+  </>;
+}
+
+/* ---------- Modo DJ ---------- */
+const DJ0: DJState = { eq: [0, 0, 0], kill: [false, false, false], filter: 0, fx: { echo: false, wash: false, roll: 0, crush: false, gate: false } };
+function DJ({ playing, onPlay }: { playing: boolean; onPlay: () => void }) {
+  const [s, setS] = useState<DJState>(() => engine.djState ?? clone(DJ0));
+  const [latch, setLatch] = useState(false);
+  const set = (fn: (d: DJState) => void) => setS((cur) => { const d = clone(cur); fn(d); engine.dj(d); return d; });
+  const bands: [string, number][] = [['Agudos', 2], ['Medios', 1], ['Graves', 0]];
+  const fref = useRef<HTMLDivElement>(null), fst = useRef({ drag: false, last: 0 });
+  const fset = (x: number) => { const r = fref.current!.getBoundingClientRect(); let v = ((x - r.left) / r.width) * 2 - 1; v = Math.max(-1, Math.min(1, v)); if (Math.abs(v) < 0.06) v = 0; set((d) => { d.filter = +v.toFixed(3); }); };
+  type FxKey = 'echo' | 'wash' | 'crush' | 'gate';
+  const pad = (label: string, sub: string, on: boolean, start: () => void, end: () => void, color: string) => (
+    <button class={'djpad' + (on ? ' on' : '')} style={{ '--c': color } as any}
+      onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as Element).setPointerCapture(e.pointerId); if (latch && on) end(); else start(); }}
+      onPointerUp={() => { if (!latch) end(); }} onPointerCancel={() => { if (!latch) end(); }}>
+      <b>{label}</b><span>{sub}</span>
+    </button>
+  );
+  const fx = (k: FxKey, label: string, sub: string, color: string) => pad(label, sub, s.fx[k], () => set((d) => { d.fx[k] = true; }), () => set((d) => { d.fx[k] = false; }), color);
+  const roll = (n: number, label: string) => pad('Roll', label, s.fx.roll === n, () => set((d) => { d.fx.roll = n; }), () => set((d) => { if (d.fx.roll === n) d.fx.roll = 0; }), '#ffb020');
+  const fl = s.filter;
+  return <>
+    <div class="card dj">
+      <div class="ct"><h3>Modo DJ</h3><button class={'chip' + (latch ? ' on' : '')} onClick={() => setLatch(!latch)}>{latch ? 'FX fijos' : 'FX al mantener'}</button><button class="chip" onClick={() => { const d = clone(DJ0); setS(d); engine.dj(d); }}>Resetear</button></div>
+      {!playing && <button class="btn hot" style={{ width: '100%', marginBottom: '10px' }} onClick={onPlay}>▶ Reproducir el loop</button>}
+      <div class="iso">
+        {bands.map(([lbl, k]) => (
+          <div class="band">
+            <div class="bl">{lbl}</div>
+            <Fader label={lbl} value={s.eq[k]} min={-26} max={6} def={0} h={170} color={s.kill[k] ? '#4c5368' : k === 0 ? '#ff5a36' : k === 1 ? '#8b6cff' : '#2fd8b4'} onChange={(v) => set((d) => { d.eq[k] = Math.round(v); })} />
+            <div class="bv">{s.kill[k] ? 'OFF' : (s.eq[k] > 0 ? '+' : '') + s.eq[k] + ' dB'}</div>
+            <button class={'kill' + (s.kill[k] ? ' on' : '')} onClick={() => set((d) => { d.kill[k] = !d.kill[k]; })}>{s.kill[k] ? 'Apagado' : 'Kill'}</button>
+          </div>
+        ))}
+      </div>
+      <div class="sub">Filtro {fl < 0 ? '· pasa-bajos' : fl > 0 ? '· pasa-altos' : '· abierto'}</div>
+      <div class="dfilter" ref={fref} role="slider" aria-label="Filtro DJ" aria-valuenow={fl} tabIndex={0}
+        onPointerDown={(e) => { (e.currentTarget as Element).setPointerCapture(e.pointerId); fst.current.drag = true; const now = Date.now(); if (now - fst.current.last < 300) set((d) => { d.filter = 0; }); else fset(e.clientX); fst.current.last = now; }}
+        onPointerMove={(e) => fst.current.drag && fset(e.clientX)} onPointerUp={() => (fst.current.drag = false)} onPointerCancel={() => (fst.current.drag = false)}
+        onKeyDown={(e) => { if (e.key === 'ArrowLeft') set((d) => { d.filter = Math.max(-1, d.filter - 0.05); }); if (e.key === 'ArrowRight') set((d) => { d.filter = Math.min(1, d.filter + 0.05); }); }}>
+        <span class="lbl l">LPF</span><span class="lbl r">HPF</span><div class="mid" />
+        <div class="fill" style={{ left: (fl < 0 ? 50 + fl * 50 : 50) + '%', width: Math.abs(fl) * 50 + '%' }} />
+        <div class="knobcap" style={{ left: (50 + fl * 50) + '%' }} />
+      </div>
+      <div class="sub">Efectos</div>
+      <div class="pads6">
+        {fx('echo', 'Eco', 'delay 3/16', '#3fa7ff')}
+        {fx('wash', 'Wash', 'reverb gigante', '#2fd8b4')}
+        {fx('gate', 'Gate', 'corta a 1/16', '#ff5fb3')}
+        {fx('crush', 'Crush', 'lo-fi', '#ff5a36')}
+        {roll(4, '1/4')}{roll(2, '1/8')}{roll(1, '1/16')}
+      </div>
+      <div class="hint">{latch ? 'Tocá un efecto para prenderlo y otra vez para apagarlo.' : 'Mantené apretado un efecto para usarlo; al soltar se apaga. El Roll repite el último tramo, sincronizado al tempo.'} Doble toque en el filtro o en una banda la vuelve al centro.</div>
+    </div>
   </>;
 }
 
