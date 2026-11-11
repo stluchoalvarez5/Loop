@@ -33,6 +33,7 @@ export type Project = {
   fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number };
   master: { eq: number[]; target: number; auto: boolean; ceiling: number };
   seed?: number;
+  macros?: { energy: number; dark: number; space: number; groove: number }; // 0..1, 0.5 = como lo dejó el género
   harmony?: 'tonal' | 'puro'; // tonal: se busca la tonalidad del nombre; puro: solo las notas exactas de las letras
   key?: string; progression?: string; scale?: number[]; tonic?: number; letterNotes?: { ch: string; note: string; moved: boolean }[];
 };
@@ -241,6 +242,9 @@ export const KITS: Record<string, { label: string; map: Record<string, string> }
   deep: { label: 'Kit Deep', map: { kick: 'k808', clap: 'clap808', hat: 'hatDark', open: 'open808', snare: 'snareSoft', rim: 'rim' } },
   melodic: { label: 'Kit Melodic', map: { kick: 'kMelodic', clap: 'snap', hat: 'hatDark', open: 'open808', snare: 'snareSoft', rim: 'rim' } },
   prog: { label: 'Kit Progressive', map: { kick: 'kProg', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim' } },
+  synth80: { label: 'Kit Synthwave 80s', map: { kick: 'k80s', clap: 'clapGated', hat: 'hatTight', open: 'openH', snare: 'snareGated', rim: 'rim' } },
+  electro: { label: 'Kit Electro', map: { kick: 'kElectro', clap: 'clap808', hat: 'hat808', open: 'open808', snare: 'snareZap', rim: 'clave' } },
+  lofi: { label: 'Kit Lo-Fi', map: { kick: 'lofiKick', clap: 'lofiClap', hat: 'lofiHat', open: 'lofiOpen', snare: 'lofiSnare', rim: 'rim' } },
 };
 export const DRUM_SOUNDS: Record<string, string> = {
   kick: 'Kick', clap: 'Clap', snare: 'Snare', snare808: 'Snare 808', hat: 'Hat', open: 'Open hat', ride: 'Ride', rim: 'Rim', crash: 'Crash',
@@ -252,12 +256,12 @@ export const sampleKey = (kit: string, sound: string) => KITS[kit]?.map[sound] ?
 
 const R = (on: number[], acc: number[] = []) => { const s = Array(16).fill(0); on.forEach((i) => (s[i] = 1)); acc.forEach((i) => (s[i] = 2)); return s; };
 
-const COLORS: Record<string, string> = { kick: '#ff5a36', clap: '#ffb020', hat: '#f2e94e', open: '#9be15d', perc: '#2fd8b4', bass: '#3fa7ff', arp: '#8b6cff', chords: '#ff5fb3' };
+const COLORS: Record<string, string> = { kick: '#ff2e97', clap: '#ff8a3d', hat: '#ffe45c', open: '#7dff9b', perc: '#22e5ff', bass: '#4d7cff', arp: '#b26bff', chords: '#ff5fd2' };
 const mkTrack = (id: string, name: string, type: TrackType, sound: string, extra: Partial<Track> = {}): Track => ({
   id, name, color: COLORS[id], type, steps: Array(16).fill(0), sound, pitch: 0, decay: 1, vol: 0.8, pan: 0, mute: false, solo: false, rev: 0, dly: 0, duck: 0, ...extra,
 });
 
-const PALETTE = ['#ff5a36', '#ffb020', '#f2e94e', '#9be15d', '#2fd8b4', '#3fa7ff', '#8b6cff', '#ff5fb3', '#ff8a5c', '#5ce1e6', '#c38bff', '#ffd166'];
+const PALETTE = ['#ff2e97', '#ff8a3d', '#ffe45c', '#7dff9b', '#22e5ff', '#4d7cff', '#b26bff', '#ff5fd2', '#ff6b6b', '#5ce1e6', '#c38bff', '#ffd166'];
 export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   const n = p.tracks.length, id = type + '-' + Date.now().toString(36), color = PALETTE[n % PALETTE.length];
   if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
@@ -385,15 +389,27 @@ export function acidPattern(p: Project) {
 export const arpPlays = (t: Track, i: number) => { const a = t.arp!; if (!a.gate[i]) return false; if (a.rate === '8') return i % 2 === 0; if (a.rate === 'tr') return i % 4 !== 1; return true; };
 export function arpPreview(p: Project, t: Track) { const f = arpNotes(p, t); return (s: number) => f(s); }
 
+/* macros: 4 controles que mueven muchos parámetros a la vez, sin tocar el proyecto (se aplican al compilar) */
+export const MACROS = [
+  { k: 'energy', label: 'Energía', color: '#ff2e97' }, { k: 'dark', label: 'Oscuridad', color: '#9d5cff' },
+  { k: 'space', label: 'Espacio', color: '#22e5ff' }, { k: 'groove', label: 'Groove', color: '#ffb12b' },
+] as const;
 export function compile(p: Project) {
   const anyGain = (v: number) => v * v * 1.6;
+  const M = p.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 };
+  const e = M.energy - 0.5, dk = M.dark - 0.5, sp = M.space - 0.5, gr = M.groove - 0.5;
+  const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+  const cm = Math.pow(2, e * 1.4 - dk * 2); // brillo de los sintes
+  const shape = (sy: Synth | undefined, amt = 1) => sy && (cm !== 1) ? { ...sy, cutoff: clamp(sy.cutoff * Math.pow(cm, amt), 60, 16000) } : sy;
+  const sendK = Math.pow(2, sp * 2.6);
   const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !t.mute) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
     let kind = 'synth', synth: Synth | undefined, sample: string | undefined;
     if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(p.kit, t.sound);
-      for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (v) ev[s].push({ v: v === 2 ? 1 : v === 3 ? 0.38 : 0.72 }); }
+      const ghost = clamp(0.38 * (1 + e * 1.2), 0.15, 0.7), fillHats = t.id === 'hat' && e > 0.22;
+      for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (v) ev[s].push({ v: v === 2 ? 1 : v === 3 ? ghost : 0.72 }); else if (fillHats && s % 2 === 1) ev[s].push({ v: 0.22 + e * 0.3 }); }
     } else if (t.type === 'bass') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.bassSaw.p;
       for (let s = 0; s < 64; s++) {
@@ -416,12 +432,15 @@ export function compile(p: Project) {
       else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05) }; for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: 0.8, l: t.chordLen ?? 0.8 })); }
       else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
     }
+    if (t.type !== 'drum') synth = shape(synth, t.type === 'bass' ? 0.5 : 1);
+    const fx = t.type !== 'drum' && e > 0 ? { ...t.fx, drive: clamp((t.fx?.drive ?? 0) + e * 0.6, 0, 1) } : t.fx;
+    const groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
     return {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: t.mute, solo: t.solo,
-      rev: t.rev, dly: t.dly, duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
-      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx: t.fx, groove: t.groove,
+      rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
+      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx, groove,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : 0.05,
     };
   });
-  return { bpm: p.bpm, swing: p.swing, fx: p.fx, master: p.master, tracks };
+  return { bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8) }, master: p.master, tracks };
 }

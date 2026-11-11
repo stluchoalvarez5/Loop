@@ -1,9 +1,18 @@
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import '@fontsource/space-grotesk/400.css';
+import '@fontsource/space-grotesk/500.css';
+import '@fontsource/space-grotesk/700.css';
+import '@fontsource/orbitron/700.css';
+import '@fontsource/orbitron/900.css';
+import '@fontsource/vt323/400.css';
+import '@fontsource/share-tech-mono/400.css';
 import './style.css';
 import { Engine } from './engine/engine';
+import { Stage, type StageMode } from './stage';
 import { renderAudio, wav, mp3, abletonZip, baseName } from './engine/export';
 import {
+  MACROS,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -51,9 +60,9 @@ function Knob({ label, value, min, max, onChange, fmt = (v) => v.toFixed(2), log
   return (
     <div class={'knob' + (instant ? ' instant' : '')} role="slider" aria-label={label} aria-valuenow={value} tabIndex={0} {...(hd as any)}
       onKeyDown={(e) => { if (e.key === 'ArrowUp') onChange(den(Math.min(1, n + 0.03))); if (e.key === 'ArrowDown') onChange(den(Math.max(0, n - 0.03))); }}>
-      <svg viewBox="0 0 54 54"><path d={arc(-135, 135)} stroke="#262b3a" stroke-width="5" fill="none" stroke-linecap="round" />
+      <svg viewBox="0 0 54 54"><path d={arc(-135, 135)} stroke="#3b2575" stroke-width="5" fill="none" stroke-linecap="round" />
         {n > 0.004 && <path d={arc(-135, a)} stroke={color} stroke-width="5" fill="none" stroke-linecap="round" />}
-        <circle cx="27" cy="27" r="14" fill="#1b1f2b" /><line x1="27" y1="27" x2="27" y2="15" stroke="#f1f2f6" stroke-width="2.5" stroke-linecap="round" transform={`rotate(${a} 27 27)`} /></svg>
+        <circle cx="27" cy="27" r="14" fill="#24154a" /><line x1="27" y1="27" x2="27" y2="15" stroke="#f7f1ff" stroke-width="2.5" stroke-linecap="round" transform={`rotate(${a} 27 27)`} /></svg>
       <div class="kl">{label}</div><div class="kv">{fmt(value)}</div>
     </div>
   );
@@ -81,6 +90,7 @@ const Icon = {
   stop: <svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.5" y="5.5" width="13" height="13" rx="2.5" /></svg>,
   grid: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>,
   mix: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v18M12 3v18M18 3v18" /><rect x="3.5" y="13" width="5" height="3" rx="1" fill="currentColor" /><rect x="9.5" y="6" width="5" height="3" rx="1" fill="currentColor" /><rect x="15.5" y="10" width="5" height="3" rx="1" fill="currentColor" /></svg>,
+  scene: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="10" r="5" /><path d="M2 16h20M5 20h14M12 16l-6 6M12 16l6 6" /></svg>,
   master: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h3l3-7 4 14 3-9 2 2h3" /></svg>,
 };
 const pct = (v: number) => Math.round(v * 100) + '%';
@@ -89,7 +99,8 @@ const hz = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : Math.round(
 /* ---------- app ---------- */
 function App() {
   const [p, setP] = useState<Project>(() => load() ?? projectFromName('Loop'));
-  const [tab, setTab] = useState<'pat' | 'mix' | 'master'>('pat');
+  const [tab, setTab] = useState<'scene' | 'pat' | 'mix' | 'master'>('scene');
+  const [vis, setVis] = useState<StageMode>('grid');
   const land = useLandscape();
   const [tut, setTut] = useState(() => { try { return !localStorage.getItem('loop.noTutorial'); } catch { return true; } });
   const closeTut = (never: boolean) => { if (never) { try { localStorage.setItem('loop.noTutorial', '1'); } catch { /* */ } } setTut(false); };
@@ -107,6 +118,8 @@ function App() {
     let lastStat = 0;
     engine.onStep = (s) => {
       const i = s % 16 + 1;
+      const k = pRef.current.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !t.mute);
+      if (k && k.steps[s % 16]) engine.beat.t = performance.now();
       if (phRef.current) phRef.current.textContent = `.pads>.pad:nth-child(${i}){outline:2px solid #fff;outline-offset:-2px}.leds span:nth-child(${i}){background:var(--mint);box-shadow:0 0 8px var(--mint)}`;
       if (barRef.current) barRef.current.textContent = String(Math.floor(s / 16) + 1);
     };
@@ -131,7 +144,7 @@ function App() {
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
   const [toast, setToast] = useState('');
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(''), 1800); };
-  const stepEdit = (t: Track, fn: (x: Track) => void) => { const wasMuted = t.mute; upT(t.id, (x) => { fn(x); if (x.mute) x.mute = false; }); if (wasMuted) flash(t.name + ' encendida'); };
+  const stepEdit = (t: Track, fn: (x: Track) => void) => { try { navigator.vibrate?.(8); } catch { /* sin vibración */ } const wasMuted = t.mute; upT(t.id, (x) => { fn(x); if (x.mute) x.mute = false; }); if (wasMuted) flash(t.name + ' encendida'); };
   const upT = (id: string, fn: (t: Track) => void) => up((d) => fn(d.tracks.find((t) => t.id === id)!));
   const letters = useMemo(() => { const c = clean(p.name || 'Loop'); return [...c].map((ch) => [ch, letterNote(ch)]); }, [p.name]);
   const arpNotes = useMemo(() => { const o: Record<string, (s: number) => number> = {}; p.tracks.forEach((t) => { if (t.type === 'arp') o[t.id] = arpPreview(p, t); }); return o; }, [p]);
@@ -162,12 +175,16 @@ function App() {
         </div>
       </div>
 
-      {tab === 'pat' && <div class="page pat">
+      {tab === 'scene' && <div class="page scene">
+        <div class="a-stage">
+          <Stage engine={engine} mode={vis} bpm={p.bpm} playing={playing} onTap={toggle} hud={{ name: (p.name || 'LOOP').toUpperCase().slice(0, 14), key: p.key ?? '', genre: (GENRES[p.genre]?.name ?? '').toUpperCase() }} />
+          <div class="seg2 vis-seg">{([['grid', 'Grilla'], ['spectrum', 'Espectro'], ['scope', 'Osciloscopio']] as const).map(([k, l]) => <button class={vis === k ? 'on' : ''} onClick={() => setVis(k)}>{l}</button>)}</div>
+        </div>
         <div class="card a-name">
-          <div class="ct"><h3>Generar desde un nombre</h3></div>
+          <div class="ct"><h3>Ingresá tu nombre</h3></div>
           <form class="name-in" onSubmit={(e) => { e.preventDefault(); fromName(0); (document.activeElement as HTMLElement)?.blur(); }}>
             <input value={nameIn} onInput={(e) => setNameIn((e.target as HTMLInputElement).value)} placeholder="Escribí un nombre" maxLength={24} autocomplete="off" />
-            <button class="btn hot" type="submit">Generar</button>
+            <button class="btn hot" type="submit">Start</button>
           </form>
           <div class="recipe">
             {(p.letterNotes ?? letters.map(([ch, note]) => ({ ch, note, moved: false }))).map((x) => <span class={'ln' + (x.moved ? ' mv' : '')} title={x.moved ? 'Corrida para entrar en la tonalidad' : ''}><b>{x.ch}</b> {x.note}</span>)}
@@ -185,6 +202,23 @@ function App() {
           </div>
         </div>
 
+        <div class="card a-macros">
+          <div class="ct"><h3>Macros</h3><button class="chip" onClick={() => up((d) => { d.macros = { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }; })}>Centrar</button></div>
+          <div class="macros">
+            {MACROS.map((m) => { const v = (p.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 })[m.k]; return <div class="macro">
+              <Fader h={land ? 92 : 128} label={m.label} value={v} def={0.5} color={m.color} onChange={(x) => up((d) => { d.macros = { ...(d.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }), [m.k]: x }; })} />
+              <b style={{ color: m.color }}>{m.label}</b><span>{Math.round(v * 100)}</span>
+            </div>; })}
+          </div>
+          <div class="hint">Energía: más brillo, saturación y hats. Oscuridad: cierra los filtros. Espacio: más reverb y delay. Groove: más swing y arrastre. Al medio queda como lo armó el género.</div>
+        </div>
+        <div class="card a-kits">
+          <div class="ct"><h3>Batería</h3></div>
+          <div class="chips">{Object.keys(KITS).map((k) => <button class={'chip' + (p.kit === k ? ' on' : '')} onClick={() => up((d) => { d.kit = k; })}>{KITS[k].label.replace('Kit ', '')}</button>)}</div>
+        </div>
+      </div>}
+
+      {tab === 'pat' && <div class="page pat">
         <div class="card a-grid">
           <div class="ct"><h3>Patrón</h3><button class="chip" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type === 'drum') t.steps = Array(16).fill(0); }))}>Vaciar batería</button></div>
           <div class="grid">
@@ -254,6 +288,7 @@ function App() {
 
       {tut && <Tutorial onClose={closeTut} />}
       <nav class="nav">
+        <button class={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>{Icon.scene}Escena</button>
         <button class={tab === 'pat' ? 'on' : ''} onClick={() => setTab('pat')}>{Icon.grid}Patrón</button>
         <button class={tab === 'mix' ? 'on' : ''} onClick={() => setTab('mix')}>{Icon.mix}Mixer</button>
         <button class={tab === 'master' ? 'on' : ''} onClick={() => setTab('master')}>{Icon.master}Master</button>
@@ -370,7 +405,7 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
 
 /* ---------- tutorial de 3 pasos (aparece al abrir, salvo que marques "No mostrar al abrir") ---------- */
 const TUT = [
-  { title: 'Escribí un nombre', body: 'Cada letra es una tonalidad: de la A a la L son mayores y de la M a la X, menores. Tocá Generar y la app arma un loop en la tonalidad de ese nombre. Con "Otra versión" probás otra progresión, y con los géneros cambiás el estilo.',
+  { title: 'Escribí un nombre', body: 'Cada letra es una tonalidad: de la A a la L son mayores y de la M a la X, menores. Tocá Start (en la pestaña Escena) y la app arma un loop en la tonalidad de ese nombre, con visuales que siguen la música. Con "Otra versión" probás otra progresión, y con los géneros cambiás el estilo.',
     art: <div class="art-name"><div class="an-in">Luciano</div><div class="an-row">{[['L', 'SI'], ['U', 'SOL#m'], ['C', 'RE'], ['I', 'SOL#']].map(([a, b]) => <span><b>{a}</b>{b}</span>)}</div><div class="an-key">FA# menor · F#m · Bm · Dmaj7 · C#m7</div></div> },
   { title: 'Armá el patrón', body: 'Tocá los casilleros para poner golpes: un toque prende, dos acentúan y tres apagan. El interruptor de la izquierda enciende o apaga cada instrumento. Tocá el nombre de una pista para cambiarle el sonido, y con "+ Agregar pista" sumás más, incluida una melodía en piano roll.',
     art: <div class="art-grid">{['#ff5a36', '#ffb020', '#f2e94e', '#3fa7ff'].map((c, r) => <div class="ag-row"><i class="ag-pw" style={{ background: c }} />{Array.from({ length: 8 }, (_, i) => <i class={'ag-pad' + ([[0, 4], [2, 6], [1, 3, 5, 7], [1, 3, 6]][r].includes(i) ? ' on' : '')} style={{ '--c': c } as any} />)}</div>)}</div> },

@@ -15,6 +15,9 @@ export class Engine {
   node: AudioWorkletNode | null = null;
   ready: Promise<void> | null = null;
   playing = false;
+  aL: AnalyserNode | null = null;
+  aR: AnalyserNode | null = null;
+  beat = { t: 0, step: -1 }; // último golpe de bombo (performance.now) para que los visuales latan
   onStep: (s: number) => void = () => {};
   onMeter: (m: Meter) => void = () => {};
   private pending: Project | null = null;
@@ -27,6 +30,10 @@ export class Engine {
       await ctx.audioWorklet.addModule(workletUrl);
       const node = new AudioWorkletNode(ctx, 'loop-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
       node.connect(ctx.destination);
+      // tomas para los visuales: un analizador por canal (osciloscopio XY, onda y espectro)
+      const split = ctx.createChannelSplitter(2); node.connect(split);
+      const mk = () => { const a = ctx.createAnalyser(); a.fftSize = 2048; a.smoothingTimeConstant = 0.78; return a; };
+      this.aL = mk(); this.aR = mk(); split.connect(this.aL, 0); split.connect(this.aR, 1);
       node.port.onmessage = (e) => { const m = e.data; if (m.type === 'step') this.onStep(m.step); else if (m.type === 'meter') this.onMeter(m); };
       this.node = node;
       await this.loadSamples();
@@ -46,6 +53,8 @@ export class Engine {
     }));
     const shots = await synthShots(ctx.sampleRate);
     Object.entries(shots).forEach(([k, b]) => this.send(k, mono(b)));
+    // kit Lo-Fi: copias del 909 pasadas por un bitcrusher (menos muestras y menos bits), filtradas y saturadas
+    ([['lofiKick', 'kA909', 0.9], ['lofiClap', 'clap1', 0.8], ['lofiHat', 'hat1', 0.7], ['lofiOpen', 'open', 0.7], ['lofiSnare', 'snare', 0.8]] as const).forEach(([k, src, pk]) => { const d = this.sampleData[src]; if (d) this.send(k, crush(d, pk)); });
   }
 
   update(p: Project) {
@@ -60,6 +69,12 @@ export class Engine {
   preview(id: string, note: number) { this.node?.port.postMessage({ type: 'preview', id, note }); }
 }
 
+function crush(src: Float32Array, pk: number) {
+  const out = new Float32Array(src.length), hold = 4, q = 2 ** 7; let h = 0, lp = 0, m = 0;
+  for (let i = 0; i < src.length; i++) { if (i % hold === 0) h = Math.round(src[i] * q) / q; lp += (h - lp) * 0.35; out[i] = Math.tanh(lp * 1.8); m = Math.max(m, Math.abs(out[i])); }
+  if (m > 0) for (let i = 0; i < out.length; i++) out[i] *= pk / m;
+  return out;
+}
 function mono(b: AudioBuffer) {
   const out = new Float32Array(b.length), c0 = b.getChannelData(0), c1 = b.numberOfChannels > 1 ? b.getChannelData(1) : c0;
   for (let i = 0; i < b.length; i++) out[i] = (c0[i] + c1[i]) * 0.5;
@@ -74,11 +89,12 @@ async function synthShots(sr: number) {
   const nz = (c: BaseAudioContext, o: AudioNode, N: AudioBuffer, t: number, d: number, type: BiquadFilterType, fr: number, q: number, pk: number, a = 0.001) => { const s = c.createBufferSource(); s.buffer = N; const f = c.createBiquadFilter(); f.type = type; f.frequency.value = fr; f.Q.value = q; const g = env(c, t, a, pk, d); s.connect(f); f.connect(g); g.connect(o); s.start(t); s.stop(t + d + 0.02); };
   const hat = (c: BaseAudioContext, o: AudioNode, d: number, pk: number) => { const sum = c.createGain(); sum.gain.value = 0.25; [205.3, 304.4, 369.6, 522.7, 540, 800].forEach((fr) => { const s = c.createOscillator(); s.type = 'square'; s.frequency.value = fr * 2.1; s.connect(sum); s.start(0); s.stop(d + 0.05); }); const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 10000; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000; const g = env(c, 0, 0.001, pk, d); sum.connect(bp); bp.connect(hp); hp.connect(g); g.connect(o); };
   const S: Record<string, AudioBuffer> = {};
+  const norm = (b: AudioBuffer, pk = 0.95) => { const d = b.getChannelData(0); let m = 0; for (let i = 0; i < d.length; i++) m = Math.max(m, Math.abs(d[i])); if (m > 0) for (let i = 0; i < d.length; i++) d[i] *= pk / m; return b; };
   S.k808 = await shot(1.4, (c, o) => { const os = c.createOscillator(); os.frequency.setValueAtTime(160, 0); os.frequency.exponentialRampToValueAtTime(52, 0.07); os.frequency.exponentialRampToValueAtTime(47, 1.2); const g = c.createGain(); g.gain.setValueAtTime(1, 0); g.gain.setTargetAtTime(0, 0.05, 0.35); const ws = c.createWaveShaper(), cv = new Float32Array(1024); for (let i = 0; i < 1024; i++) cv[i] = Math.tanh((i / 511.5 - 1) * 1.6); ws.curve = cv; os.connect(g); g.connect(ws); ws.connect(o); os.start(0); os.stop(1.4); });
-  S.clap808 = await shot(0.6, (c, o, N) => [0, 0.009, 0.019, 0.03].forEach((t, i) => nz(c, o, N, t, i < 3 ? 0.012 : 0.3, 'bandpass', 1100, 1.4, 0.9, 0.0008)));
-  S.hat808 = await shot(0.15, (c, o) => hat(c, o, 0.06, 1.6));
-  S.open808 = await shot(0.6, (c, o) => hat(c, o, 0.45, 1.3));
-  S.snare808 = await shot(0.45, (c, o, N) => { [[238, 0.55, 0.11], [476, 0.3, 0.07]].forEach(([fr, pk, d]) => { const s = c.createOscillator(); s.frequency.setValueAtTime(fr * 1.25, 0); s.frequency.exponentialRampToValueAtTime(fr, 0.012); const g = env(c, 0, 0.0008, pk, d); s.connect(g); g.connect(o); s.start(0); s.stop(d + 0.03); }); nz(c, o, N, 0, 0.26, 'highpass', 1800, 0.7, 0.5, 0.002); });
+  S.clap808 = norm(await shot(0.6, (c, o, N) => [0, 0.009, 0.019, 0.03].forEach((t, i) => nz(c, o, N, t, i < 3 ? 0.012 : 0.3, 'bandpass', 1100, 1.4, 0.9, 0.0008))), 0.85);
+  S.hat808 = norm(await shot(0.15, (c, o) => hat(c, o, 0.06, 1.6)), 0.75);
+  S.open808 = norm(await shot(0.6, (c, o) => hat(c, o, 0.45, 1.3)), 0.65);
+  S.snare808 = norm(await shot(0.45, (c, o, N) => { [[238, 0.55, 0.11], [476, 0.3, 0.07]].forEach(([fr, pk, d]) => { const s = c.createOscillator(); s.frequency.setValueAtTime(fr * 1.25, 0); s.frequency.exponentialRampToValueAtTime(fr, 0.012); const g = env(c, 0, 0.0008, pk, d); s.connect(g); g.connect(o); s.start(0); s.stop(d + 0.03); }); nz(c, o, N, 0, 0.26, 'highpass', 1800, 0.7, 0.5, 0.002); }), 0.85);
   S.cowbell = await shot(0.5, (c, o) => { const sum = c.createGain(); [540, 800].forEach((fr) => { const s = c.createOscillator(); s.type = 'square'; s.frequency.value = fr; s.connect(sum); s.start(0); s.stop(0.45); }); const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 1.5; const g = c.createGain(); g.gain.setValueAtTime(0.6, 0); g.gain.exponentialRampToValueAtTime(0.15, 0.04); g.gain.exponentialRampToValueAtTime(0.0001, 0.42); sum.connect(bp); bp.connect(g); g.connect(o); });
   S.clave = await shot(0.1, (c, o) => { const s = c.createOscillator(); s.frequency.value = 2500; const g = env(c, 0, 0.0005, 0.7, 0.045); s.connect(g); g.connect(o); s.start(0); s.stop(0.08); });
   S.conga = await shot(0.4, (c, o, N) => { const s = c.createOscillator(); s.frequency.setValueAtTime(330, 0); s.frequency.exponentialRampToValueAtTime(240, 0.05); const g = env(c, 0, 0.001, 0.8, 0.28); s.connect(g); g.connect(o); s.start(0); s.stop(0.35); nz(c, o, N, 0, 0.01, 'bandpass', 2500, 1, 0.25); });
@@ -101,7 +117,6 @@ async function synthShots(sr: number) {
       g.connect(cv); cv.connect(lp); lp.connect(hp); hp.connect(rg); rg.connect(rs); rs.connect(o);
     }
   };
-  const norm = (b: AudioBuffer, pk = 0.95) => { const d = b.getChannelData(0); let m = 0; for (let i = 0; i < d.length; i++) m = Math.max(m, Math.abs(d[i])); if (m > 0) for (let i = 0; i < d.length; i++) d[i] *= pk / m; return b; };
   // trance: corto, con mucho click y cuerpo medio, para dejar lugar al bajo rolling
   S.kTrance = norm(await shot(0.45, (c, o, N) => kick(c, o, N, { f0: 330, f1: 88, fe: 52, tp: 0.03, dur: 0.5, hold: 0.07, tau: 0.085, click: 0.9, clickF: 3500, drive: 2.4 })), 0.5);
   // techno: grave, largo, saturado y con rumble
@@ -120,6 +135,22 @@ async function synthShots(sr: number) {
   S.snap = norm(await shot(0.25, (c, o, N) => { nz(c, o, N, 0, 0.05, 'bandpass', 2300, 2.5, 1, 0.0004); nz(c, o, N, 0.004, 0.12, 'bandpass', 1500, 1, 0.35, 0.002); }), 0.75);
   // hats: apretado y brillante (trance), oscuro y suave (melodic / deep)
   S.hatTight = norm(await shot(0.08, (c, o, N) => { nz(c, o, N, 0, 0.035, 'highpass', 9000, 0.7, 1, 0.0003); hat(c, o, 0.03, 0.8); }), 0.9);
+  // ---- kit Synthwave 80s: bombo con punch, snare y clap con reverb compuerta (gated reverb), el sonido de los 80 ----
+  const gated = (c: OfflineAudioContext, src: AudioNode, o: AudioNode, len: number, amt: number) => {
+    const ir = c.createBuffer(2, Math.ceil(c.sampleRate * len), c.sampleRate);
+    for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - 0.25 * i / d.length); }
+    const cv = c.createConvolver(); cv.buffer = ir; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 250; const g = c.createGain(); g.gain.value = amt; src.connect(cv); cv.connect(hp); hp.connect(g); g.connect(o);
+  };
+  S.k80s = norm(await shot(0.5, (c, o, N) => kick(c, o, N, { f0: 260, f1: 72, fe: 54, tp: 0.035, dur: 0.5, hold: 0.06, tau: 0.09, click: 0.7, clickF: 3200, drive: 2.6 })), 0.5);
+  S.snareGated = norm(await shot(0.45, (c, o, N) => {
+    const bus = c.createGain(); bus.connect(o);
+    [[190, 0.8, 0.12], [330, 0.35, 0.06]].forEach(([fr, pk, d]) => { const s2 = c.createOscillator(); s2.frequency.setValueAtTime(fr * 1.4, 0); s2.frequency.exponentialRampToValueAtTime(fr, 0.015); const g = env(c, 0, 0.0008, pk, d); s2.connect(g); g.connect(bus); s2.start(0); s2.stop(d + 0.03); });
+    nz(c, bus, N, 0, 0.18, 'bandpass', 3500, 0.6, 0.7, 0.001); gated(c, bus, o, 0.24, 0.5);
+  }), 0.85);
+  S.clapGated = norm(await shot(0.45, (c, o, N) => { const bus = c.createGain(); bus.connect(o); [0, 0.009, 0.019, 0.03].forEach((t, i) => nz(c, bus, N, t, i < 3 ? 0.01 : 0.12, 'bandpass', 1200, 1.2, 0.9, 0.0006)); gated(c, bus, o, 0.22, 0.45); }), 0.85);
+  // ---- kit Electro: bombo corto tipo 808, snare "zap" y hats metálicos ----
+  S.kElectro = norm(await shot(0.5, (c, o, N) => kick(c, o, N, { f0: 190, f1: 62, fe: 50, tp: 0.03, dur: 0.5, hold: 0.05, tau: 0.09, click: 0.25, clickF: 2500, drive: 1.5 })), 0.5);
+  S.snareZap = norm(await shot(0.3, (c, o, N) => { const z = c.createOscillator(); z.type = 'triangle'; z.frequency.setValueAtTime(1600, 0); z.frequency.exponentialRampToValueAtTime(140, 0.05); const g = env(c, 0, 0.0005, 0.9, 0.09); z.connect(g); g.connect(o); z.start(0); z.stop(0.12); nz(c, o, N, 0, 0.14, 'highpass', 2500, 0.7, 0.45, 0.001); }), 0.8);
   S.hatDark = norm(await shot(0.12, (c, o, N) => nz(c, o, N, 0, 0.085, 'bandpass', 7000, 0.9, 1, 0.002)), 0.95);
   return S;
 }
