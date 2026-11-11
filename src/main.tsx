@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import './style.css';
 import { Engine, type DJState } from './engine/engine';
 import {
-  type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName,
+  type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
@@ -166,8 +166,15 @@ function App() {
             <button class="btn hot" type="submit">Generar</button>
           </form>
           <div class="recipe">
-            {letters.map(([ch, nt]) => <span style={{ marginRight: '8px' }}><b>{ch}</b> {nt}</span>)}
+            {(p.letterNotes ?? letters.map(([ch, note]) => ({ ch, note, moved: false }))).map((x) => <span class={'ln' + (x.moved ? ' mv' : '')} title={x.moved ? 'Corrida para entrar en la tonalidad' : ''}><b>{x.ch}</b> {x.note}</span>)}
           </div>
+          <div class="keyline">
+            <span>Tonalidad: <b>{p.key ?? '–'}</b>{p.progression ? <> · {p.progression}</> : null}</span>
+            <div class="seg2">
+              {([['tonal', 'Armónico'], ['puro', 'Puro']] as const).map(([k, l]) => <button class={(p.harmony ?? 'tonal') === k ? 'on' : ''} onClick={() => up((d) => { d.harmony = k; applyHarmony(d); })}>{l}</button>)}
+            </div>
+          </div>
+          <div class="hint" style={{ marginTop: '6px' }}>{(p.harmony ?? 'tonal') === 'tonal' ? 'Armónico: se busca la tonalidad que mejor le queda al nombre y las notas que chocan (en otro color) se corren medio tono.' : 'Puro: se usan exactamente las notas de las letras, aunque suenen tensas.'}</div>
           <div class="chips" style={{ marginTop: '10px' }}>
             <button class="chip" onClick={() => fromName(variant + 1)}>Otra versión</button>
             {Object.keys(GENRES).map((g) => <button class={'chip' + (p.genre === g ? ' on' : '')} onClick={() => up((d) => applyGenre(d, g))}>{GENRES[g].name}</button>)}

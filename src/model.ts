@@ -25,6 +25,8 @@ export type Project = {
   fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number };
   master: { eq: number[]; target: number; auto: boolean; ceiling: number };
   seed?: number;
+  harmony?: 'tonal' | 'puro'; // tonal: se busca la tonalidad del nombre; puro: solo las notas exactas de las letras
+  key?: string; progression?: string; letterNotes?: { ch: string; note: string; moved: boolean }[];
 };
 
 /* ---------- teoría: cada letra es una tecla del piano ----------
@@ -61,9 +63,68 @@ function buildChords(order: number[]) {
   return [tonic, tonic, tonic, tonic];
 }
 function voice(c: Ch) { let root = 48 + c.root; if (root > 56) root -= 12; const out = c.ivs.map((i) => root + i); if (out.length < 3) out.push(root + 12); return out; }
-export function harmonyFromName(raw: string) {
-  const c = clean(raw) || 'LOOP'; const pcs = [...c].map(letterPc);
-  return { letters: c, seq: pcs.map((pc) => 60 + pc), chords: buildChords(pcs).map((ch) => ({ name: ch.name, tones: ch.ivs.map((i) => NOTE_ES[(ch.root + i) % 12]), midi: voice(ch) })) };
+function pureHarmony(c: string) {
+  const pcs = [...c].map(letterPc);
+  return { letters: c, seq: pcs.map((pc) => 60 + pc), chords: buildChords(pcs).map((ch) => ({ name: ch.name, tones: ch.ivs.map((i) => NOTE_ES[(ch.root + i) % 12]), midi: voice(ch) })),
+    key: 'sin tonalidad (notas exactas)', progression: '', letterNotes: [...c].map((ch) => ({ ch, note: letterNote(ch), moved: false })) };
+}
+
+/* ---------- modo armónico: tonalidad del nombre + círculo de quintas ---------- */
+const MAJ = [0, 2, 4, 5, 7, 9, 11], MIN = [0, 2, 3, 5, 7, 8, 10];
+const FIFTHS = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5]; // posición de cada nota en el círculo de quintas
+const fifthDist = (a: number, b: number) => { const d = Math.abs(FIFTHS.indexOf(a) - FIFTHS.indexOf(b)); return Math.min(d, 12 - d); };
+const ROMAN_MAJ = ['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°'], ROMAN_MIN = ['i', 'ii°', 'III', 'iv', 'v', 'VI', 'VII'];
+const TEMPLATES: Record<'maj' | 'min', number[][]> = {
+  maj: [[0, 4, 5, 3], [5, 3, 0, 4], [0, 5, 3, 4], [0, 3, 5, 4], [1, 4, 0, 5], [0, 3, 0, 4], [3, 4, 2, 5], [0, 2, 3, 4]],
+  min: [[0, 5, 2, 6], [0, 3, 5, 4], [0, 6, 5, 6], [0, 5, 3, 6], [0, 2, 6, 5], [5, 6, 0, 0], [0, 3, 6, 2], [3, 6, 0, 5]],
+};
+function tonalHarmony(c: string, salt = '') {
+  const pcs = [...c].map(letterPc), w = new Array(12).fill(0);
+  pcs.forEach((pc, i) => (w[pc] += 1 + (i === 0 ? 1.5 : 0) + (i === pcs.length - 1 ? 0.4 : 0)));
+  // 1) elegir la tonalidad: la escala que más notas del nombre contiene (penaliza las de afuera)
+  let best = { t: 0, mode: 'min' as 'maj' | 'min', sc: -1e9 };
+  for (let t = 0; t < 12; t++) for (const mode of ['maj', 'min'] as const) {
+    const sc = (mode === 'maj' ? MAJ : MIN).map((i) => (t + i) % 12);
+    let v = 0; for (let pc = 0; pc < 12; pc++) v += sc.includes(pc) ? w[pc] : -1.3 * w[pc];
+    v += w[t] * 0.9 + (t === pcs[0] ? 1.2 : 0) - fifthDist(t, pcs[0]) * 0.15 + (mode === 'min' ? 0.25 : 0);
+    if (v > best.sc) best = { t, mode, sc: v };
+  }
+  const steps = best.mode === 'maj' ? MAJ : MIN, scale = steps.map((i) => (best.t + i) % 12);
+  // 2) acomodar las notas de afuera al vecino más cercano de la escala (prefiere el que también está en el nombre)
+  const inName = new Set(pcs);
+  const snap = (pc: number) => {
+    if (scale.includes(pc)) return pc;
+    const up = (pc + 1) % 12, dn = (pc + 11) % 12, cand = [up, dn].filter((x) => scale.includes(x));
+    return cand.sort((a, b) => (inName.has(b) ? 1 : 0) - (inName.has(a) ? 1 : 0) || fifthDist(a, best.t) - fifthDist(b, best.t))[0];
+  };
+  const snapped = pcs.map(snap), present = new Set(snapped);
+  // 3) progresión: plantilla clásica de la tonalidad que más usa las notas del nombre
+  const r = seeded(c + '#prog' + salt);
+  const tScore = (tp: number[]) => tp.reduce((a, d) => a + (present.has(scale[d]) ? 1 : 0) + (present.has(scale[(d + 2) % 7]) ? 0.3 : 0), 0) + r() * 0.9;
+  const ranked = [...TEMPLATES[best.mode]].map((tp) => [tScore(tp), tp] as [number, number[]]).sort((a, b) => b[0] - a[0]);
+  const tpl = ranked[(Number(salt) || 0) % 3][1]; // "Otra versión" recorre las 3 progresiones que mejor le quedan al nombre
+  const chordAt = (d: number) => {
+    const root = scale[d], third = scale[(d + 2) % 7], fifth = scale[(d + 4) % 7], sev = scale[(d + 6) % 7];
+    const iv = (x: number) => (x - root + 12) % 12, ivs = [0, iv(third), iv(fifth)];
+    const q3 = ivs[1] === 4 ? 'maj' : 'min', dim = ivs[2] === 6;
+    let name = NOTE_EN[root] + (dim ? 'dim' : q3 === 'min' ? 'm' : '');
+    if (present.has(sev)) { ivs.push(iv(sev)); const s7 = iv(sev); name = NOTE_EN[root] + (dim ? 'm7b5' : q3 === 'maj' ? (s7 === 11 ? 'maj7' : '7') : 'm7'); }
+    return { name, tones: ivs.map((i) => NOTE_ES[(root + i) % 12]), midi: voice({ root, ivs, name, score: 0 }) };
+  };
+  const roman = best.mode === 'maj' ? ROMAN_MAJ : ROMAN_MIN;
+  return {
+    letters: c, seq: snapped.map((pc) => 60 + pc), chords: tpl.map(chordAt),
+    key: NOTE_ES[best.t] + (best.mode === 'maj' ? ' mayor' : ' menor'), progression: tpl.map((d) => roman[d]).join(' – '),
+    letterNotes: [...c].map((ch, i) => ({ ch, note: NOTE_ES[snapped[i]], moved: snapped[i] !== pcs[i] })),
+  };
+}
+export function harmonyFromName(raw: string, mode: 'tonal' | 'puro' = 'tonal', salt = '') {
+  const c = clean(raw) || 'LOOP';
+  return mode === 'puro' ? pureHarmony(c) : tonalHarmony(c, salt);
+}
+export function applyHarmony(p: Project, salt = '') {
+  const h = harmonyFromName(p.name, p.harmony ?? 'tonal', salt);
+  p.seq = h.seq; p.chords = h.chords; p.key = h.key; p.progression = h.progression; p.letterNotes = h.letterNotes;
 }
 
 /* ---------- presets de sonido ---------- */
@@ -146,9 +207,9 @@ export function newTrack(p: Project, type: TrackType, sound?: string): Track {
 export const nameScale = (p: Project, octs = 2) => { const b = [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))].sort((a, c) => a - c), out: number[] = []; for (let o = 0; o < octs; o++) b.forEach((pc) => out.push(60 + pc + 12 * o)); return out.sort((a, c) => a - c); };
 
 export function newProject(name = '', genre = 'prog'): Project {
-  const h = harmonyFromName(name);
+  const h = harmonyFromName(name, 'tonal');
   const p: Project = {
-    name, genre, bpm: 124, swing: 0, kit: 'tr909', seq: h.seq, chords: h.chords,
+    name, genre, bpm: 124, swing: 0, kit: 'tr909', seq: h.seq, chords: h.chords, harmony: 'tonal', key: h.key, progression: h.progression, letterNotes: h.letterNotes,
     tracks: [
       mkTrack('kick', 'Kick', 'drum', 'kick', { vol: 0.9 }),
       mkTrack('clap', 'Clap', 'drum', 'clap', { vol: 0.7, rev: 0.25 }),
@@ -196,7 +257,7 @@ const GATES = [null, null, null, [3, 7, 11, 15], [2, 10], [5, 13], [1, 5, 9, 13]
 export function projectFromName(name: string, variant = 0): Project {
   const r = seeded(clean(name) + '#' + variant);
   const g = wpick(r, { prog: 3, melodic: 3, deep: 2, house: 2, trance: 2, techno: 1 }), st = STYLE[g];
-  const p = newProject(name, g); const T = (id: string) => p.tracks.find((t) => t.id === id) ?? mkTrack(id, '', 'drum', 'kick');
+  const p = newProject(name, g); if (variant) applyHarmony(p, String(variant)); const T = (id: string) => p.tracks.find((t) => t.id === id) ?? mkTrack(id, '', 'drum', 'kick');
   const arp = T('arp'); arp.sound = pick(r, st.arp);
   arp.arp = { mode: wpick(r, st.mode), rate: pick(r, st.rate), oct: pick(r, st.oct), gate: Array(16).fill(true) };
   const gt = pick(r, GATES); if (gt) gt.forEach((i) => (arp.arp!.gate[i] = false));
