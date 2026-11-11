@@ -29,14 +29,17 @@ export type Project = {
   key?: string; progression?: string; letterNotes?: { ch: string; note: string; moved: boolean }[];
 };
 
-/* ---------- teoría: cada letra es una tecla del piano ----------
-   El abecedario recorre las 12 teclas en orden cromático: A=DO, B=DO#, C=RE, D=RE#, E=MI, F=FA, G=FA#, H=SOL, I=SOL#,
-   J=LA, K=LA#, L=SI, y vuelve a empezar: M=DO, N=DO#, ... X=SI, Y=DO, Z=DO#. Así hay teclas negras y acordes de todo tipo. */
+/* ---------- teoría: cada letra es una tonalidad (24 = 12 mayores + 12 menores) ----------
+   A..L = mayores en orden cromático: A=DO, B=DO#, C=RE, D=RE#, E=MI, F=FA, G=FA#, H=SOL, I=SOL#, J=LA, K=LA#, L=SI.
+   M..X = menores: M=DOm, N=DO#m, O=REm, P=RE#m, Q=MIm, R=FAm, S=FA#m, T=SOLm, U=SOL#m, V=LAm, W=LA#m, X=SIm.
+   Y=DO y Z=DO# (vuelve a empezar). */
 export const NOTE_ES = ['DO', 'DO#', 'RE', 'RE#', 'MI', 'FA', 'FA#', 'SOL', 'SOL#', 'LA', 'LA#', 'SI'];
 const NOTE_EN = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export const clean = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z]/g, '');
-export const letterPc = (ch: string) => (ch.charCodeAt(0) - 65) % 12;
-export const letterNote = (ch: string) => NOTE_ES[letterPc(ch)];
+export const letterIdx = (ch: string) => (ch.charCodeAt(0) - 65) % 24;
+export const letterPc = (ch: string) => letterIdx(ch) % 12;
+export const letterMinor = (ch: string) => letterIdx(ch) >= 12;
+export const letterNote = (ch: string) => NOTE_ES[letterPc(ch)] + (letterMinor(ch) ? 'm' : '');
 export const noteName = (m: number) => NOTE_ES[((m % 12) + 12) % 12];
 /* tipos de acorde: intervalos desde la fundamental, sufijo y "puntaje" (qué tan completo y musical es) */
 const CHORDS: [number[], string, number][] = [
@@ -63,10 +66,13 @@ function buildChords(order: number[]) {
   return [tonic, tonic, tonic, tonic];
 }
 function voice(c: Ch) { let root = 48 + c.root; if (root > 56) root -= 12; const out = c.ivs.map((i) => root + i); if (out.length < 3) out.push(root + 12); return out; }
+/* Puro: cada letra es un acorde (mayor o menor). La progresión son los primeros 4 acordes distintos del nombre. */
 function pureHarmony(c: string) {
-  const pcs = [...c].map(letterPc);
-  return { letters: c, seq: pcs.map((pc) => 60 + pc), chords: buildChords(pcs).map((ch) => ({ name: ch.name, tones: ch.ivs.map((i) => NOTE_ES[(ch.root + i) % 12]), midi: voice(ch) })),
-    key: 'sin tonalidad (notas exactas)', progression: '', letterNotes: [...c].map((ch) => ({ ch, note: letterNote(ch), moved: false })) };
+  const ls = [...c], seen: string[] = [], prog: Ch[] = [];
+  for (const ch of ls) { const k = letterNote(ch); if (seen.includes(k)) continue; seen.push(k); const root = letterPc(ch), mi = letterMinor(ch); prog.push({ root, ivs: [0, mi ? 3 : 4, 7], name: NOTE_EN[root] + (mi ? 'm' : ''), score: 9 }); if (prog.length === 4) break; }
+  while (prog.length < 4) prog.push(prog[prog.length % Math.max(1, seen.length)] ?? prog[0]);
+  return { letters: c, seq: ls.map((ch) => 60 + letterPc(ch)), chords: prog.map((ch) => ({ name: ch.name, tones: ch.ivs.map((i) => NOTE_ES[(ch.root + i) % 12]), midi: voice(ch) })),
+    key: 'sin tonalidad (cada letra es un acorde)', progression: prog.map((x) => x.name).join(' – '), letterNotes: ls.map((ch) => ({ ch, note: letterNote(ch), moved: false })) };
 }
 
 /* ---------- modo armónico: tonalidad del nombre + círculo de quintas ---------- */
@@ -79,14 +85,15 @@ const TEMPLATES: Record<'maj' | 'min', number[][]> = {
   min: [[0, 5, 2, 6], [0, 3, 5, 4], [0, 6, 5, 6], [0, 5, 3, 6], [0, 2, 6, 5], [5, 6, 0, 0], [0, 3, 6, 2], [3, 6, 0, 5]],
 };
 function tonalHarmony(c: string, salt = '') {
-  const pcs = [...c].map(letterPc), w = new Array(12).fill(0);
-  pcs.forEach((pc, i) => (w[pc] += 1 + (i === 0 ? 1.5 : 0) + (i === pcs.length - 1 ? 0.4 : 0)));
+  const pcs = [...c].map(letterPc), mins = [...c].map(letterMinor), w = new Array(12).fill(0);
+  pcs.forEach((pc, i) => { const b = 1 + (i === 0 ? 1.5 : 0) + (i === pcs.length - 1 ? 0.4 : 0); w[pc] += b; w[(pc + (mins[i] ? 3 : 4)) % 12] += b * 0.45; w[(pc + 7) % 12] += b * 0.3; });
+  const minorBias = (mins.filter(Boolean).length - mins.filter((x) => !x).length) * 0.35 + (mins[0] ? 0.8 : -0.8);
   // 1) elegir la tonalidad: la escala que más notas del nombre contiene (penaliza las de afuera)
   let best = { t: 0, mode: 'min' as 'maj' | 'min', sc: -1e9 };
   for (let t = 0; t < 12; t++) for (const mode of ['maj', 'min'] as const) {
     const sc = (mode === 'maj' ? MAJ : MIN).map((i) => (t + i) % 12);
     let v = 0; for (let pc = 0; pc < 12; pc++) v += sc.includes(pc) ? w[pc] : -1.3 * w[pc];
-    v += w[t] * 0.9 + (t === pcs[0] ? 1.2 : 0) - fifthDist(t, pcs[0]) * 0.15 + (mode === 'min' ? 0.25 : 0);
+    v += w[t] * 0.9 + (t === pcs[0] ? 1.2 : 0) - fifthDist(t, pcs[0]) * 0.15 + (mode === 'min' ? minorBias : -minorBias);
     if (v > best.sc) best = { t, mode, sc: v };
   }
   const steps = best.mode === 'maj' ? MAJ : MIN, scale = steps.map((i) => (best.t + i) % 12);
@@ -115,7 +122,7 @@ function tonalHarmony(c: string, salt = '') {
   return {
     letters: c, seq: snapped.map((pc) => 60 + pc), chords: tpl.map(chordAt),
     key: NOTE_ES[best.t] + (best.mode === 'maj' ? ' mayor' : ' menor'), progression: tpl.map((d) => roman[d]).join(' – '),
-    letterNotes: [...c].map((ch, i) => ({ ch, note: NOTE_ES[snapped[i]], moved: snapped[i] !== pcs[i] })),
+    letterNotes: [...c].map((ch, i) => ({ ch, note: NOTE_ES[snapped[i]] + (mins[i] ? 'm' : ''), moved: snapped[i] !== pcs[i] })),
   };
 }
 export function harmonyFromName(raw: string, mode: 'tonal' | 'puro' = 'tonal', salt = '') {
