@@ -235,12 +235,19 @@ function App() {
               <div class="mini"><Knob label="Pan" value={t.pan} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.02 ? 'C' : (v < 0 ? 'L' : 'R') + Math.round(Math.abs(v) * 100))} onChange={(v) => upT(t.id, (x) => { x.pan = v; })} /></div>
               <div class="mini"><Knob label="Reverb" value={t.rev} min={0} max={1} def={0} color="var(--mint)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.rev = v; })} /></div>
               <div class="mini"><Knob label="Delay" value={t.dly} min={0} max={1} def={0} color="var(--mint)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.dly = v; })} /></div>
+              {t.id === 'kick' && <div class="mini" />}
               {t.id !== 'kick' && <div class="mini"><Knob label="Sidechain" value={t.duck} min={0} max={1} def={0} color="var(--hot)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.duck = v; })} /></div>}
+              </div>
+              <div class="kn4">
+              <div class="mini"><Knob label="Saturación" value={t.fx?.drive ?? 0} min={0} max={1} def={0} color="var(--hot)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, drive: v }; })} /></div>
+              <div class="mini"><Knob label="Chorus" value={t.fx?.chorus ?? 0} min={0} max={1} def={0} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, chorus: v }; })} /></div>
+              <div class="mini"><Knob label="Corta graves" value={Math.max(20, t.fx?.hp || 20)} min={20} max={2000} log def={20} color={t.color} fmt={(v) => (v <= 21 ? 'no' : hz(v))} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, hp: v <= 21 ? 0 : v }; })} /></div>
+              <div class="mini"><Knob label="Corta agudos" value={t.fx?.lp || 20000} min={200} max={20000} log def={20000} color={t.color} fmt={(v) => (v >= 19500 ? 'no' : hz(v))} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, lp: v >= 19500 ? 0 : v }; })} /></div>
               </div>
             </div>
           ))}
         </div>
-        <div class="hint">Deslizá para recorrer el mixer. Para mover un control, mantené el dedo quieto un instante sobre él hasta que se ilumine y después arrastrá. Doble toque lo vuelve a su valor inicial. Sidechain: cuánto se "agacha" la pista cuando pega el kick.</div>
+        <div class="hint">Deslizá para recorrer el mixer. Para mover un control, mantené el dedo quieto un instante sobre él hasta que se ilumine y después arrastrá. Doble toque lo vuelve a su valor inicial. Sidechain: cuánto se "agacha" la pista cuando pega el kick. Abajo, el inserto de cada pista: saturación, chorus y filtros que cortan graves o agudos (cada género los trae armados).</div>
       </div>}
 
       {tab === 'master' && <div class="page master"><Master p={p} up={up} stats={stats} /></div>}

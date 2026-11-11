@@ -20,13 +20,18 @@ export type Genre = {
   mel: { style: string; sound: string[] };
   fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number };
   mix: Record<'arp' | 'chords' | 'melody' | 'bass', { vol: number; rev: number; dly: number; duck: number }>;
+  ins: Partial<Record<string, Ins>>; // inserto por pista: saturación, filtros y chorus
+  groove: Partial<Record<string, number[]>>; // microtiming por pista: atraso de cada paso en fracción de semicorchea
 };
+export type Ins = { drive?: number; hp?: number; lp?: number; chorus?: number };
+/* groove: patrón de 4 semicorcheas repetido (0 = en la grilla) */
+const gr = (a: number[]) => Array.from({ length: 16 }, (_, i) => a[i % 4]);
 
 export const GENRES: Record<string, Genre> = {
   /* Trance: 138, menor siempre, i–VI–III–VII, bajo "rolling" en semicorcheas fuera del bombo, pad con trance gate,
      arpegio que recorre el acorde, lead supersaw de himno y reverb grande. */
   trance: {
-    name: 'Trance', bpm: [136, 140], swing: [0, 0], kit: ['tr909h', 'tr909'],
+    name: 'Trance', bpm: [136, 140], swing: [0, 0], kit: ['trance'],
     harm: { mode: 'min', ext: -1, tpl: { min: [[0, 5, 2, 6], [5, 6, 0, 0], [0, 3, 5, 6], [0, 5, 6, 4], [0, 6, 5, 6]] } },
     drums: [
       { kick: 'X...x...X...x...', clap: '....X.......X...', hat: 'g.g.g.g.g.g.g.g.', open: '..X...X...X...X.', perc: '...............g' },
@@ -41,13 +46,15 @@ export const GENRES: Record<string, Genre> = {
     arp: [{ mode: 'chord', rate: '16', oct: 2 }, { mode: 'chordpp', rate: '16', oct: 2 }, { mode: 'chord', rate: '16', oct: 3 }],
     arpSound: ['trancePluck', 'pluckHi'],
     mel: { style: 'anthem', sound: ['tranceLead', 'super'] },
+    ins: { chords: { hp: 280, chorus: 0.5 }, arp: { hp: 320, chorus: 0.25 }, melody: { drive: 0.15, chorus: 0.35 }, bass: { drive: 0.25, hp: 38 }, open: { hp: 5000 } },
+    groove: {},
     fx: { revSize: 0.9, revDamp: 0.25, revRet: 0.95, dlyFb: 0.45, dlyRet: 0.7, duck: 0.5 },
-    mix: { arp: { vol: 0.55, rev: 0.4, dly: 0.35, duck: 0.55 }, chords: { vol: 0.5, rev: 0.35, dly: 0.1, duck: 0.7 }, melody: { vol: 0.5, rev: 0.45, dly: 0.3, duck: 0.4 }, bass: { vol: 0.72, rev: 0, dly: 0, duck: 0.8 } },
+    mix: { arp: { vol: 0.65, rev: 0.4, dly: 0.35, duck: 0.55 }, chords: { vol: 0.75, rev: 0.35, dly: 0.1, duck: 0.7 }, melody: { vol: 0.5, rev: 0.45, dly: 0.3, duck: 0.4 }, bass: { vol: 0.72, rev: 0, dly: 0, duck: 0.8 } },
   },
   /* Techno: 130-134, menor, acorde casi fijo (vamp), bombo largo y grave, hats en semicorcheas con acentos,
      línea acid 303 con slides y acentos, stab oscuro con dub delay y bajo sub. */
   techno: {
-    name: 'Techno', bpm: [130, 134], swing: [0, 0.06], kit: ['tr909h'],
+    name: 'Techno', bpm: [130, 134], swing: [0, 0.06], kit: ['techno'],
     harm: { mode: 'min', ext: 7, tpl: { min: [[0, 0, 0, 0], [0, 0, 5, 6], [0, 0, 3, 3], [0, 0, 0, 6]] } },
     drums: [
       { kick: 'X...X...X...X...', clap: '....x.......x...', hat: 'ggXgggXgggXgggXg', open: '..x...x...x...x.', perc: '...x..x....x..x.' },
@@ -62,13 +69,15 @@ export const GENRES: Record<string, Genre> = {
     arp: [{ mode: 'acid', rate: '16', oct: 2 }],
     arpSound: ['acid303'],
     mel: { style: 'hook', sound: ['pluckHi', 'chip'] },
+    ins: { bass: { drive: 0.45, lp: 380 }, chords: { drive: 0.35, hp: 220 }, arp: { drive: 0.55 }, melody: { drive: 0.3, hp: 300 }, clap: { hp: 250 }, perc: { drive: 0.2 } },
+    groove: { hat: gr([0, 0.02, 0, 0.04]), perc: gr([0, 0.03, 0.02, 0.05]) },
     fx: { revSize: 0.75, revDamp: 0.45, revRet: 0.8, dlyFb: 0.58, dlyRet: 0.8, duck: 0.45 },
     mix: { arp: { vol: 0.5, rev: 0.12, dly: 0.25, duck: 0.5 }, chords: { vol: 0.5, rev: 0.3, dly: 0.55, duck: 0.5 }, melody: { vol: 0.5, rev: 0.25, dly: 0.35, duck: 0.4 }, bass: { vol: 0.72, rev: 0, dly: 0, duck: 0.6 } },
   },
   /* House: 122-126 con swing, acordes de séptima en stabs sincopados de piano/órgano, bajo con saltos de octava,
      hats abiertos a contratiempo, pandereta y shaker en semicorcheas. */
   house: {
-    name: 'House', bpm: [122, 126], swing: [0.18, 0.28], kit: ['tr909'],
+    name: 'House', bpm: [122, 126], swing: [0.18, 0.28], kit: ['house'],
     harm: { ext: 7, tpl: { maj: [[0, 3, 5, 4], [5, 3, 0, 4], [1, 4, 0, 0], [0, 5, 3, 4]], min: [[0, 3, 6, 5], [0, 6, 5, 6], [0, 3, 4, 0], [0, 5, 3, 4]] } },
     drums: [
       { kick: 'X...X...X...X...', clap: '....X.......X...', hat: 'g.g.g.g.g.g.g.g.', open: '..X...X...X...X.', perc: 'gxgxgxgxgxgxgxgx' },
@@ -83,20 +92,22 @@ export const GENRES: Record<string, Genre> = {
     arp: [{ mode: 'name', rate: '8', oct: 1, gate: 'x.x...x.x.x...x.' }, { mode: 'mirror', rate: '8', oct: 2, gate: 'x...x.x...x.x...' }],
     arpSound: ['organ', 'pluckHi'],
     mel: { style: 'house', sound: ['housePiano', 'organ', 'pluckHi'] },
+    ins: { chords: { hp: 180, chorus: 0.2 }, bass: { drive: 0.2 }, arp: { hp: 250 }, melody: { chorus: 0.15 }, perc: { hp: 400 } },
+    groove: { hat: gr([0, 0.05, 0.03, 0.08]), perc: gr([0, 0.06, 0.03, 0.09]), clap: gr([0, 0, 0.04, 0]) },
     fx: { revSize: 0.6, revDamp: 0.4, revRet: 0.7, dlyFb: 0.35, dlyRet: 0.55, duck: 0.3 },
     mix: { arp: { vol: 0.45, rev: 0.2, dly: 0.15, duck: 0.3 }, chords: { vol: 0.6, rev: 0.22, dly: 0.12, duck: 0.35 }, melody: { vol: 0.5, rev: 0.25, dly: 0.2, duck: 0.3 }, bass: { vol: 0.75, rev: 0, dly: 0, duck: 0.45 } },
   },
   /* Deep House: 118-122, mucho swing, acordes de novena (Rhodes), ii–V–I, bajo sub redondo y largo,
      batería 808 suave con shaker, melodía espaciada. */
   deep: {
-    name: 'Deep House', bpm: [118, 122], swing: [0.28, 0.38], kit: ['tr808', 'tr909'],
+    name: 'Deep House', bpm: [118, 122], swing: [0.28, 0.38], kit: ['deep'],
     harm: { ext: 9, tpl: { maj: [[1, 4, 0, 5], [1, 4, 0, 0], [0, 5, 1, 4], [3, 2, 1, 4]], min: [[0, 3, 0, 3], [0, 3, 6, 2], [3, 4, 0, 0], [0, 6, 5, 3]] } },
     drums: [
       { kick: 'X...x...X...x...', clap: '....x.......x...', hat: '..x...x...x...x.', open: '..............g.', perc: 'gxgxgxgxgxgxgxgx' },
       { kick: 'X...x...X...x.g.', clap: '....x.......x...', hat: 'g.x.g.x.g.x.g.x.', open: '......g.......g.', perc: '.g.x.g.x.g.x.g.x' },
       { kick: 'X...x...X...x...', clap: '....x..g....x...', hat: '..xg..xg..xg..xg', open: '..............x.', perc: 'g.g.g.g.g.g.g.g.' },
     ],
-    clap: ['rim', 'clap', 'snareSoft'], perc: ['shaker', 'maraca', 'conga'], kick: { pitch: 0, decay: 1 },
+    clap: ['rim', 'clap', 'snareSoft'], perc: ['shaker', 'maraca', 'conga'], kick: { pitch: 0, decay: 0.35 },
     bass: [{ line: 'r..r......r..f..', l: 2.2 }, { line: '...r...r..r...o.', l: 1.6 }, { line: 'r.....r...r..r..', l: 2.5 }],
     bassSound: ['deepBass', 'bassSub'],
     chords: [{ mode: 'stab', steps: '...x......x.....', len: 3 }, { mode: 'stab', steps: '..x....x..x.....', len: 2.5 }, { mode: 'stab', steps: 'x.....x.....x...', len: 4 }],
@@ -104,13 +115,15 @@ export const GENRES: Record<string, Genre> = {
     arp: [{ mode: 'up', rate: '8', oct: 2, gate: 'x...x...x.x.....' }, { mode: 'name', rate: 'tr', oct: 1, gate: 'x..x..x.......x.' }],
     arpSound: ['bell', 'marimba'],
     mel: { style: 'sparse', sound: ['flute', 'keys', 'bell'] },
+    ins: { chords: { chorus: 0.45, lp: 5000 }, bass: { lp: 650 }, melody: { chorus: 0.3 }, arp: { lp: 6000 } },
+    groove: { hat: gr([0, 0.06, 0.04, 0.1]), perc: gr([0, 0.07, 0.04, 0.1]), clap: gr([0, 0, 0.06, 0]) },
     fx: { revSize: 0.78, revDamp: 0.55, revRet: 0.85, dlyFb: 0.4, dlyRet: 0.6, duck: 0.3 },
     mix: { arp: { vol: 0.35, rev: 0.4, dly: 0.3, duck: 0.3 }, chords: { vol: 0.62, rev: 0.35, dly: 0.15, duck: 0.35 }, melody: { vol: 0.48, rev: 0.4, dly: 0.25, duck: 0.3 }, bass: { vol: 0.8, rev: 0, dly: 0, duck: 0.4 } },
   },
   /* Melodic Techno: 122-126, menor y oscuro, pad largo, bajo rolling con reese, arpegio de acorde con pluck oscuro,
      melodía de notas largas y mucha reverb y delay. */
   melodic: {
-    name: 'Melodic Techno', bpm: [122, 126], swing: [0, 0], kit: ['tr909', 'tr909h'],
+    name: 'Melodic Techno', bpm: [122, 126], swing: [0, 0], kit: ['melodic'],
     harm: { mode: 'min', ext: 0, tpl: { min: [[0, 5, 3, 6], [0, 2, 6, 5], [0, 0, 5, 5], [0, 6, 5, 4], [0, 3, 0, 5]] } },
     drums: [
       { kick: 'X...x...X...x...', clap: '....x.......x...', hat: '..x...x...x...x.', open: '................', perc: '...x..x....x..g.' },
@@ -125,13 +138,15 @@ export const GENRES: Record<string, Genre> = {
     arp: [{ mode: 'chord', rate: '16', oct: 2 }, { mode: 'chordpp', rate: '16', oct: 2 }, { mode: 'up', rate: '16', oct: 2 }],
     arpSound: ['melodicPluck', 'pluck', 'bell'],
     mel: { style: 'long', sound: ['lead', 'bell', 'glass'] },
+    ins: { arp: { hp: 220, drive: 0.2 }, chords: { hp: 160, chorus: 0.4 }, bass: { drive: 0.3, lp: 750 }, melody: { drive: 0.2, chorus: 0.25 } },
+    groove: { perc: gr([0, 0.04, 0.02, 0.05]) },
     fx: { revSize: 0.92, revDamp: 0.3, revRet: 1, dlyFb: 0.5, dlyRet: 0.75, duck: 0.55 },
-    mix: { arp: { vol: 0.45, rev: 0.45, dly: 0.4, duck: 0.5 }, chords: { vol: 0.55, rev: 0.5, dly: 0.1, duck: 0.6 }, melody: { vol: 0.45, rev: 0.5, dly: 0.35, duck: 0.4 }, bass: { vol: 0.72, rev: 0, dly: 0, duck: 0.7 } },
+    mix: { arp: { vol: 0.45, rev: 0.45, dly: 0.4, duck: 0.5 }, chords: { vol: 0.62, rev: 0.5, dly: 0.1, duck: 0.6 }, melody: { vol: 0.45, rev: 0.5, dly: 0.35, duck: 0.4 }, bass: { vol: 0.72, rev: 0, dly: 0, duck: 0.7 } },
   },
   /* Progressive: 122-126, armonía del nombre (mayor o menor), plucks que dibujan las letras, bajo a contratiempo,
      pad de cuerdas y percusión suave. */
   prog: {
-    name: 'Progressive', bpm: [122, 126], swing: [0, 0.05], kit: ['tr909', 'tr808'],
+    name: 'Progressive', bpm: [122, 126], swing: [0, 0.05], kit: ['prog'],
     harm: { ext: 0 },
     drums: [
       { kick: 'X...x...X...x...', clap: '....x.......x...', hat: '..x...x...x...x.', open: '................', perc: 'gggxgggxgggxgggx' },
@@ -146,8 +161,10 @@ export const GENRES: Record<string, Genre> = {
     arp: [{ mode: 'name', rate: '16', oct: 2 }, { mode: 'mirror', rate: '16', oct: 2 }, { mode: 'name', rate: 'tr', oct: 2 }],
     arpSound: ['progPluck', 'pluck', 'marimba'],
     mel: { style: 'qa', sound: ['lead', 'pluckHi', 'bell'] },
+    ins: { arp: { hp: 260, chorus: 0.2 }, chords: { hp: 200, chorus: 0.4 }, bass: { drive: 0.15, hp: 35 }, melody: { chorus: 0.2 } },
+    groove: { hat: gr([0, 0.02, 0.01, 0.03]), perc: gr([0, 0.03, 0.01, 0.04]) },
     fx: { revSize: 0.82, revDamp: 0.35, revRet: 0.9, dlyFb: 0.42, dlyRet: 0.7, duck: 0.4 },
-    mix: { arp: { vol: 0.5, rev: 0.4, dly: 0.35, duck: 0.45 }, chords: { vol: 0.55, rev: 0.45, dly: 0.05, duck: 0.5 }, melody: { vol: 0.6, rev: 0.35, dly: 0.25, duck: 0.35 }, bass: { vol: 0.75, rev: 0, dly: 0, duck: 0.55 } },
+    mix: { arp: { vol: 0.5, rev: 0.4, dly: 0.35, duck: 0.45 }, chords: { vol: 0.65, rev: 0.45, dly: 0.05, duck: 0.5 }, melody: { vol: 0.6, rev: 0.35, dly: 0.25, duck: 0.35 }, bass: { vol: 0.85, rev: 0, dly: 0, duck: 0.55 } },
   },
 };
 

@@ -7,6 +7,8 @@ const STEPS = 64;
 const MAXV = 12;
 
 /* ---------- utilidades DSP ---------- */
+function readFrac(buf, w, d) { let x = w - d; while (x < 0) x += 2048; const xi = x | 0, fr = x - xi; return buf[xi] + (buf[(xi + 1) & 2047] - buf[xi]) * fr; }
+const SS7 = [-1, -0.5717, -0.1775, 0, 0.181, 0.5651, 0.9768]; // reparto del detune del supersaw clásico (7 voces)
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 const dbToGain = (db) => Math.pow(10, db / 20);
 function polyblep(t, dt) {
@@ -61,12 +63,12 @@ class SampleVoice {
 }
 
 class SynthVoice {
-  constructor() { this.on = false; this.f = new SVF(); this.f2 = new SVF(); this.ph = new Float64Array(6); }
+  constructor() { this.on = false; this.f = new SVF(); this.f2 = new SVF(); this.ph = new Float64Array(7); }
   start(p, note, vel, lenSamp, sr, pan) {
     this.p = p; this.sr = sr; this.on = true; this.t = 0; this.len = lenSamp; this.vel = vel;
     this.freq = mtof(note + (p.octave || 0) * 12); this.tf = this.freq; this.env = 0; this.stage = 0; this.fenv = vel > 0.95 ? 1.6 : 1; // acento: abre más el filtro
     this.gk = 1 - Math.exp(-1 / (sr * 0.045));
-    const n = Math.max(1, Math.min(6, p.unison | 0));
+    const n = Math.max(1, Math.min(7, p.unison | 0));
     for (let k = 0; k < n; k++) this.ph[k] = Math.random();
     this.n = n; this.fm = 0; this.mph = 0; this.sph = 0;
     this.pl = Math.cos((pan + 1) * Math.PI / 4); this.pr = Math.sin((pan + 1) * Math.PI / 4);
@@ -98,7 +100,7 @@ class SynthVoice {
         s = Math.sin(TAU * this.ph[0] + mod);
       } else {
         for (let u = 0; u < n; u++) {
-          const det = n > 1 ? (u / (n - 1) - 0.5) * 2 * p.detune : 0;
+          const det = n === 7 ? SS7[u] * p.detune : n > 1 ? (u / (n - 1) - 0.5) * 2 * p.detune : 0;
           const f = base * Math.pow(2, det / 1200), dt = f / sr;
           let t = this.ph[u] + dt; if (t >= 1) t -= 1; this.ph[u] = t;
           let o;
@@ -197,7 +199,19 @@ class LoopEngine extends AudioWorkletProcessor {
     if (m.type === 'sample') { this.samples[m.key] = m.data; return; }
     if (m.type === 'project') {
       const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing;
-      this.tracks = m.project.tracks.map((t) => { const o = old.find((x) => x.id === t.id); return { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0 }; });
+      this.tracks = m.project.tracks.map((t) => {
+        const o = old.find((x) => x.id === t.id);
+        const nt = { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null };
+        // inserto por pista: saturación, filtros pasa altos / pasa bajos y chorus (los buffers se reservan acá, nunca en process)
+        const fx = t.fx || {};
+        if (!nt.ins) nt.ins = { hpL: new Biquad(), hpR: new Biquad(), lpL: new Biquad(), lpR: new Biquad(), cb: null, ci: 0, cph: 0 };
+        const I = nt.ins; I.drive = fx.drive || 0; I.hp = fx.hp || 0; I.lp = fx.lp || 0; I.chorus = fx.chorus || 0;
+        if (I.hp) { I.hpL.set('hp', I.hp, 0.707, 0, this.sr); I.hpR.set('hp', I.hp, 0.707, 0, this.sr); }
+        if (I.lp) { I.lpL.set('lp', I.lp, 0.707, 0, this.sr); I.lpR.set('lp', I.lp, 0.707, 0, this.sr); }
+        if (I.chorus && !I.cb) { I.cb = [new Float32Array(2048), new Float32Array(2048)]; }
+        I.dk = 1 + I.drive * 10; I.dg = (1 + I.drive) / I.dk;
+        return nt;
+      });
       const s16 = 60 / this.bpm / 4; this.dly.setTime(s16 * 3, s16 * 4); this.dly.fb = m.project.fx.dlyFb;
       this.rev.room = m.project.fx.revSize; this.rev.damp = m.project.fx.revDamp; this.revRet = m.project.fx.revRet; this.dlyRet = m.project.fx.dlyRet;
       this.target = m.project.master.target; this.autoOn = m.project.master.auto; this.ceil = dbToGain(m.project.master.ceiling);
@@ -228,7 +242,7 @@ class LoopEngine extends AudioWorkletProcessor {
       v.start(t.synth, ev.n, ev.v, ev.l * this.stepLen(), this.sr, pan);
       v.delay = offset; t.last = v;
     }
-    if (t.isKick) this.duckHit = offset;
+    if (t.isKick && offset < 128) this.duckHit = offset;
   }
   process(inputs, outputs) {
     const out = outputs[0], OL = out[0], OR = out[1] || out[0], N = OL.length, B = this.buf;
@@ -241,7 +255,7 @@ class LoopEngine extends AudioWorkletProcessor {
       for (let i = 0; i < N; i++) {
         while (this.pos >= this.nextT) {
           const st = this.next; this.step = st;
-          for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (evs) for (const ev of evs) this.trigger(t, ev, i); }
+          for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % 16] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off); }
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st }); this.stepAt = i;
           this.next = st + 1;
           if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; }
@@ -263,7 +277,27 @@ class LoopEngine extends AudioWorkletProcessor {
       B.tL.fill(0); B.tR.fill(0);
       for (const v of t.voices) {
         if (!v.on) continue;
-        const a = v.delay || 0; v.delay = 0; v.render(B.tL, B.tR, a, N);
+        const a = v.delay || 0;
+        if (a >= N) { v.delay = a - N; continue; } // golpe atrasado por el groove: todavía no empieza
+        v.delay = 0; v.render(B.tL, B.tR, a, N);
+      }
+      const I = t.ins;
+      if (I && (I.drive || I.hp || I.lp || I.chorus)) {
+        const cb = I.cb, cr = I.chorus, dinc = 0.55 / sr;
+        for (let i = 0; i < N; i++) {
+          let l = B.tL[i], r = B.tR[i];
+          if (I.drive) { l = Math.tanh(l * I.dk) * I.dg; r = Math.tanh(r * I.dk) * I.dg; }
+          if (I.hp) { l = I.hpL.run(l); r = I.hpR.run(r); }
+          if (I.lp) { l = I.lpL.run(l); r = I.lpR.run(r); }
+          if (cr && cb) {
+            const w = I.ci; cb[0][w] = l; cb[1][w] = r; I.ci = (w + 1) & 2047;
+            I.cph += dinc; if (I.cph >= 1) I.cph -= 1;
+            const md = Math.sin(TAU * I.cph) * 0.0035 * sr, base = 0.012 * sr;
+            const wl = readFrac(cb[0], w, base + md), wr = readFrac(cb[1], w, base - md);
+            l = l * (1 - cr * 0.4) + wr * cr * 0.7; r = r * (1 - cr * 0.4) + wl * cr * 0.7;
+          }
+          B.tL[i] = l; B.tR[i] = r;
+        }
       }
       const audible = !t.mute && (!anySolo || t.solo);
       const g = audible ? t.gain : 0, gl = g * Math.cos((t.pan + 1) * Math.PI / 4) * 1.414, gr = g * Math.sin((t.pan + 1) * Math.PI / 4) * 1.414;

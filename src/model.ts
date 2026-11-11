@@ -21,6 +21,8 @@ export type Track = {
   chordLen?: number; // largo de cada golpe de acorde en pasos (stab y gate)
   bassLine?: number[]; // bajo: semitonos sobre la fundamental en cada paso (0, 12 = octava, 7 = quinta…)
   bassLen?: number; // bajo: largo de cada nota en pasos
+  fx?: { drive?: number; hp?: number; lp?: number; chorus?: number }; // inserto: saturación, pasa altos, pasa bajos, chorus
+  groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
@@ -189,7 +191,7 @@ const S = (o: Partial<Synth>): Synth => ({ wave: 'saw', unison: 1, detune: 0, cu
 export const SYNTHS: Record<string, { label: string; for: TrackType[]; p: Synth }> = {
   pluck: { label: 'Pluck', for: ['arp', 'melody'], p: S({ unison: 2, detune: 8, cutoff: 700, reso: 0.35, envAmt: 1.4, fdecay: 0.22, decay: 0.3, release: 0.2, gain: 0.32 }) },
   bell: { label: 'Campana', for: ['arp', 'melody'], p: S({ wave: 'fm', fmRatio: 3.5, fmIndex: 3, fmDecay: 0.5, cutoff: 9000, reso: 0.05, decay: 1.2, release: 0.8, gain: 0.4, octave: 1 }) },
-  super: { label: 'Supersaw', for: ['arp', 'chords', 'melody'], p: S({ unison: 5, detune: 22, cutoff: 3800, reso: 0.12, envAmt: 0.5, fdecay: 0.35, attack: 0.008, decay: 0.5, sustain: 0.25, release: 0.35, gain: 0.26 }) },
+  super: { label: 'Supersaw', for: ['arp', 'chords', 'melody'], p: S({ unison: 7, detune: 22, cutoff: 3800, reso: 0.12, envAmt: 0.5, fdecay: 0.35, attack: 0.008, decay: 0.5, sustain: 0.25, release: 0.35, gain: 0.26 }) },
   acid: { label: 'Acid', for: ['arp', 'bass'], p: S({ cutoff: 280, reso: 0.86, envAmt: 2.6, fdecay: 0.16, decay: 0.25, release: 0.08, gain: 0.32, octave: -1 }) },
   keys: { label: 'Keys', for: ['arp', 'chords', 'melody'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.7, fmDecay: 0.35, cutoff: 6000, reso: 0.05, decay: 1.4, sustain: 0.15, release: 0.5, gain: 0.42 }) },
   organ: { label: 'Órgano', for: ['arp', 'chords', 'melody'], p: S({ wave: 'tri', unison: 2, detune: 4, sub: 0.5, cutoff: 4500, reso: 0.05, attack: 0.005, decay: 0.2, sustain: 0.8, release: 0.1, gain: 0.32 }) },
@@ -211,9 +213,9 @@ export const SYNTHS: Record<string, { label: string; for: TrackType[]; p: Synth 
   glass: { label: 'Vidrio', for: ['chords'], p: S({ wave: 'fm', fmRatio: 3, fmIndex: 0.8, fmDecay: 2, cutoff: 6000, reso: 0.05, attack: 0.3, decay: 1, sustain: 0.7, release: 1.2, gain: 0.2 }) },
   choir: { label: 'Coro', for: ['chords'], p: S({ wave: 'tri', unison: 3, detune: 10, cutoff: 2000, reso: 0.15, attack: 0.7, decay: 1, sustain: 0.8, release: 1.5, gain: 0.2 }) },
   // sonidos de género
-  tranceLead: { label: 'Lead trance', for: ['melody', 'arp'], p: S({ unison: 6, detune: 28, cutoff: 6500, reso: 0.12, envAmt: 0.3, fdecay: 0.4, attack: 0.005, decay: 0.4, sustain: 0.75, release: 0.3, gain: 0.2 }) },
-  trancePluck: { label: 'Pluck trance', for: ['arp', 'melody'], p: S({ unison: 5, detune: 20, cutoff: 900, reso: 0.25, envAmt: 2.4, fdecay: 0.16, decay: 0.22, release: 0.15, gain: 0.34 }) },
-  tranceGate: { label: 'Pad gate', for: ['chords'], p: S({ unison: 6, detune: 24, cutoff: 4200, reso: 0.1, envAmt: 0.3, fdecay: 0.15, attack: 0.003, decay: 0.3, sustain: 0.85, release: 0.04, gain: 0.13 }) },
+  tranceLead: { label: 'Lead trance', for: ['melody', 'arp'], p: S({ unison: 7, detune: 28, cutoff: 6500, reso: 0.12, envAmt: 0.3, fdecay: 0.4, attack: 0.005, decay: 0.4, sustain: 0.75, release: 0.3, gain: 0.2 }) },
+  trancePluck: { label: 'Pluck trance', for: ['arp', 'melody'], p: S({ unison: 7, detune: 20, cutoff: 900, reso: 0.25, envAmt: 2.4, fdecay: 0.16, decay: 0.22, release: 0.15, gain: 0.34 }) },
+  tranceGate: { label: 'Pad gate', for: ['chords'], p: S({ unison: 7, detune: 24, cutoff: 4200, reso: 0.1, envAmt: 0.3, fdecay: 0.15, attack: 0.003, decay: 0.3, sustain: 0.85, release: 0.04, gain: 0.13 }) },
   tranceBass: { label: 'Rolling', for: ['bass'], p: S({ sub: 0.5, cutoff: 380, reso: 0.3, envAmt: 2, fdecay: 0.09, decay: 0.15, sustain: 0.2, release: 0.04, gain: 0.5 }) },
   acid303: { label: 'Acid 303', for: ['arp', 'bass'], p: S({ cutoff: 230, reso: 0.9, envAmt: 3, fdecay: 0.14, attack: 0.002, decay: 0.3, sustain: 0.6, release: 0.03, gain: 0.4, octave: -1 }) },
   technoSub: { label: 'Sub techno', for: ['bass'], p: S({ wave: 'tri', sub: 0.6, cutoff: 260, reso: 0.15, envAmt: 0.6, fdecay: 0.1, attack: 0.003, decay: 0.3, sustain: 0.7, release: 0.08, gain: 0.6 }) },
@@ -232,6 +234,13 @@ export const KITS: Record<string, { label: string; map: Record<string, string> }
   tr909: { label: '909', map: { kick: 'kA909', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim' } },
   tr909h: { label: '909 Duro', map: { kick: 'kBh', clap: 'clap2', hat: 'hatH', open: 'openH', snare: 'snareH', rim: 'rim' } },
   tr808: { label: '808', map: { kick: 'k808', clap: 'clap808', hat: 'hat808', open: 'open808', snare: 'snare808', rim: 'rim' } },
+  // kits por género
+  trance: { label: 'Kit Trance', map: { kick: 'kTrance', clap: 'clap2', hat: 'hatTight', open: 'openH', snare: 'snareH', rim: 'rim' } },
+  techno: { label: 'Kit Techno', map: { kick: 'kTechno', clap: 'clapVerb', hat: 'hatH', open: 'openH', snare: 'snareH', rim: 'rim' } },
+  house: { label: 'Kit House', map: { kick: 'kA909', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim' } },
+  deep: { label: 'Kit Deep', map: { kick: 'k808', clap: 'clap808', hat: 'hatDark', open: 'open808', snare: 'snareSoft', rim: 'rim' } },
+  melodic: { label: 'Kit Melodic', map: { kick: 'kMelodic', clap: 'snap', hat: 'hatDark', open: 'open808', snare: 'snareSoft', rim: 'rim' } },
+  prog: { label: 'Kit Progressive', map: { kick: 'kProg', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim' } },
 };
 export const DRUM_SOUNDS: Record<string, string> = {
   kick: 'Kick', clap: 'Clap', snare: 'Snare', snare808: 'Snare 808', hat: 'Hat', open: 'Open hat', ride: 'Ride', rim: 'Rim', crash: 'Crash',
@@ -305,6 +314,8 @@ export function applyGenre(p: Project, g: string, variant = 0) {
     if (a.mode === 'acid') arp.arp.gate = acidPattern(p).gate; }
   // melodía
   const mel = T('melody'); if (mel) { mel.sound = pick(r, G.mel.sound); mix(mel, G.mix.melody); }
+  // inserto y groove por pista según el género
+  p.tracks.forEach((t) => { if (['kick', 'clap', 'hat', 'open', 'perc', 'bass', 'arp', 'chords', 'melody'].includes(t.id)) { t.fx = G.ins[t.id] ? { ...G.ins[t.id] } : undefined; t.groove = G.groove[t.id] ? [...G.groove[t.id]!] : undefined; } });
   applyHarmony(p, variant ? String(variant) : '');
 }
 
@@ -408,7 +419,7 @@ export function compile(p: Project) {
     return {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: t.mute, solo: t.solo,
       rev: t.rev, dly: t.dly, duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
-      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'),
+      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx: t.fx, groove: t.groove,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : 0.05,
     };
   });

@@ -83,7 +83,43 @@ async function synthShots(sr: number) {
   S.clave = await shot(0.1, (c, o) => { const s = c.createOscillator(); s.frequency.value = 2500; const g = env(c, 0, 0.0005, 0.7, 0.045); s.connect(g); g.connect(o); s.start(0); s.stop(0.08); });
   S.conga = await shot(0.4, (c, o, N) => { const s = c.createOscillator(); s.frequency.setValueAtTime(330, 0); s.frequency.exponentialRampToValueAtTime(240, 0.05); const g = env(c, 0, 0.001, 0.8, 0.28); s.connect(g); g.connect(o); s.start(0); s.stop(0.35); nz(c, o, N, 0, 0.01, 'bandpass', 2500, 1, 0.25); });
   S.shaker = await shot(0.12, (c, o, N) => nz(c, o, N, 0, 0.07, 'bandpass', 6500, 1.4, 0.7, 0.012));
+  S.shaker = (() => { const d = S.shaker.getChannelData(0); let m = 0; for (const v of d) m = Math.max(m, Math.abs(v)); if (m) for (let i = 0; i < d.length; i++) d[i] *= 0.9 / m; return S.shaker; })();
   S.maraca = await shot(0.06, (c, o, N) => nz(c, o, N, 0, 0.035, 'highpass', 5000, 0.7, 0.6, 0.004));
   S.tamb = await shot(0.3, (c, o, N) => [0, 0.016].forEach((t, i) => { nz(c, o, N, t, 0.12, 'bandpass', 8500, 2, i ? 0.5 : 0.7); const sum = c.createGain(); sum.gain.value = 0.05; [3200, 4700, 6100, 7300].forEach((fr) => { const s = c.createOscillator(); s.type = 'square'; s.frequency.value = fr; s.connect(sum); s.start(t); s.stop(t + 0.12); }); const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5000; const g = env(c, t, 0.001, 1, 0.1); sum.connect(hp); hp.connect(g); g.connect(o); }));
+  /* ---- kits por género: bombos, clap con sala, snap y hats sintetizados (propios, sin licencias de terceros) ---- */
+  const curve = (k: number) => { const cv = new Float32Array(2048); for (let i = 0; i < 2048; i++) { const x = i / 1023.5 - 1; cv[i] = Math.tanh(x * k) / Math.tanh(k); } return cv; };
+  type KickOpt = { f0: number; f1: number; fe: number; tp: number; dur: number; tau: number; hold: number; click: number; clickF: number; drive: number; rumble?: number };
+  const kick = (c: OfflineAudioContext, o: AudioNode, N: AudioBuffer, k: KickOpt) => {
+    const bus = c.createGain(); const ws = c.createWaveShaper(); ws.curve = curve(k.drive); ws.oversample = '4x'; bus.connect(ws); ws.connect(o);
+    const os = c.createOscillator(); os.frequency.setValueAtTime(k.f0, 0); os.frequency.exponentialRampToValueAtTime(k.f1, k.tp); os.frequency.exponentialRampToValueAtTime(k.fe, k.dur);
+    const g = c.createGain(); g.gain.setValueAtTime(1, 0); g.gain.setTargetAtTime(0, k.hold, k.tau); os.connect(g); g.connect(bus); os.start(0); os.stop(k.dur);
+    if (k.click) { nz(c, bus, N, 0, 0.006, 'highpass', k.clickF, 0.7, k.click, 0.0003); const b = c.createOscillator(); b.frequency.setValueAtTime(k.clickF * 0.5, 0); b.frequency.exponentialRampToValueAtTime(k.f0, 0.008); const bg = env(c, 0, 0.0003, k.click * 0.6, 0.012); b.connect(bg); bg.connect(bus); b.start(0); b.stop(0.03); }
+    if (k.rumble) { // rumble de techno: la cola del bombo pasada por una sala, filtrada y saturada
+      const ir = c.createBuffer(2, Math.ceil(c.sampleRate * 0.9), c.sampleRate); for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (c.sampleRate * 0.22)); }
+      const cv = c.createConvolver(); cv.buffer = ir; const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 130; lp.Q.value = 1.2; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 35;
+      const rg = c.createGain(); rg.gain.setValueAtTime(0, 0); rg.gain.linearRampToValueAtTime(k.rumble, 0.09); const rs = c.createWaveShaper(); rs.curve = curve(3);
+      g.connect(cv); cv.connect(lp); lp.connect(hp); hp.connect(rg); rg.connect(rs); rs.connect(o);
+    }
+  };
+  const norm = (b: AudioBuffer, pk = 0.95) => { const d = b.getChannelData(0); let m = 0; for (let i = 0; i < d.length; i++) m = Math.max(m, Math.abs(d[i])); if (m > 0) for (let i = 0; i < d.length; i++) d[i] *= pk / m; return b; };
+  // trance: corto, con mucho click y cuerpo medio, para dejar lugar al bajo rolling
+  S.kTrance = norm(await shot(0.45, (c, o, N) => kick(c, o, N, { f0: 330, f1: 88, fe: 52, tp: 0.03, dur: 0.5, hold: 0.07, tau: 0.085, click: 0.9, clickF: 3500, drive: 2.4 })), 0.5);
+  // techno: grave, largo, saturado y con rumble
+  S.kTechno = norm(await shot(1.1, (c, o, N) => kick(c, o, N, { f0: 240, f1: 60, fe: 48, tp: 0.045, dur: 1.1, hold: 0.08, tau: 0.11, click: 0.55, clickF: 2500, drive: 3.2, rumble: 0.35 })), 0.5);
+  // melodic: sub redondo y largo, click suave
+  S.kMelodic = norm(await shot(0.9, (c, o, N) => kick(c, o, N, { f0: 180, f1: 56, fe: 46, tp: 0.045, dur: 0.8, hold: 0.08, tau: 0.12, click: 0.35, clickF: 2200, drive: 1.6 })), 0.5);
+  // progressive: redondo y apretado
+  S.kProg = norm(await shot(0.6, (c, o, N) => kick(c, o, N, { f0: 220, f1: 62, fe: 50, tp: 0.04, dur: 0.6, hold: 0.07, tau: 0.09, click: 0.55, clickF: 3000, drive: 2 })), 0.5);
+  // clap con sala (techno)
+  S.clapVerb = norm(await shot(0.9, (c, o, N) => {
+    const bus = c.createGain(); bus.connect(o); [0, 0.008, 0.017, 0.027].forEach((t, i) => nz(c, bus, N, t, i < 3 ? 0.01 : 0.18, 'bandpass', 1300, 1.2, 0.9, 0.0006));
+    const ir = c.createBuffer(2, Math.ceil(c.sampleRate * 0.8), c.sampleRate); for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (c.sampleRate * 0.18)); }
+    const cv = c.createConvolver(); cv.buffer = ir; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 600; const wg = c.createGain(); wg.gain.value = 0.35; bus.connect(cv); cv.connect(hp); hp.connect(wg); wg.connect(o);
+  }), 0.8);
+  // snap (melodic): chasquido seco
+  S.snap = norm(await shot(0.25, (c, o, N) => { nz(c, o, N, 0, 0.05, 'bandpass', 2300, 2.5, 1, 0.0004); nz(c, o, N, 0.004, 0.12, 'bandpass', 1500, 1, 0.35, 0.002); }), 0.75);
+  // hats: apretado y brillante (trance), oscuro y suave (melodic / deep)
+  S.hatTight = norm(await shot(0.08, (c, o, N) => { nz(c, o, N, 0, 0.035, 'highpass', 9000, 0.7, 1, 0.0003); hat(c, o, 0.03, 0.8); }), 0.9);
+  S.hatDark = norm(await shot(0.12, (c, o, N) => nz(c, o, N, 0, 0.085, 'bandpass', 7000, 0.9, 1, 0.002)), 0.95);
   return S;
 }
