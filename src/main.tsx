@@ -14,17 +14,39 @@ const save = (p: Project) => { try { localStorage.setItem('loop.project', JSON.s
 
 /* ---------- controles ---------- */
 function arc(a0: number, a1: number) { const r = 21, c = 27, p = (a: number) => [(c + r * Math.sin(a * Math.PI / 180)).toFixed(2), (c - r * Math.cos(a * Math.PI / 180)).toFixed(2)]; const s = p(a0), e = p(a1); return `M${s[0]} ${s[1]} A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${e[0]} ${e[1]}`; }
-type KP = { label: string; value: number; min: number; max: number; onChange: (v: number) => void; fmt?: (v: number) => string; log?: boolean; color?: string; def?: number; step?: number };
-function Knob({ label, value, min, max, onChange, fmt = (v) => v.toFixed(2), log, color = 'var(--vio)', def, step }: KP) {
+/* Gesto "mantener para mover" en pantallas táctiles: un toque corto o un deslizamiento hacen scroll normal;
+   si mantenés el dedo quieto ~0,17 s el control se "agarra" (vibra y se ilumina) y recién ahí responde. */
+const HOLD_MS = 170;
+function useGrab(instant: boolean, h: { start: (e: PointerEvent) => void; move: (e: PointerEvent) => void; reset?: () => void }) {
+  const g = useRef({ timer: 0 as any, grabbed: false, sx: 0, sy: 0, moved: false, last: 0, el: null as HTMLElement | null, pid: 0 });
+  const grab = (e: PointerEvent) => { const s = g.current; s.grabbed = true; try { s.el?.setPointerCapture(s.pid); } catch { /* */ } s.el?.classList.add('grab'); try { navigator.vibrate?.(8); } catch { /* */ } h.start(e); };
+  const end = () => { const s = g.current; clearTimeout(s.timer); s.timer = 0; if (s.grabbed) s.el?.classList.remove('grab'); s.grabbed = false; };
+  return {
+    onPointerDown: (e: PointerEvent) => {
+      const s = g.current; s.el = e.currentTarget as HTMLElement; s.pid = e.pointerId; s.sx = e.clientX; s.sy = e.clientY; s.moved = false;
+      if (instant || e.pointerType !== 'touch') { e.preventDefault(); grab(e); return; }
+      clearTimeout(s.timer); s.timer = setTimeout(() => { s.timer = 0; if (!s.moved) grab(e); }, HOLD_MS);
+    },
+    onPointerMove: (e: PointerEvent) => { const s = g.current; if (s.grabbed) { h.move(e); return; } if (Math.hypot(e.clientX - s.sx, e.clientY - s.sy) > 8) { s.moved = true; clearTimeout(s.timer); s.timer = 0; } },
+    onPointerUp: () => { const s = g.current; const tap = !s.moved; end(); if (tap) { const now = Date.now(); if (now - s.last < 320) { h.reset?.(); s.last = 0; } else s.last = now; } },
+    onPointerCancel: end,
+    onTouchMove: (e: TouchEvent) => { if (g.current.grabbed) e.preventDefault(); },
+    onContextMenu: (e: Event) => e.preventDefault(),
+  };
+}
+type KP = { label: string; value: number; min: number; max: number; onChange: (v: number) => void; fmt?: (v: number) => string; log?: boolean; color?: string; def?: number; step?: number; instant?: boolean };
+function Knob({ label, value, min, max, onChange, fmt = (v) => v.toFixed(2), log, color = 'var(--vio)', def, step, instant = false }: KP) {
   const norm = (v: number) => log ? Math.log(v / min) / Math.log(max / min) : (v - min) / (max - min);
   const den = (n: number) => { let v = log ? min * Math.pow(max / min, n) : min + n * (max - min); if (step) v = Math.round(v / step) * step; return v; };
-  const st = useRef({ y: 0, n: 0, drag: false, last: 0 });
+  const st = useRef({ y: 0, n: 0 });
   const n = Math.max(0, Math.min(1, norm(value))), a = -135 + n * 270;
+  const hd = useGrab(instant, {
+    start: (e) => { st.current.y = e.clientY; st.current.n = norm(value); },
+    move: (e) => onChange(den(Math.max(0, Math.min(1, st.current.n + (st.current.y - e.clientY) / 160)))),
+    reset: () => def !== undefined && onChange(def),
+  });
   return (
-    <div class="knob" role="slider" aria-label={label} aria-valuenow={value} tabIndex={0}
-      onPointerDown={(e) => { (e.currentTarget as Element).setPointerCapture(e.pointerId); const s = st.current; s.y = e.clientY; s.n = norm(value); s.drag = true; const now = Date.now(); if (now - s.last < 300 && def !== undefined) onChange(def); s.last = now; }}
-      onPointerMove={(e) => { const s = st.current; if (s.drag) onChange(den(Math.max(0, Math.min(1, s.n + (s.y - e.clientY) / 160)))); }}
-      onPointerUp={() => (st.current.drag = false)} onPointerCancel={() => (st.current.drag = false)}
+    <div class={'knob' + (instant ? ' instant' : '')} role="slider" aria-label={label} aria-valuenow={value} tabIndex={0} {...(hd as any)}
       onKeyDown={(e) => { if (e.key === 'ArrowUp') onChange(den(Math.min(1, n + 0.03))); if (e.key === 'ArrowDown') onChange(den(Math.max(0, n - 0.03))); }}>
       <svg viewBox="0 0 54 54"><path d={arc(-135, 135)} stroke="#262b3a" stroke-width="5" fill="none" stroke-linecap="round" />
         {n > 0.004 && <path d={arc(-135, a)} stroke={color} stroke-width="5" fill="none" stroke-linecap="round" />}
@@ -33,17 +55,23 @@ function Knob({ label, value, min, max, onChange, fmt = (v) => v.toFixed(2), log
     </div>
   );
 }
-function Fader({ value, onChange, color, min = 0, max = 1, def, h = 150, label }: { value: number; onChange: (v: number) => void; color: string; min?: number; max?: number; def?: number; h?: number; label: string }) {
-  const ref = useRef<HTMLDivElement>(null), st = useRef({ drag: false, last: 0 });
+function Fader({ value, onChange, color, min = 0, max = 1, def, h = 150, label, instant = false }: { value: number; onChange: (v: number) => void; color: string; min?: number; max?: number; def?: number; h?: number; label: string; instant?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
   const n = (value - min) / (max - min), top = 6 + (1 - n) * (h - 12);
   const set = (y: number) => { const r = ref.current!.getBoundingClientRect(); const k = 1 - Math.max(0, Math.min(1, (y - r.top - 6) / (r.height - 12))); onChange(+(min + k * (max - min)).toFixed(3)); };
+  const hd = useGrab(instant, { start: (e) => set(e.clientY), move: (e) => set(e.clientY), reset: () => def !== undefined && onChange(def) });
   return (
-    <div class="fader" ref={ref} style={{ height: h + 'px', '--c': color } as any} role="slider" aria-label={label} aria-valuenow={value} tabIndex={0}
-      onPointerDown={(e) => { (e.currentTarget as Element).setPointerCapture(e.pointerId); st.current.drag = true; const now = Date.now(); if (now - st.current.last < 300 && def !== undefined) onChange(def); else set(e.clientY); st.current.last = now; }}
-      onPointerMove={(e) => st.current.drag && set(e.clientY)} onPointerUp={() => (st.current.drag = false)} onPointerCancel={() => (st.current.drag = false)}>
+    <div class={'fader' + (instant ? ' instant' : '')} ref={ref} style={{ height: h + 'px', '--c': color } as any} role="slider" aria-label={label} aria-valuenow={value} tabIndex={0} {...(hd as any)}
+      onKeyDown={(e) => { const d = (max - min) / 40; if (e.key === 'ArrowUp') onChange(Math.min(max, value + d)); if (e.key === 'ArrowDown') onChange(Math.max(min, value - d)); }}>
       <div class="track" /><div class="lvl" style={{ height: Math.max(0, h - 6 - top) + 'px', background: color }} /><div class="cap" style={{ top: top + 'px' }} />
     </div>
   );
+}
+function useLandscape() {
+  const q = '(orientation: landscape) and (max-height: 560px)';
+  const [l, setL] = useState(() => typeof matchMedia !== 'undefined' && matchMedia(q).matches);
+  useEffect(() => { const m = matchMedia(q), f = () => setL(m.matches); m.addEventListener?.('change', f); return () => m.removeEventListener?.('change', f); }, []);
+  return l;
 }
 const Icon = {
   play: <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z" /></svg>,
@@ -60,6 +88,7 @@ const hz = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : Math.round(
 function App() {
   const [p, setP] = useState<Project>(() => load() ?? projectFromName('Loop'));
   const [tab, setTab] = useState<'pat' | 'mix' | 'dj' | 'master'>('pat');
+  const land = useLandscape();
   const [sel, setSel] = useState('arp');
   const [playing, setPlaying] = useState(false);
   const [nameIn, setNameIn] = useState(p.name === 'Loop' ? '' : p.name);
@@ -129,8 +158,8 @@ function App() {
         </div>
       </div>
 
-      {tab === 'pat' && <>
-        <div class="card">
+      {tab === 'pat' && <div class="page pat">
+        <div class="card a-name">
           <div class="ct"><h3>Generar desde un nombre</h3></div>
           <form class="name-in" onSubmit={(e) => { e.preventDefault(); fromName(0); (document.activeElement as HTMLElement)?.blur(); }}>
             <input value={nameIn} onInput={(e) => setNameIn((e.target as HTMLInputElement).value)} placeholder="Escribí un nombre" maxLength={24} autocomplete="off" />
@@ -145,7 +174,7 @@ function App() {
           </div>
         </div>
 
-        <div class="card">
+        <div class="card a-grid">
           <div class="ct"><h3>Patrón</h3><button class="chip" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type === 'drum') t.steps = Array(16).fill(0); }))}>Vaciar batería</button></div>
           <div class="grid">
             {p.tracks.map((t) => <>
@@ -176,9 +205,9 @@ function App() {
           <div class="hint">El botón de la izquierda enciende o apaga cada instrumento. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga.</div>
         </div>
 
-        {tr && <TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); setSel(left[0].id); flash(tr.name + ' eliminada'); }} />}
-        {toast && <div class="toast">{toast}</div>}
-      </>}
+        {tr && <div class="a-ed"><TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); setSel(left[0].id); flash(tr.name + ' eliminada'); }} /></div>}
+      </div>}
+      {toast && <div class="toast">{toast}</div>}
 
       {tab === 'mix' && <div class="card">
         <div class="ct"><h3>Mixer</h3></div>
@@ -186,23 +215,25 @@ function App() {
           {p.tracks.map((t) => (
             <div class="strip" style={{ '--c': t.color } as any}>
               <div class="nm">{t.name}</div>
-              <Fader label={'Volumen ' + t.name} value={t.vol} def={0.8} color={t.color} onChange={(v) => upT(t.id, (x) => { x.vol = v; })} />
+              <Fader h={land ? 96 : 150} label={'Volumen ' + t.name} value={t.vol} def={0.8} color={t.color} onChange={(v) => upT(t.id, (x) => { x.vol = v; })} />
               <div class="ms">
                 <button class={'m' + (t.mute ? ' on' : '')} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} aria-label={'Mutear ' + t.name}>M</button>
                 <button class={'s' + (t.solo ? ' on' : '')} onClick={() => upT(t.id, (x) => { x.solo = !x.solo; })} aria-label={'Solo ' + t.name}>S</button>
               </div>
+              <div class="kn4">
               <div class="mini"><Knob label="Pan" value={t.pan} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.02 ? 'C' : (v < 0 ? 'L' : 'R') + Math.round(Math.abs(v) * 100))} onChange={(v) => upT(t.id, (x) => { x.pan = v; })} /></div>
               <div class="mini"><Knob label="Reverb" value={t.rev} min={0} max={1} def={0} color="var(--mint)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.rev = v; })} /></div>
               <div class="mini"><Knob label="Delay" value={t.dly} min={0} max={1} def={0} color="var(--mint)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.dly = v; })} /></div>
               {t.id !== 'kick' && <div class="mini"><Knob label="Sidechain" value={t.duck} min={0} max={1} def={0} color="var(--hot)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.duck = v; })} /></div>}
+              </div>
             </div>
           ))}
         </div>
-        <div class="hint">Sidechain: cuánto se "agacha" cada pista cuando pega el kick. Doble toque en un control lo vuelve a su valor inicial.</div>
+        <div class="hint">Deslizá para recorrer el mixer. Para mover un control, mantené el dedo quieto un instante sobre él hasta que se ilumine y después arrastrá. Doble toque lo vuelve a su valor inicial. Sidechain: cuánto se "agacha" la pista cuando pega el kick.</div>
       </div>}
 
-      {tab === 'dj' && <DJ playing={playing} onPlay={toggle} />}
-      {tab === 'master' && <Master p={p} up={up} stats={stats} />}
+      {tab === 'dj' && <DJ playing={playing} onPlay={toggle} land={land} />}
+      {tab === 'master' && <div class="page master"><Master p={p} up={up} stats={stats} /></div>}
 
       <nav class="nav">
         <button class={tab === 'pat' ? 'on' : ''} onClick={() => setTab('pat')}>{Icon.grid}Patrón</button>
@@ -321,7 +352,7 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
 
 /* ---------- Modo DJ ---------- */
 const DJ0: DJState = { eq: [0, 0, 0], kill: [false, false, false], filter: 0, fx: { echo: false, wash: false, roll: 0, crush: false, gate: false } };
-function DJ({ playing, onPlay }: { playing: boolean; onPlay: () => void }) {
+function DJ({ playing, onPlay, land }: { playing: boolean; onPlay: () => void; land: boolean }) {
   const [s, setS] = useState<DJState>(() => engine.djState ?? clone(DJ0));
   const [latch, setLatch] = useState(false);
   const set = (fn: (d: DJState) => void) => setS((cur) => { const d = clone(cur); fn(d); engine.dj(d); return d; });
@@ -343,16 +374,18 @@ function DJ({ playing, onPlay }: { playing: boolean; onPlay: () => void }) {
     <div class="card dj">
       <div class="ct"><h3>Modo DJ</h3><button class={'chip' + (latch ? ' on' : '')} onClick={() => setLatch(!latch)}>{latch ? 'FX fijos' : 'FX al mantener'}</button><button class="chip" onClick={() => { const d = clone(DJ0); setS(d); engine.dj(d); }}>Resetear</button></div>
       {!playing && <button class="btn hot" style={{ width: '100%', marginBottom: '10px' }} onClick={onPlay}>▶ Reproducir el loop</button>}
+      <div class="djw">
       <div class="iso">
         {bands.map(([lbl, k]) => (
           <div class="band">
             <div class="bl">{lbl}</div>
-            <Fader label={lbl} value={s.eq[k]} min={-26} max={6} def={0} h={170} color={s.kill[k] ? '#4c5368' : k === 0 ? '#ff5a36' : k === 1 ? '#8b6cff' : '#2fd8b4'} onChange={(v) => set((d) => { d.eq[k] = Math.round(v); })} />
+            <Fader instant label={lbl} value={s.eq[k]} min={-26} max={6} def={0} h={land ? 118 : 170} color={s.kill[k] ? '#4c5368' : k === 0 ? '#ff5a36' : k === 1 ? '#8b6cff' : '#2fd8b4'} onChange={(v) => set((d) => { d.eq[k] = Math.round(v); })} />
             <div class="bv">{s.kill[k] ? 'OFF' : (s.eq[k] > 0 ? '+' : '') + s.eq[k] + ' dB'}</div>
             <button class={'kill' + (s.kill[k] ? ' on' : '')} onClick={() => set((d) => { d.kill[k] = !d.kill[k]; })}>{s.kill[k] ? 'Apagado' : 'Kill'}</button>
           </div>
         ))}
       </div>
+      <div class="djr">
       <div class="sub">Filtro {fl < 0 ? '· pasa-bajos' : fl > 0 ? '· pasa-altos' : '· abierto'}</div>
       <div class="dfilter" ref={fref} role="slider" aria-label="Filtro DJ" aria-valuenow={fl} tabIndex={0}
         onPointerDown={(e) => { (e.currentTarget as Element).setPointerCapture(e.pointerId); fst.current.drag = true; const now = Date.now(); if (now - fst.current.last < 300) set((d) => { d.filter = 0; }); else fset(e.clientX); fst.current.last = now; }}
@@ -369,6 +402,8 @@ function DJ({ playing, onPlay }: { playing: boolean; onPlay: () => void }) {
         {fx('gate', 'Gate', 'corta a 1/16', '#ff5fb3')}
         {fx('crush', 'Crush', 'lo-fi', '#ff5a36')}
         {roll(4, '1/4')}{roll(2, '1/8')}{roll(1, '1/16')}
+      </div>
+      </div>
       </div>
       <div class="hint">{latch ? 'Tocá un efecto para prenderlo y otra vez para apagarlo.' : 'Mantené apretado un efecto para usarlo; al soltar se apaga. El Roll repite el último tramo, sincronizado al tempo.'} Doble toque en el filtro o en una banda la vuelve al centro.</div>
     </div>
