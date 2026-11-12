@@ -11,7 +11,7 @@ import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
 import { renderAudio, wav, mp3, abletonZip, baseName } from './engine/export';
 import {
-  MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  rollFromTrack, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -19,7 +19,7 @@ import {
 const engine = new Engine();
 const clone = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
 const load = (): Project | null => {
-  try { const s = localStorage.getItem('loop.project'); if (!s) return null; const p: Project = JSON.parse(s); if (!GENRES[p.genre]) applyGenre(p, 'prog'); return p; } catch { return null; }
+  try { const s = localStorage.getItem('loop.project'); if (!s) return null; const p: Project = JSON.parse(s); if (!GENRES[p.genre]) applyGenre(p, 'prog'); p.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal' && !SYNTHS[t.sound]) t.sound = t.type === 'bass' ? 'bassSaw' : t.type === 'chords' ? 'strings' : 'pluck'; }); return p; } catch { return null; }
 };
 const save = (p: Project) => { try { localStorage.setItem('loop.project', JSON.stringify(p)); } catch { /* sin almacenamiento */ } };
 
@@ -159,7 +159,7 @@ function App() {
     ['pointerdown', 'touchend', 'keydown'].forEach((e) => window.addEventListener(e, f, true));
   }, []);
   const fromName = async (v = 0) => {
-    const np = projectFromName(nameIn || 'Loop', v); setVariant(v); setP(np); engine.update(np); save(np);
+    const np = projectFromName(nameIn || 'Loop', v, v ? p.genre : 'deep'); setVariant(v); setP(np); engine.update(np); save(np);
     if (!engine.playing) { await engine.play(np); setPlaying(true); checkAudio(); }
   };
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
@@ -258,6 +258,10 @@ function App() {
                 {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
               </button> : <div class="pads">
                 {Array.from({ length: 16 }, (_, i) => {
+                  if (t.roll && t.type !== 'melody') {
+                    const hit = (t.notes ?? []).filter((n) => n.s % 16 === i);
+                    return <button class={'pad' + (hit.length ? ' v1' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`} onClick={() => setSel(t.id)}>{hit[0] && <span class="nn">{noteName(hit[0].n)}</span>}</button>;
+                  }
                   if (t.type === 'arp') {
                     const on = t.arp!.gate[i], plays = arpPlays(t, i), nf = arpNotes[t.id];
                     return <button class={'pad' + (!on ? ' off' : plays ? ' v1' : ' skip')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
@@ -394,6 +398,13 @@ function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (
           {s.wave !== 'fm' && <Knob label="Ancho" value={s.detune} min={0} max={40} step={1} def={SYNTHS[t.sound].p.detune} color={t.color} fmt={(v) => Math.round(v) + 'ct'} onChange={(v) => setS('detune', v)} />}
         </div></>}
       {t.type === 'melody' && <PianoRoll p={p} t={t} upT={upT} />}
+      {(t.type === 'bass' || t.type === 'arp' || t.type === 'chords') && (t.roll
+        ? <><PianoRoll p={p} t={t} upT={upT} />
+          <div class="chips" style={{ marginTop: '8px' }}><button class="chip" onClick={() => upT(t.id, (x) => { x.roll = false; })}>Volver a lo generado</button></div>
+          <div class="hint">Esta pista suena con las notas del piano roll. "Volver a lo generado" usa otra vez el modo y el patrón de arriba (tus notas quedan guardadas).</div></>
+        : <><div class="sub">Piano roll</div>
+          <div class="chips"><button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { if (!x.notes?.length || !x.rollEdited) x.notes = rollFromTrack(p, t); x.roll = true; })}>Editar notas en piano roll</button></div>
+          <div class="hint">Pasa lo que toca esta pista al piano roll para que cambies, agregues o saques notas a mano.</div></>)}
       <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
     </div>
   );
@@ -556,13 +567,19 @@ function VocalEditor({ p, t, upT, power, onDelete }: { p: Project; t: Track; upT
   );
 }
 function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
-  const [bar, setBar] = useState(0), [len, setLen] = useState(2), [onlyName, setOnlyName] = useState(true), [oct, setOct] = useState(0);
-  const rows = (onlyName ? nameScale(p, 2) : Array.from({ length: 24 }, (_, i) => 60 + i)).map((m) => m + oct * 12).reverse();
+  // octava inicial según la pista (el bajo vive abajo) y, si ya hay notas, la que las muestra
+  const startOct = () => { const ns = t.notes ?? []; if (ns.length) { const mid = ns.map((x) => x.n).sort((a, b) => a - b)[ns.length >> 1]; return Math.max(-4, Math.min(2, Math.floor((mid - 60) / 12))); } return t.type === 'bass' ? -3 : t.type === 'chords' ? -1 : 0; };
+  const [bar, setBar] = useState(0), [len, setLen] = useState(t.type === 'chords' ? 8 : t.type === 'bass' ? 1 : 2), [all, setAll] = useState(false), [oct, setOct] = useState(startOct);
+  // "Usar todas las notas": el piano entero (cromático, 3 octavas a la vista, se mueve con Octava −/+)
+  // sin esa opción: las notas de la tonalidad en 2 octavas, más cualquier nota que ya esté cargada en esa franja
+  const lo = 60 + oct * 12, sc = p.scale?.length ? p.scale : [...new Set(nameScale(p, 1).map((m) => m % 12))];
+  const inKey = Array.from({ length: 24 }, (_, i) => lo + i).filter((m) => sc.includes(((m % 12) + 12) % 12) || (t.notes ?? []).some((x) => x.n === m));
+  const rows = (all ? Array.from({ length: 36 }, (_, i) => lo - 12 + i) : inKey).filter((m) => m >= 21 && m <= 108).reverse();
   const notes = t.notes ?? [];
   const at = (s: number, n: number) => notes.find((x) => x.n === n && s >= x.s && s < x.s + x.l);
   const tap = (i: number, n: number) => {
     const s = bar * 16 + i, hit = at(s, n);
-    upT(t.id, (x) => { x.autoMelody = false; const ns = x.notes ?? []; if (hit) x.notes = ns.filter((y) => !(y.s === hit.s && y.n === hit.n)); else { x.notes = [...ns, { s, n, l: Math.min(len, 64 - s) }]; } });
+    upT(t.id, (x) => { x.autoMelody = false; x.rollEdited = true; const ns = x.notes ?? []; if (hit) x.notes = ns.filter((y) => !(y.s === hit.s && y.n === hit.n)); else { x.notes = [...ns, { s, n, l: Math.min(len, 64 - s) }]; } });
     if (!hit) engine.preview(t.id, n);
   };
   return <>
@@ -579,14 +596,15 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
     <div class="sub">Largo de las notas nuevas</div>
     <div class="chips">{[[1, '1/16'], [2, '1/8'], [4, '1/4'], [8, '1/2'], [16, 'Compás']].map(([v, l]) => <button class={'chip' + (len === v ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setLen(v as number)}>{l}</button>)}</div>
     <div class="chips" style={{ marginTop: '8px' }}>
-      <button class={'chip' + (onlyName ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setOnlyName(!onlyName)}>Solo notas del nombre</button>
-      <button class="chip" onClick={() => setOct(Math.max(-2, oct - 1))}>Octava −</button>
-      <button class="chip" onClick={() => setOct(Math.min(1, oct + 1))}>Octava +</button>
+      <button class={'chip' + (all ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setAll(!all)}>Usar todas las notas</button>
+      <button class="chip" onClick={() => setOct(Math.max(-4, oct - 1))}>Octava −</button>
+      <button class="chip" onClick={() => setOct(Math.min(3, oct + 1))}>Octava +</button>
       <button class="chip" onClick={() => upT(t.id, (x) => { x.autoMelody = false; const src = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) === bar); x.notes = [0, 1, 2, 3].flatMap((b) => src.map((y) => ({ ...y, s: b * 16 + (y.s % 16) }))); })}>Copiar a los 4 compases</button>
       <button class="chip" onClick={() => upT(t.id, (x) => { x.autoMelody = false; x.notes = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) !== bar); })}>Borrar compás</button>
-      <button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.notes = generateMelody(p, String(Date.now())); x.autoMelody = true; })}>Nueva melodía</button>
+      {t.type === 'melody' && <button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.notes = generateMelody(p, String(Date.now())); x.autoMelody = true; })}>Nueva melodía</button>}
+      {t.type !== 'melody' && <button class="chip" onClick={() => upT(t.id, (x) => { x.notes = rollFromTrack(p, { ...x, roll: false }); x.rollEdited = false; })}>Traer de nuevo lo generado</button>}
     </div>
-    <div class="hint">Tocá un casillero para poner una nota (suena al agregarla) y tocala de nuevo para sacarla. "Solo notas del nombre" muestra únicamente las notas de tus letras.</div>
+    <div class="hint">Tocá un casillero para poner una nota (suena al agregarla) y tocala de nuevo para sacarla. Podés poner varias notas en el mismo paso para armar acordes. Sin "Usar todas las notas" ves las notas de la tonalidad de tu nombre; con esa opción, el piano entero (con Octava − y + llegás a cualquier altura).</div>
   </>;
 }
 
@@ -608,7 +626,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
   ],
   scene: [
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
-    { title: 'Nombre, versión y género', body: 'Generar arma el loop del nombre. "Otra versión" prueba otra progresión y otro género. Los botones de género (Trance, Techno, House…) cambian batería, bajo, sonidos y armonía manteniendo tus notas. Armónico busca la tonalidad que mejor encaja; Puro usa las notas exactas de las letras.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
+    { title: 'Nombre, versión y género', body: 'Generar arma el loop del nombre. Cada nombre nuevo arranca en Deep House. "Otra versión" prueba otra progresión en el mismo género. Los botones de género (Trance, Techno, House…) cambian batería, bajo, sonidos y armonía manteniendo tus notas. Armónico busca la tonalidad que mejor encaja; Puro usa las notas exactas de las letras.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
     { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
     { title: 'Automatización rápida', body: 'Con un toque hacés que el loop se mueva a lo largo de los 4 compases. Subida: los filtros y la reverb van creciendo, como antes de un drop. Filtro que respira: abre y cierra en cada compás. Delay al final: eco en el último tiempo. Bombeo: los acordes y el arpegio laten con el pulso.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 70 C 60 68, 120 50, 192 10 L192 74 L8 74 Z" fill={Y} fill-opacity="0.18" /><path d="M8 70 C 60 68, 120 50, 192 10" fill="none" stroke={Y} stroke-width="2" /></svg> },
     { title: 'Batería', body: 'Elegí el kit: el 909 y el 808 clásicos, uno por género, Synthwave 80s, Electro o Lo-Fi. Cambia el sonido del bombo, el clap, los hats y el redoblante sin tocar el patrón.', art: artChips(['909', '808', 'Techno', 'Lo-Fi'], 1) },
@@ -616,7 +634,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
   pat: [
     { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista.', art: artGrid },
     { title: 'Editar una pista', body: 'Tocá el nombre de una pista para abrir su editor abajo: elegís el sonido, el orden de las notas del arpegio, la forma de tocar los acordes y el sonido fino con perillas. Las pistas de batería eligen kit y golpe.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
-    { title: 'Melodía en piano roll', body: 'La melodía son 4 compases que salen de tu nombre. En su editor tocás un casillero para poner una nota y de nuevo para sacarla. Si la editás a mano, ya no se rehace sola al cambiar la armonía; "Nueva melodía" arma otra.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
+    { title: 'Piano roll', body: 'La melodía son 4 compases que salen de tu nombre, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
     { title: 'Automatización', body: 'Abajo del editor de cada pista está su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
   ],

@@ -50,6 +50,8 @@ export type Track = {
   bassLen?: number; // bajo: largo de cada nota en pasos
   fx?: { drive?: number; hp?: number; lp?: number; chorus?: number }; // inserto: saturación, pasa altos, pasa bajos, chorus
   groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
+  rollEdited?: boolean; // ya se tocaron a mano las notas del piano roll
+  roll?: boolean; // bajo, arpegio o acordes editados a mano en el piano roll: suenan las notas de `notes` en vez de lo generado
   auto?: Partial<Record<AutoKey, number[]>>; // automatización: 64 valores 0..1 (uno por paso de los 4 compases)
   vox?: { from: number; rev: boolean; has: boolean; pos?: number }; // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
@@ -220,7 +222,6 @@ export function generateMelody(p: Project, salt = ''): Note[] {
 const S = (o: Partial<Synth>): Synth => ({ wave: 'saw', unison: 1, detune: 0, cutoff: 2000, reso: 0.2, envAmt: 0, fdecay: 0.3, attack: 0.003, decay: 0.3, sustain: 0, release: 0.2, gain: 0.35, ...o });
 export const SYNTHS: Record<string, { label: string; for: TrackType[]; p: Synth }> = {
   pluck: { label: 'Pluck', for: ['arp', 'melody'], p: S({ unison: 2, detune: 8, cutoff: 700, reso: 0.35, envAmt: 1.4, fdecay: 0.22, decay: 0.3, release: 0.2, gain: 0.32 }) },
-  bell: { label: 'Campana', for: ['arp', 'melody'], p: S({ wave: 'fm', fmRatio: 3.5, fmIndex: 3, fmDecay: 0.5, cutoff: 9000, reso: 0.05, decay: 1.2, release: 0.8, gain: 0.4, octave: 1 }) },
   super: { label: 'Supersaw', for: ['arp', 'chords', 'melody'], p: S({ unison: 7, detune: 22, cutoff: 3800, reso: 0.12, envAmt: 0.5, fdecay: 0.35, attack: 0.008, decay: 0.5, sustain: 0.25, release: 0.35, gain: 0.26 }) },
   acid: { label: 'Acid', for: ['arp', 'bass'], p: S({ cutoff: 280, reso: 0.86, envAmt: 2.6, fdecay: 0.16, decay: 0.25, release: 0.08, gain: 0.32, octave: -1 }) },
   keys: { label: 'Keys', for: ['arp', 'chords', 'melody'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.7, fmDecay: 0.35, cutoff: 6000, reso: 0.05, decay: 1.4, sustain: 0.15, release: 0.5, gain: 0.42 }) },
@@ -297,8 +298,15 @@ export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
   if (type === 'bass') return mkTrack(id, 'Bajo 2', 'bass', sound ?? 'fmBass', { color, vol: 0.7, duck: 0.5 });
   if (type === 'chords') return mkTrack(id, 'Acordes 2', 'chords', sound ?? 'airy', { color, vol: 0.55, rev: 0.4, duck: 0.4, chordMode: 'pad', steps: [1, ...Array(15).fill(0)] });
-  if (type === 'arp') return mkTrack(id, 'Arpegio 2', 'arp', sound ?? 'bell', { color, vol: 0.55, rev: 0.35, dly: 0.3, duck: 0.3, arp: { mode: 'up', rate: '8', oct: 2, gate: Array(16).fill(true) } });
+  if (type === 'arp') return mkTrack(id, 'Arpegio 2', 'arp', sound ?? 'pluck', { color, vol: 0.55, rev: 0.35, dly: 0.3, duck: 0.3, arp: { mode: 'up', rate: '8', oct: 2, gate: Array(16).fill(true) } });
   return mkTrack(id, 'Melodía', 'melody', sound ?? 'lead', { color, vol: 0.6, rev: 0.3, dly: 0.25, duck: 0.3, notes: generateMelody(p, id), autoMelody: true });
+}
+/* pasa lo que hoy genera una pista (bajo, arpegio o acordes) a notas de piano roll, para editarlas a mano */
+export function rollFromTrack(p: Project, t: Track): Note[] {
+  const c = compile({ ...p, tracks: p.tracks.map((x) => (x.id === t.id ? { ...x, roll: false, mute: false, solo: false } : x)) }).tracks.find((x) => x.id === t.id);
+  const out: Note[] = [], seen = new Set<string>();
+  c?.ev.forEach((evs: any[], s: number) => evs.forEach((e) => { if (e.n == null) return; const k = s + ':' + e.n; if (seen.has(k)) return; seen.add(k); out.push({ s, n: e.n, l: Math.max(1, Math.min(64 - s, Math.round(e.l + 0.15))) }); }));
+  return out;
 }
 export const nameScale = (p: Project, octs = 2) => { const b = [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))].sort((a, c) => a - c), out: number[] = []; for (let o = 0; o < octs; o++) b.forEach((pc) => out.push(60 + pc + 12 * o)); return out.sort((a, c) => a - c); };
 
@@ -362,9 +370,10 @@ export function seeded(str: string) {
 }
 const pick = <T,>(r: () => number, a: T[]) => a[Math.floor(r() * a.length)];
 const wpick = (r: () => number, o: Record<string, number>) => { const ks = Object.keys(o), tot = ks.reduce((a, k) => a + o[k], 0); let x = r() * tot; for (const k of ks) { x -= o[k]; if (x <= 0) return k; } return ks[0]; };
-export function projectFromName(name: string, variant = 0): Project {
+export function projectFromName(name: string, variant = 0, genre = 'deep'): Project {
+  // arranca siempre en Deep House (o en el género que se pida): el cambio al generar no es brusco
   const r = seeded(clean(name) + '#' + variant);
-  const g = wpick(r, GENRE_WEIGHTS);
+  const g = GENRES[genre] ? genre : 'deep';
   const p = newProject(name, g);
   // melodía de 4 compases propia del nombre
   const mel = newTrack(p, 'melody'); mel.id = 'melody'; mel.color = '#f0d99a';
@@ -440,6 +449,10 @@ export function compile(p: Project) {
       // la voz es un clip de hasta 4 compases: suena una vez por vuelta, desde su posición
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
       ev[Math.max(0, Math.min(63, t.vox?.pos ?? 0))].push({ v: 0.9 });
+    } else if (t.roll && (t.type === 'bass' || t.type === 'arp' || t.type === 'chords')) {
+      // editada a mano en el piano roll
+      synth = t.synth ?? SYNTHS[t.sound]?.p ?? (t.type === 'bass' ? SYNTHS.bassSaw.p : t.type === 'arp' ? SYNTHS.pluck.p : SYNTHS.strings.p);
+      (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - (t.type === 'chords' ? 0.05 : 0.15)) }); });
     } else if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(p.kit, t.sound);
       const ghost = clamp(0.38 * (1 + e * 1.2), 0.15, 0.7), fillHats = t.id === 'hat' && e > 0.22;
