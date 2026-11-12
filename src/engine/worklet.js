@@ -126,6 +126,177 @@ class SynthVoice {
   }
 }
 
+/* ---------- sinte pro (estilo Serum) ----------
+   2 osciladores con tabla de onda (posición = "Forma"), unísono estéreo, sub, ruido, FM de B a A,
+   filtro multimodo (SVF), 2 envolventes, 2 LFO sincronizados y una matriz de modulación.
+   La modulación se calcula cada 16 muestras; el audio, muestra a muestra. */
+const WT_N = 2048, WT_CAP = [128, 64, 32, 16, 8, 4, 2, 1];
+const WT = {}; // tabla -> { F: cuadros, m: [mip][cuadro] Float32Array(WT_N) }
+const SINT = new Float32Array(WT_N); for (let i = 0; i < WT_N; i++) SINT[i] = Math.sin(TAU * i / WT_N);
+const gauss = (x, m, w) => Math.exp(-((x - m) * (x - m)) / (2 * w * w));
+const VOW = [[3.5, 6], [2, 9], [1.5, 11], [2.5, 4.5], [1.5, 4], [3.5, 6]]; // a e i o u a (en armónicos)
+/* coeficientes de cada forma básica, en fase con el seno: seno, triángulo, sierra, cuadrada, pulso angosto */
+function keyCoef(i, k, o) {
+  o[0] = 0; o[1] = 0;
+  if (i === 0) { if (k === 1) o[0] = 1; }
+  else if (i === 1) { if (k % 2) o[0] = (8 / (Math.PI * Math.PI)) * (((k - 1) / 2) % 2 ? -1 : 1) / (k * k); }
+  else if (i === 2) o[0] = (2 / Math.PI) * (k % 2 ? 1 : -1) / k;
+  else if (i === 3) { if (k % 2) o[0] = 4 / (Math.PI * k); }
+  else { const w = 0.12, a = 2 / (Math.PI * k); o[0] = a * (1 - Math.cos(TAU * k * w)); o[1] = a * Math.sin(TAU * k * w); }
+}
+const KA = [0, 0], KB = [0, 0];
+function wtCoef(kind, fr, k, o) {
+  o[0] = 0; o[1] = 0;
+  if (kind === 'basic') { const x = fr * 4, i = Math.min(3, Math.floor(x + 1e-9)), f = x - i; keyCoef(i, k, KA); keyCoef(i + 1, k, KB); o[0] = KA[0] + (KB[0] - KA[0]) * f; o[1] = KA[1] + (KB[1] - KA[1]) * f; return; }
+  if (k > 32) return;
+  if (kind === 'harm') { const n = 1 + fr * 31; o[0] = Math.max(0, Math.min(1, n - k + 1)) / k; }
+  else if (kind === 'vocal') { const x = fr * 5, i = Math.min(4, x | 0), f = x - i, f1 = VOW[i][0] + (VOW[i + 1][0] - VOW[i][0]) * f, f2 = VOW[i][1] + (VOW[i + 1][1] - VOW[i][1]) * f; o[0] = (gauss(k, f1, 1.1) + 0.7 * gauss(k, f2, 1.6) + 0.04) / Math.sqrt(k); }
+  else if (kind === 'metal') o[0] = ((k % 2 ? 1 : 0.35) / Math.pow(k, 0.7)) * (0.15 + 0.85 * Math.abs(Math.cos(Math.PI * k * (0.08 + fr * 0.42))));
+}
+/* tablas limitadas en banda: un juego de cuadros por cada tope de armónicos, así las notas agudas no ensucian */
+function ensureWT(kind) {
+  if (!kind || WT[kind]) return;
+  const F = kind === 'basic' ? 9 : 8, H = 128, m = WT_CAP.map(() => []), c = [0, 0], q = WT_N / 4;
+  for (let f = 0; f < F; f++) {
+    const fr = f / (F - 1), ws = new Float32Array(H + 1), wc = new Float32Array(H + 1);
+    for (let k = 1; k <= H; k++) { wtCoef(kind, fr, k, c); ws[k] = c[0]; wc[k] = c[1]; }
+    let g = 0;
+    WT_CAP.forEach((cap, mi) => {
+      const a = new Float32Array(WT_N);
+      for (let k = 1; k <= cap; k++) { const s = ws[k], co = wc[k]; if (!s && !co) continue; for (let i = 0, ph = 0; i < WT_N; i++, ph += k) { const j = ph & (WT_N - 1); a[i] += s * SINT[j] + (co ? co * SINT[(j + q) & (WT_N - 1)] : 0); } }
+      if (mi === 0) { for (let i = 0; i < WT_N; i++) g = Math.max(g, Math.abs(a[i])); g = g > 0 ? 1 / g : 1; }
+      for (let i = 0; i < WT_N; i++) a[i] *= g;
+      m[mi].push(a);
+    });
+  }
+  WT[kind] = { F, m };
+}
+const FTYPE = { lp12: 0, lp24: 0, hp: 1, bp: 2, notch: 3 };
+const LFO_SH = { sine: 0, tri: 1, saw: 2, sqr: 3, rand: 4 };
+class ProVoice {
+  constructor() {
+    this.on = false; this.pro = true;
+    this.phA = new Float64Array(7); this.phB = new Float64Array(7); this.rA = new Float32Array(7); this.rB = new Float32Array(7);
+    this.lA = new Float32Array(7); this.gA = new Float32Array(7); this.lB = new Float32Array(7); this.gB = new Float32Array(7);
+    this.fs = new Float64Array(8); this.lp = new Float64Array(2); this.lv = new Float32Array(2); // estados del filtro: L1 L2 R1 R2 (y la segunda etapa)
+    this.m = { cut: 0, res: 0, pitch: 0, posA: 0, posB: 0, fm: 0, vol: 0, pan: 0 };
+  }
+  uni(o, r, l, g) {
+    const n = Math.max(1, Math.min(7, o.uni | 0));
+    for (let u = 0; u < n; u++) {
+      const off = n === 7 ? SS7[u] : n > 1 ? (u / (n - 1)) * 2 - 1 : 0;
+      r[u] = Math.pow(2, (off * (o.det || 0)) / 1200);
+      const pn = n > 1 ? off * (o.width ?? 0.5) : 0; l[u] = Math.cos((pn + 1) * Math.PI / 4); g[u] = Math.sin((pn + 1) * Math.PI / 4);
+    }
+    return n;
+  }
+  start(p, note, vel, lenSamp, sr, pan) {
+    const P = p.pro; this.p = p; this.P = P; this.sr = sr; this.on = true; this.t = 0; this.len = lenSamp; this.vel = vel; this.note = note; this.pan = pan;
+    this.freq = this.tf = mtof(note); this.env = 0; this.stage = 0; this.e2 = 0; this.s2 = 0; this.cc = 0;
+    const A = P.a, B = P.b;
+    this.nA = A.on ? this.uni(A, this.rA, this.lA, this.gA) : 0; this.nB = B.on ? this.uni(B, this.rB, this.lB, this.gB) : 0;
+    for (let u = 0; u < 7; u++) { this.phA[u] = Math.random(); this.phB[u] = Math.random(); }
+    this.mA = Math.pow(2, (A.oct || 0) + (A.semi || 0) / 12 + (A.fine || 0) / 1200); this.mB = Math.pow(2, (B.oct || 0) + (B.semi || 0) / 12 + (B.fine || 0) / 1200);
+    ensureWT(A.table); ensureWT(B.table); this.tA = WT[A.table] || WT.basic; this.tB = WT[B.table] || WT.basic; this.sph = 0;
+    const E1 = P.env1, E2 = P.env2;
+    this.aI = 1 / Math.max(1, E1.a * sr); this.dK = Math.exp(-1 / Math.max(1, E1.d * sr * 0.3)); this.rK = Math.exp(-1 / Math.max(1, E1.r * sr * 0.3));
+    this.aI2 = 1 / Math.max(1, E2.a * sr); this.dK2 = Math.exp(-1 / Math.max(1, E2.d * sr * 0.3)); this.rK2 = Math.exp(-1 / Math.max(1, E2.r * sr * 0.3));
+    this.gk = 1 - Math.exp(-16 / (sr * Math.max(0.005, P.glide || 0.04)));
+    this.lp[0] = 0; this.lp[1] = 0; this.lv[0] = Math.random() * 2 - 1; this.lv[1] = Math.random() * 2 - 1;
+    this.fmMode = (P.fm || 0) > 0 || P.mods.some((md) => md.dst === 'fm' && md.amt); // con FM, B modula al A y no suena solo
+    this.ft = FTYPE[P.fType] ?? 0; this.f24 = P.fType === 'lp24'; this.fs.fill(0);
+  }
+  glideTo(p, note, vel, lenSamp) { this.tf = mtof(note); this.note = note; this.len = this.t + lenSamp; this.vel = vel; if (this.stage === 2) { this.stage = 1; } }
+  lfo(i, L, gps, n) {
+    const rate = Math.max(0.125, L.rate || 16), sh = LFO_SH[L.shape] ?? 0; let ph;
+    if (L.trig) { ph = this.lp[i] + n / (this.sr * 60 / (this.bpm || 124) / 4 * rate); ph -= Math.floor(ph); if (sh === 4 && ph < this.lp[i]) this.lv[i] = Math.random() * 2 - 1; this.lp[i] = ph; }
+    else { ph = gps / rate; ph -= Math.floor(ph); if (sh === 4 && ph < this.lp[i]) this.lv[i] = Math.random() * 2 - 1; this.lp[i] = ph; }
+    if (sh === 0) return Math.sin(TAU * ph);
+    if (sh === 1) return 1 - 4 * Math.abs(ph - 0.5);
+    if (sh === 2) return 1 - 2 * ph;
+    if (sh === 3) return ph < 0.5 ? 1 : -1;
+    return this.lv[i];
+  }
+  control(cm, gps, n) {
+    const P = this.P, m = this.m, sr = this.sr;
+    m.cut = 0; m.res = 0; m.pitch = 0; m.posA = 0; m.posB = 0; m.fm = 0; m.vol = 0; m.pan = 0;
+    const l1 = this.lfo(0, P.lfo1, gps, n), l2 = this.lfo(1, P.lfo2, gps, n), mods = P.mods;
+    for (let k = 0; k < mods.length; k++) {
+      const md = mods[k]; if (!md.amt) continue;
+      const v = md.src === 'lfo1' ? l1 : md.src === 'lfo2' ? l2 : md.src === 'env2' ? this.e2 : md.src === 'vel' ? this.vel : md.src === 'note' ? (this.note - 60) / 24 : 0;
+      if (m[md.dst] !== undefined) m[md.dst] += v * md.amt;
+    }
+    if (this.tf !== this.freq) this.freq += (this.tf - this.freq) * this.gk;
+    const pm = m.pitch ? Math.pow(2, m.pitch) : 1, f0 = this.freq * pm; // tono: 1 = una octava
+    this.dA = f0 * this.mA / sr; this.dB = f0 * this.mB / sr;
+    this.pA = Math.min(1, Math.max(0, P.a.pos + m.posA)); this.pB = Math.min(1, Math.max(0, P.b.pos + m.posB));
+    // cuadro de la tabla (según la forma) y tope de armónicos (según la nota más aguda del unísono)
+    let h = 0.45 / (this.dA * 1.06), mi = 0; while (mi < 7 && WT_CAP[mi] > h) mi++;
+    let fx = this.pA * (this.tA.F - 1), fi = Math.min(this.tA.F - 2, fx | 0); this.A0 = this.tA.m[mi][fi]; this.A1 = this.tA.m[mi][fi + 1]; this.Af = fx - fi;
+    h = 0.45 / (this.dB * 1.06); mi = 0; while (mi < 7 && WT_CAP[mi] > h) mi++;
+    fx = this.pB * (this.tB.F - 1); fi = Math.min(this.tB.F - 2, fx | 0); this.B0 = this.tB.m[mi][fi]; this.B1 = this.tB.m[mi][fi + 1]; this.Bf = fx - fi;
+    this.fmA = Math.max(0, (P.fm || 0) + m.fm) * 5 / TAU;
+    let fc = P.cut * Math.pow(2, this.e2 * (P.fEnv || 0) * 5 + m.cut * 5 + ((this.note - 60) / 12) * (P.fKey || 0)) * (cm || 1);
+    fc = Math.min(sr * 0.45, Math.max(20, fc));
+    const g = Math.tan(Math.PI * fc / sr), k = 2 - 2 * Math.min(0.98, Math.max(0, P.res + m.res));
+    this.k = k; this.a1 = 1 / (1 + g * (g + k)); this.a2 = g * this.a1; this.a3 = g * this.a2;
+    this.b1 = 1 / (1 + g * (g + 1.414)); this.b2 = g * this.b1; this.b3 = g * this.b2;
+    const vg = Math.max(0, 1 + m.vol) * P.gain * this.vel, pn = Math.max(-1, Math.min(1, this.pan + m.pan));
+    this.ol = vg * Math.cos((pn + 1) * Math.PI / 4); this.or = vg * Math.sin((pn + 1) * Math.PI / 4);
+  }
+  render(L, R, a, b, cm, gps) {
+    const P = this.P, sub = P.sub || 0, noise = P.noise || 0, lvA = P.a.level ?? 1, lvB = P.b.level ?? 1, drv = P.drive || 0, dk = 1 + drv * 8, dg = (1 + drv) / dk;
+    const nA = this.nA, nB = this.nB, iA = nA ? 1 / Math.sqrt(nA) : 0, iB = nB ? 1 / Math.sqrt(nB) : 0, ft = this.ft, f24 = this.f24, sdiv = P.subOct === -2 ? 4 : 2;
+    let i = a;
+    while (i < b) {
+      const e = Math.min(b, i + 16); this.control(cm, gps + (i - a) / (this.sr * 60 / (this.bpm || 124) / 4), e - i);
+      const dA = this.dA, dB = this.dB, A0 = this.A0, A1 = this.A1, Af = this.Af, B0 = this.B0, B1 = this.B1, Bf = this.Bf, fmA = this.fmA, fmm = this.fmMode;
+      const a1 = this.a1, a2 = this.a2, a3 = this.a3, k = this.k, b1 = this.b1, b2 = this.b2, b3 = this.b3, S = this.fs, MK = WT_N - 1;
+      for (; i < e; i++) {
+        // envolventes
+        if (this.stage === 0) { this.env += this.aI; if (this.env >= 1) { this.env = 1; this.stage = 1; } }
+        else if (this.stage === 1) { this.env = P.env1.s + (this.env - P.env1.s) * this.dK; if (this.t >= this.len) this.stage = 2; }
+        else { this.env *= this.rK; if (this.env < 1e-4) { this.on = false; return; } }
+        if (this.stage === 0 && this.t >= this.len) this.stage = 2;
+        if (this.stage < 2) { if (this.s2 === 0) { this.e2 += this.aI2; if (this.e2 >= 1) { this.e2 = 1; this.s2 = 1; } } else this.e2 = P.env2.s + (this.e2 - P.env2.s) * this.dK2; }
+        else this.e2 *= this.rK2;
+        // oscilador B (también modula al A)
+        let bl = 0, br = 0, bm = 0;
+        for (let u = 0; u < nB; u++) {
+          let t = this.phB[u] + dB * this.rB[u]; if (t >= 1) t -= 1; this.phB[u] = t;
+          const x = t * WT_N, xi = x | 0, xf = x - xi, i0 = xi & MK, i1 = (xi + 1) & MK, va = B0[i0] + (B0[i1] - B0[i0]) * xf, o = va + (B1[i0] + (B1[i1] - B1[i0]) * xf - va) * Bf;
+          bm += o; bl += o * this.lB[u]; br += o * this.gB[u];
+        }
+        bl *= iB * lvB; br *= iB * lvB; bm *= iB;
+        let al = 0, ar = 0;
+        for (let u = 0; u < nA; u++) {
+          let t = this.phA[u] + dA * this.rA[u]; if (t >= 1) t -= 1; this.phA[u] = t;
+          if (fmA) { t += fmA * bm; t -= Math.floor(t); }
+          const x = t * WT_N, xi = x | 0, xf = x - xi, i0 = xi & MK, i1 = (xi + 1) & MK, va = A0[i0] + (A0[i1] - A0[i0]) * xf, o = va + (A1[i0] + (A1[i1] - A1[i0]) * xf - va) * Af;
+          al += o * this.lA[u]; ar += o * this.gA[u];
+        }
+        al *= iA * lvA; ar *= iA * lvA;
+        let xl = al + (fmm ? 0 : bl), xr = ar + (fmm ? 0 : br);
+        if (sub) { this.sph += dA / sdiv; if (this.sph >= 1) this.sph -= 1; const sv = Math.sin(TAU * this.sph) * sub; xl += sv; xr += sv; }
+        if (noise) { const nv = (Math.random() * 2 - 1) * noise; xl += nv; xr += nv; }
+        if (drv) { xl = Math.tanh(xl * dk) * dg; xr = Math.tanh(xr * dk) * dg; }
+        // filtro de estado variable (TPT), izquierda y derecha
+        let v3 = xl - S[1], v1 = a1 * S[0] + a2 * v3, v2 = S[1] + a2 * S[0] + a3 * v3; S[0] = 2 * v1 - S[0]; S[1] = 2 * v2 - S[1];
+        let yl = ft === 0 ? v2 : ft === 1 ? xl - k * v1 - v2 : ft === 2 ? v1 * k : xl - k * v1;
+        v3 = xr - S[3]; v1 = a1 * S[2] + a2 * v3; v2 = S[3] + a2 * S[2] + a3 * v3; S[2] = 2 * v1 - S[2]; S[3] = 2 * v2 - S[3];
+        let yr = ft === 0 ? v2 : ft === 1 ? xr - k * v1 - v2 : ft === 2 ? v1 * k : xr - k * v1;
+        if (f24) {
+          v3 = yl - S[5]; v1 = b1 * S[4] + b2 * v3; v2 = S[5] + b2 * S[4] + b3 * v3; S[4] = 2 * v1 - S[4]; S[5] = 2 * v2 - S[5]; yl = v2;
+          v3 = yr - S[7]; v1 = b1 * S[6] + b2 * v3; v2 = S[7] + b2 * S[6] + b3 * v3; S[6] = 2 * v1 - S[6]; S[7] = 2 * v2 - S[7]; yr = v2;
+        }
+        const env = this.env;
+        L[i] += yl * env * this.ol; R[i] += yr * env * this.or;
+        this.t++;
+      }
+    }
+  }
+}
+
 /* ---------- FX ---------- */
 class Freeverb {
   constructor(sr) {
@@ -218,6 +389,7 @@ class LoopEngine extends AudioWorkletProcessor {
         if (I.lp) { I.lpL.set('lp', I.lp, 0.707, 0, this.sr); I.lpR.set('lp', I.lp, 0.707, 0, this.sr); }
         if (I.chorus && !I.cb) { I.cb = [new Float32Array(2048), new Float32Array(2048)]; }
         I.dk = 1 + I.drive * 10; I.dg = (1 + I.drive) / I.dk;
+        if (t.synth && t.synth.pro) { ensureWT('basic'); ensureWT(t.synth.pro.a.table); ensureWT(t.synth.pro.b.table); }
         return nt;
       });
       const s16 = 60 / this.bpm / 4; this.dly.setTime(s16 * 3, s16 * 4); this.dly.fb = m.project.fx.dlyFb;
@@ -235,11 +407,13 @@ class LoopEngine extends AudioWorkletProcessor {
     if (t.mono && t.kind !== 'sample') {
       // monofónico: con slide, la voz activa se desliza; si no, se sueltan las voces anteriores
       const cur = t.last && t.last.on && t.last.stage < 2 ? t.last : null;
-      if (cur && ev.g) { cur.glideTo(t.synth, ev.n, ev.v, ev.l * this.stepLen()); return; }
+      if (cur && (ev.g || (t.synth.pro && t.synth.pro.legato)) && !!cur.pro === !!t.synth.pro) { cur.glideTo(t.synth, ev.n, ev.v, ev.l * this.stepLen()); return; }
       for (const x of t.voices) if (x.on && x.stage < 2) { x.len = Math.min(x.len, x.t + offset); if (x.stage === 0) x.stage = 2; }
     }
-    let v = t.voices.find((x) => !x.on);
-    if (!v) { if (t.voices.length < MAXV) { v = t.kind === 'sample' ? new SampleVoice() : new SynthVoice(); t.voices.push(v); } else { v = t.voices[t.vi++ % t.voices.length]; } }
+    // la voz tiene que ser del tipo de la pista: sampler, sinte clásico o sinte pro
+    const pro = t.kind !== 'sample' && !!(t.synth && t.synth.pro), mk = () => (t.kind === 'sample' ? new SampleVoice() : pro ? new ProVoice() : new SynthVoice());
+    let v = t.voices.find((x) => !x.on && !!x.pro === pro);
+    if (!v) { if (t.voices.length < MAXV) { v = mk(); t.voices.push(v); } else { const k = t.vi++ % t.voices.length; v = t.voices[k]; if (!!v.pro !== pro) { v = mk(); t.voices[k] = v; } } }
     const pan = (t.spread || 0) * (Math.random() * 2 - 1);
     if (t.kind === 'sample') {
       const key = ev.k || t.sample, buf = this.samples[key]; if (!buf) return;
@@ -249,7 +423,7 @@ class LoopEngine extends AudioWorkletProcessor {
       v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0);
       v.delay = offset;
     } else {
-      v.start(t.synth, ev.n, ev.v, ev.l * this.stepLen(), this.sr, pan);
+      v.bpm = this.bpm; v.start(t.synth, ev.n, ev.v, ev.l * this.stepLen(), this.sr, pan);
       v.delay = offset; t.last = v;
     }
     if (t.isKick && offset < 128) this.duckHit = offset;
@@ -297,7 +471,7 @@ class LoopEngine extends AudioWorkletProcessor {
         if (!v.on) continue;
         const a = v.delay || 0;
         if (a >= N) { v.delay = a - N; continue; } // golpe atrasado por el groove: todavía no empieza
-        v.delay = 0; v.render(B.tL, B.tR, a, N, cm);
+        v.delay = 0; v.render(B.tL, B.tR, a, N, cm, ps + a / slen);
       }
       const I = t.ins;
       // automatización: valor de cada parámetro en este momento de los 4 compases (interpolado entre pasos)

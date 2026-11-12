@@ -6,6 +6,64 @@ export type Synth = {
   wave: 'saw' | 'square' | 'tri' | 'sine' | 'fm'; unison: number; detune: number; cutoff: number; reso: number;
   envAmt: number; fdecay: number; attack: number; decay: number; sustain: number; release: number; gain: number;
   octave?: number; sub?: number; fmRatio?: number; fmIndex?: number; fmDecay?: number; poles4?: boolean;
+  pro?: Pro; // si está, suena el sinte pro (estilo Serum) en vez del clásico
+};
+/* ---------- sinte pro ---------- */
+export type WTable = 'basic' | 'harm' | 'vocal' | 'metal';
+export type ProOsc = { on: boolean; table: WTable; pos: number; oct: number; semi: number; fine: number; uni: number; det: number; width: number; level: number };
+export type ModSrc = 'lfo1' | 'lfo2' | 'env2' | 'vel' | 'note';
+export type ModDst = 'cut' | 'res' | 'pitch' | 'posA' | 'posB' | 'fm' | 'vol' | 'pan';
+export type ProEnv = { a: number; d: number; s: number; r: number };
+export type ProLfo = { shape: 'sine' | 'tri' | 'saw' | 'sqr' | 'rand'; rate: number; trig: boolean };
+export type Pro = {
+  a: ProOsc; b: ProOsc; sub: number; subOct: -1 | -2; noise: number; fm: number;
+  fType: 'lp12' | 'lp24' | 'hp' | 'bp' | 'notch'; cut: number; res: number; drive: number; fEnv: number; fKey: number;
+  env1: ProEnv; env2: ProEnv; lfo1: ProLfo; lfo2: ProLfo;
+  mods: { src: ModSrc; dst: ModDst; amt: number }[];
+  mono: boolean; legato: boolean; glide: number; gain: number;
+};
+export const WTABLES: [WTable, string][] = [['basic', 'Básica'], ['harm', 'Armónicos'], ['vocal', 'Vocal'], ['metal', 'Metálica']];
+export const MOD_SRC: [ModSrc, string][] = [['lfo1', 'LFO 1'], ['lfo2', 'LFO 2'], ['env2', 'Env 2'], ['vel', 'Velocidad'], ['note', 'Nota']];
+export const MOD_DST: [ModDst, string][] = [['cut', 'Filtro'], ['res', 'Reso'], ['pitch', 'Tono'], ['posA', 'Forma A'], ['posB', 'Forma B'], ['fm', 'FM'], ['vol', 'Volumen'], ['pan', 'Pan']];
+export const LFO_RATES: [number, string][] = [[64, '4 c'], [32, '2 c'], [16, '1 c'], [8, '1/2'], [4, '1/4'], [2, '1/8'], [1, '1/16'], [0.5, '1/32']];
+const osc = (o: Partial<ProOsc> = {}): ProOsc => ({ on: true, table: 'basic', pos: 0.5, oct: 0, semi: 0, fine: 0, uni: 1, det: 0, width: 0.5, level: 1, ...o });
+const off = (o: Partial<ProOsc> = {}) => osc({ on: false, ...o });
+export const mkPro = (o: Partial<Pro> = {}): Pro => ({
+  a: osc(), b: off(), sub: 0, subOct: -1, noise: 0, fm: 0, fType: 'lp12', cut: 4000, res: 0.15, drive: 0, fEnv: 0, fKey: 0,
+  env1: { a: 0.005, d: 0.4, s: 0.7, r: 0.25 }, env2: { a: 0.001, d: 0.3, s: 0, r: 0.2 },
+  lfo1: { shape: 'sine', rate: 16, trig: false }, lfo2: { shape: 'tri', rate: 4, trig: true }, mods: [], mono: false, legato: false, glide: 0.06, gain: 0.3, ...o,
+});
+/* pasa un sonido clásico al sinte pro, sonando lo más parecido posible */
+export function proFrom(s: Synth): Pro {
+  const pos = { sine: 0, tri: 0.25, saw: 0.5, square: 0.75, fm: 0 }[s.wave] ?? 0.5, oc = s.octave || 0;
+  const p = mkPro({
+    a: osc({ pos, oct: oc, uni: s.wave === 'fm' ? 1 : s.unison, det: s.detune, width: s.unison > 1 ? 0.6 : 0 }),
+    sub: s.sub ?? 0, fType: s.poles4 ? 'lp24' : 'lp12', cut: s.cutoff, res: s.reso, fEnv: +(Math.log2(1 + 8 * s.envAmt) / 5).toFixed(3),
+    env1: { a: s.attack, d: s.decay, s: s.sustain, r: s.release }, env2: { a: 0.001, d: s.fdecay, s: 0, r: 0.2 }, gain: s.gain,
+  });
+  if (s.wave === 'fm') {
+    const r = s.fmRatio ?? 1, semis = Math.round(12 * Math.log2(r));
+    p.b = osc({ pos: 0, oct: oc + Math.floor(semis / 12), semi: semis % 12 });
+    p.mods = [{ src: 'env2', dst: 'fm', amt: +((s.fmIndex ?? 1) / 5).toFixed(3) }]; p.env2 = { a: 0.001, d: s.fmDecay ?? 0.3, s: 0.05, r: 0.2 };
+    if (s.envAmt) p.mods.push({ src: 'env2', dst: 'cut', amt: 0 });
+  }
+  return p;
+}
+/* sonidos pro armados desde cero */
+const M = (src: ModSrc, dst: ModDst, amt: number) => ({ src, dst, amt });
+export const PRO_PRESETS: Record<string, { label: string; for: TrackType[]; p: Pro }> = {
+  ssaw: { label: 'Supersaw pro', for: ['melody', 'chords', 'arp'], p: mkPro({ a: osc({ pos: 0.5, uni: 7, det: 30, width: 0.9 }), b: osc({ pos: 0.75, oct: -1, uni: 3, det: 12, level: 0.35 }), cut: 7000, res: 0.1, env1: { a: 0.006, d: 0.5, s: 0.8, r: 0.35 }, gain: 0.494 }) },
+  reese: { label: 'Reese que gruñe', for: ['bass'], p: mkPro({ a: osc({ pos: 0.5, uni: 2, det: 22, width: 0.3 }), b: osc({ pos: 0.5, fine: 14, uni: 2, det: 18, width: 0.3 }), sub: 0.55, fType: 'lp24', cut: 520, res: 0.3, drive: 0.45, lfo1: { shape: 'sine', rate: 8, trig: false }, mods: [M('lfo1', 'cut', 0.18), M('lfo1', 'posA', 0.15)], mono: true, legato: true, glide: 0.05, env1: { a: 0.008, d: 0.3, s: 0.9, r: 0.1 }, gain: 1.413 }) },
+  wobble: { label: 'Wobble', for: ['bass'], p: mkPro({ a: osc({ table: 'harm', pos: 0.65 }), b: osc({ table: 'vocal', pos: 0.4, level: 0.6 }), sub: 0.6, fType: 'lp24', cut: 320, res: 0.5, drive: 0.35, lfo1: { shape: 'tri', rate: 4, trig: false }, mods: [M('lfo1', 'cut', 0.55), M('lfo1', 'posB', 0.5)], mono: true, legato: true, glide: 0.04, env1: { a: 0.005, d: 0.3, s: 0.9, r: 0.08 }, gain: 1.353 }) },
+  acid: { label: 'Acid pro', for: ['bass', 'arp'], p: mkPro({ a: osc({ pos: 0.5, oct: -1 }), fType: 'lp24', cut: 230, res: 0.82, drive: 0.35, fEnv: 0.6, env2: { a: 0.001, d: 0.16, s: 0, r: 0.1 }, mods: [M('vel', 'cut', 0.25)], mono: true, legato: false, glide: 0.05, env1: { a: 0.002, d: 0.3, s: 0.6, r: 0.04 }, gain: 1.341 }) },
+  sub808: { label: 'Sub 808', for: ['bass'], p: mkPro({ a: osc({ pos: 0 }), b: osc({ pos: 0.25, oct: 1, level: 0.15 }), fType: 'lp12', cut: 1800, res: 0.05, drive: 0.25, env2: { a: 0.001, d: 0.09, s: 0, r: 0.1 }, mods: [M('env2', 'pitch', 0.25)], mono: true, legato: true, glide: 0.08, env1: { a: 0.003, d: 0.8, s: 0.6, r: 0.15 }, gain: 1.245 }) },
+  pluckVox: { label: 'Pluck vocal', for: ['arp', 'melody'], p: mkPro({ a: osc({ table: 'vocal', pos: 0.25, uni: 2, det: 10, width: 0.6 }), cut: 1400, res: 0.25, fEnv: 0.45, env2: { a: 0.001, d: 0.22, s: 0, r: 0.2 }, mods: [M('env2', 'posA', 0.5)], env1: { a: 0.002, d: 0.35, s: 0, r: 0.25 }, gain: 1.847 }) },
+  digiArp: { label: 'Arpegio digital', for: ['arp', 'melody'], p: mkPro({ a: osc({ table: 'harm', pos: 0.2 }), b: osc({ pos: 0.75, oct: 1, level: 0.25 }), cut: 5000, res: 0.2, lfo1: { shape: 'saw', rate: 64, trig: false }, mods: [M('lfo1', 'posA', -0.4), M('env2', 'cut', 0.25)], env1: { a: 0.002, d: 0.25, s: 0.1, r: 0.2 }, gain: 1.215 }) },
+  lead: { label: 'Lead con vibrato', for: ['melody', 'arp'], p: mkPro({ a: osc({ pos: 0.58, uni: 3, det: 14, width: 0.5 }), b: osc({ pos: 0.75, oct: 1, fine: 6, level: 0.4 }), cut: 3800, res: 0.2, lfo1: { shape: 'sine', rate: 2, trig: true }, env2: { a: 0.4, d: 0.5, s: 1, r: 0.3 }, mods: [M('lfo1', 'pitch', 0.012), M('env2', 'posA', 0.15)], mono: true, legato: true, glide: 0.06, env1: { a: 0.01, d: 0.4, s: 0.8, r: 0.3 }, gain: 0.436 }) },
+  bell: { label: 'Campana metálica', for: ['melody', 'arp', 'chords'], p: mkPro({ a: osc({ table: 'metal', pos: 0.4 }), b: osc({ pos: 0, oct: 1, semi: 7 }), fType: 'lp12', cut: 9000, res: 0.05, env2: { a: 0.001, d: 0.6, s: 0, r: 0.6 }, mods: [M('env2', 'fm', 0.35), M('env2', 'posA', 0.3)], env1: { a: 0.001, d: 1.3, s: 0, r: 0.9 }, gain: 1.154 }) },
+  pad: { label: 'Pad que respira', for: ['chords'], p: mkPro({ a: osc({ table: 'harm', pos: 0.45, uni: 5, det: 20, width: 1 }), b: osc({ pos: 0.25, oct: 1, uni: 2, det: 8, level: 0.3 }), cut: 2400, res: 0.12, lfo1: { shape: 'sine', rate: 32, trig: false }, lfo2: { shape: 'tri', rate: 64, trig: false }, mods: [M('lfo1', 'cut', 0.18), M('lfo2', 'posA', 0.3)], env1: { a: 1.1, d: 1, s: 0.85, r: 1.6 }, gain: 1.346 }) },
+  choir: { label: 'Coro vocal', for: ['chords', 'melody'], p: mkPro({ a: osc({ table: 'vocal', pos: 0.5, uni: 4, det: 14, width: 0.9 }), cut: 3500, res: 0.1, lfo1: { shape: 'sine', rate: 32, trig: false }, mods: [M('lfo1', 'posA', 0.35)], env1: { a: 0.7, d: 1, s: 0.85, r: 1.3 }, gain: 1.274 }) },
+  stab: { label: 'Stab filtrado', for: ['chords'], p: mkPro({ a: osc({ pos: 0.5, uni: 3, det: 12, width: 0.6 }), b: osc({ pos: 0.75, uni: 2, det: 8, level: 0.5 }), fType: 'lp24', cut: 500, res: 0.4, fEnv: 0.5, env2: { a: 0.001, d: 0.14, s: 0, r: 0.1 }, env1: { a: 0.003, d: 0.25, s: 0, r: 0.12 }, gain: 1.06 }) },
 };
 /* automatización: qué se puede mover a lo largo de los 4 compases y en qué rango */
 export type AutoKey = 'lp' | 'vol' | 'rev' | 'dly' | 'drive' | 'pan' | 'hp';
@@ -528,7 +586,7 @@ export function compile(p: Project) {
     mod.room = S64.map((s) => clamp(p.fx.revSize + mAt('space', s) * 0.16, 0.3, 0.97)); mod.fb = S64.map((s) => clamp(p.fx.dlyFb + mAt('space', s) * 0.12, 0, 0.8));
   }
   const cm = Math.pow(2, e * 1.4 - dk * 2); // brillo de los sintes
-  const shape = (sy: Synth | undefined, amt = 1) => sy && (cm !== 1) ? { ...sy, cutoff: clamp(sy.cutoff * Math.pow(cm, amt), 60, 16000) } : sy;
+  const shape = (sy: Synth | undefined, amt = 1) => sy && (cm !== 1) ? { ...sy, cutoff: clamp(sy.cutoff * Math.pow(cm, amt), 60, 16000), pro: sy.pro && { ...sy.pro, cut: clamp(sy.pro.cut * Math.pow(cm, amt), 30, 18000) } } : sy;
   const sendK = Math.pow(2, sp * 2.6);
   // un grupo muteado apaga a todos sus instrumentos; un grupo en solo los pone en solo (sin tocar el estado propio de cada pista)
   const G = new Map((p.groups ?? []).map((g) => [g.id, g]));
@@ -570,8 +628,8 @@ export function compile(p: Project) {
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - 0.1) }); });
     } else {
       const base = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.strings.p;
-      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: 0.8, l: t.chordLen ?? 1 })); }
-      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05) }; for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: 0.8, l: t.chordLen ?? 0.8 })); }
+      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); if (synth.pro && synth !== base) synth.pro = { ...base.pro!, env1: { a: 0.004, d: Math.min(base.pro!.env1.d, 0.4), s: 0, r: 0.15 } }; for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: 0.8, l: t.chordLen ?? 1 })); }
+      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05), pro: base.pro && { ...base.pro, env1: { ...base.pro.env1, a: Math.min(base.pro.env1.a, 0.004), r: Math.min(base.pro.env1.r, 0.05) } } }; for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: 0.8, l: t.chordLen ?? 0.8 })); }
       else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
     }
     if (t.id === fillId) for (let s = 56; s < 64; s++) ev[s] = [{ v: 0.3 + 0.7 * ((s - 56) / 7) ** 1.3 }]; // redoble: semicorcheas que crecen en los últimos 2 tiempos
@@ -588,7 +646,7 @@ export function compile(p: Project) {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
-      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
+      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' ? 0 : 0.05,
       cutAmt: t.type === 'drum' || t.type === 'vocal' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum', spAdd: t.type !== 'drum' && t.type !== 'bass',
     };

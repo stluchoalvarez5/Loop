@@ -14,7 +14,7 @@ import { migrate, listProjects, loadProject, saveProject, deleteProject, renameP
 import { registerSW } from 'virtual:pwa-register';
 import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
-  SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -555,7 +555,14 @@ function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (
         <div class="sub">Modo</div>
         <div class="chips">{[['pad', 'Sostenido'], ['stab', 'Stabs'], ['gate', 'Gate']].map(([k, l]) => <button class={'chip' + (t.chordMode === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.chordMode = k as any; if (k === 'gate' && x.steps.filter(Boolean).length < 4) x.steps = [1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0]; if (k === 'stab' && !x.steps.some(Boolean)) x.steps = [0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0]; })}>{l}</button>)}</div>
       </>}
-      {s && <><div class="sub">Sonido fino</div>
+      {s?.pro ? <SynthPro t={t} upT={upT} /> : <>
+      <div class="chips" style={{ marginTop: '10px' }}>
+        <button class="btn vio" onClick={() => upT(t.id, (x) => { const base = x.synth ?? SYNTHS[x.sound]?.p ?? SYNTHS.pluck.p; x.synth = { ...base, pro: proFrom(base) }; })}>Abrir sinte pro</button>
+        {Object.entries(PRO_PRESETS).filter(([, v]) => v.for.includes(t.type)).slice(0, 3).map(([k, v]) => <button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.synth = { ...(x.synth ?? SYNTHS[x.sound]?.p ?? SYNTHS.pluck.p), pro: clone(PRO_PRESETS[k].p) }; })}>{v.label}</button>)}
+      </div>
+      <div class="hint">El sinte pro tiene dos osciladores con tablas de onda, unísono, filtro de varios tipos, envolventes, LFO y una matriz de modulación (como Serum). Arranca sonando como el sonido actual.</div>
+      </>}
+      {s && !s.pro && <><div class="sub">Sonido fino</div>
         <div class="knobs">
           <Knob label="Filtro" value={s.cutoff} min={80} max={12000} log def={SYNTHS[t.sound].p.cutoff} color={t.color} fmt={hz} onChange={(v) => setS('cutoff', v)} />
           <Knob label="Reso" value={s.reso} min={0} max={0.95} def={SYNTHS[t.sound].p.reso} color={t.color} fmt={pct} onChange={(v) => setS('reso', v)} />
@@ -842,6 +849,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Grupos y orden', body: 'Arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando el nombre de un grupo abrís su panel: le cambiás el nombre, tocás los instrumentos para sumarlos o sacarlos, o lo borrás. "Ordenar" te deja subir y bajar los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
     { title: 'Editar una pista', body: 'Tocá el nombre de una pista para abrir su editor abajo: elegís el sonido, el orden de las notas del arpegio, la forma de tocar los acordes y el sonido fino con perillas. Las pistas de batería eligen kit y golpe.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Variación, copiar y pegar', body: 'En el editor de cada pista, "Variación" le da otro patrón (de los que usa el género, o cambiando algunos golpes y notas). "Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. Arriba de la grilla elegís la escena y "Redoble" agrega un redoble al final de cada vuelta.', art: artChips(['Variación', 'Copiar patrón', 'Pegar'], 0) },
+    { title: 'Sinte pro', body: 'En el editor del bajo, el arpegio, los acordes o la melodía, "Abrir sinte pro" te da un sinte completo, estilo Serum: dos osciladores con tablas de onda (Forma recorre la tabla), unísono con detune y ancho estéreo, sub y ruido, filtro de varios tipos, dos envolventes, dos LFO al ritmo del loop y una matriz para conectar todo. Hay sonidos pro listos y podés guardar los tuyos en Mis sonidos.', art: artKnobs(['Forma', 'Detune', 'Corte', 'LFO']) },
     { title: 'Piano roll', body: 'La melodía son 4 compases que salen de tu nombre, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
     { title: 'Automatización', body: 'Abajo del editor de cada pista está su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
@@ -1078,6 +1086,143 @@ function MidiCard({ p }: { p: Project }) {
       <div class="hint">Las perillas sirven para macros y volúmenes; los pads o botones, para escenas, mute, play, redoble y deshacer. Con "Grabar movimientos" activo, lo que muevas en el controlador también se graba. Las teclas no asignadas tocan la pista que tenés elegida en Patrón. Las asignaciones quedan guardadas en este dispositivo.</div>
     </div>
   );
+}
+
+/* ---------- sinte pro (estilo Serum) ---------- */
+const SH = (i: number, t: number) => i === 0 ? Math.sin(2 * Math.PI * t) : i === 1 ? 4 * Math.abs(((t + 0.75) % 1) - 0.5) - 1 : i === 2 ? 2 * ((t + 0.5) % 1) - 1 : (t < (i === 3 ? 0.5 : 0.12) ? 1 : -1) - (2 * (i === 3 ? 0.5 : 0.12) - 1);
+const VOWS = [[3.5, 6], [2, 9], [1.5, 11], [2.5, 4.5], [1.5, 4], [3.5, 6]];
+function wtW(kind: WTable, fr: number, k: number) {
+  const g = (x: number, m: number, w: number) => Math.exp(-((x - m) ** 2) / (2 * w * w));
+  if (kind === 'harm') { const n = 1 + fr * 31; return Math.max(0, Math.min(1, n - k + 1)) / k; }
+  if (kind === 'vocal') { const x = fr * 5, i = Math.min(4, Math.floor(x)), f = x - i, f1 = VOWS[i][0] + (VOWS[i + 1][0] - VOWS[i][0]) * f, f2 = VOWS[i][1] + (VOWS[i + 1][1] - VOWS[i][1]) * f; return (g(k, f1, 1.1) + 0.7 * g(k, f2, 1.6) + 0.04) / Math.sqrt(k); }
+  if (kind === 'metal') return ((k % 2 ? 1 : 0.35) / Math.pow(k, 0.7)) * (0.15 + 0.85 * Math.abs(Math.cos(Math.PI * k * (0.08 + fr * 0.42))));
+  return k === 1 ? 1 : 0;
+}
+/* dibujo de un ciclo de la onda (igual que en el motor) */
+function wavePath(o: ProOsc, w = 200, h = 64) {
+  const N = 96, ys: number[] = [];
+  for (let j = 0; j < N; j++) {
+    const t = j / N; let v = 0;
+    if (o.table === 'basic') { const x = o.pos * 4, i = Math.min(3, Math.floor(x)), f = x - i; v = SH(i, t) + (f > 0.001 ? (SH(i + 1, t) - SH(i, t)) * f : 0); }
+    else { const fr = o.pos; for (let k = 1; k <= 32; k++) { const a = wtW(o.table, fr, k); if (a) v += a * Math.sin(2 * Math.PI * k * t); } }
+    ys.push(v);
+  }
+  const m = Math.max(1e-6, ...ys.map(Math.abs));
+  return ys.map((v, j) => (j ? 'L' : 'M') + ((j / (N - 1)) * w).toFixed(1) + ' ' + (h / 2 - (v / m) * (h / 2 - 4)).toFixed(1)).join(' ');
+}
+function filterPath(P: Pro, w = 300, h = 80) {
+  const k = 2 - 2 * Math.min(0.98, P.res); let d = '';
+  for (let j = 0; j <= 80; j++) {
+    const f = 20 * Math.pow(1000, j / 80), x = f / P.cut, den = Math.sqrt((1 - x * x) ** 2 + (k * x) ** 2);
+    let m = P.fType === 'hp' ? (x * x) / den : P.fType === 'bp' ? (k * x) / den : P.fType === 'notch' ? Math.abs(1 - x * x) / den : 1 / den;
+    if (P.fType === 'lp24') m *= 1 / Math.sqrt((1 - x * x) ** 2 + (1.414 * x) ** 2);
+    const db = Math.max(-36, Math.min(18, 20 * Math.log10(m + 1e-9)));
+    d += (j ? 'L' : 'M') + ((j / 80) * w).toFixed(1) + ' ' + (h * 0.35 - (db / 36) * h * 0.6).toFixed(1);
+  }
+  return d;
+}
+function envPath(e: ProEnv, w = 140, h = 44) {
+  const tot = e.a + e.d + 0.5 + e.r, X = (t: number) => ((t / tot) * w).toFixed(1), Y = (v: number) => (h - 2 - v * (h - 6)).toFixed(1);
+  return `M0 ${Y(0)} L${X(e.a)} ${Y(1)} L${X(e.a + e.d)} ${Y(e.s)} L${X(e.a + e.d + 0.5)} ${Y(e.s)} L${X(tot)} ${Y(0)}`;
+}
+const sec = (v: number) => (v < 1 ? Math.round(v * 1000) + 'ms' : v.toFixed(1) + 's');
+const MY_KEY = 'loop.mysynths';
+const mySynths = (): { name: string; pro: Pro }[] => { try { return JSON.parse(localStorage.getItem(MY_KEY) ?? '[]'); } catch { return []; } };
+type ProTab = 'a' | 'b' | 'sub' | 'filt' | 'env' | 'lfo' | 'mod' | 'voice';
+function SynthPro({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const P = t.synth!.pro!, c = t.color, D = mkPro();
+  const [tab, setTab] = useState<ProTab>('a'), [mine, setMine] = useState(mySynths), [naming, setNaming] = useState(false), [nm, setNm] = useState('');
+  const setP = (fn: (p: Pro) => void) => upT(t.id, (x) => { const p = clone(x.synth!.pro!); fn(p); x.synth = { ...x.synth!, pro: p }; });
+  const K = (label: string, v: number, min: number, max: number, on: (p: Pro, v: number) => void, o: { fmt?: (v: number) => string; log?: boolean; step?: number; def?: number } = {}) =>
+    <Knob label={label} value={v} min={min} max={max} color={c} fmt={o.fmt ?? pct} log={o.log} step={o.step} def={o.def} onChange={(x) => setP((p) => on(p, x))} />;
+  const oscTab = (k: 'a' | 'b') => { const o = P[k]; return <>
+    <div class="pro-row">
+      <svg class="pro-wave" viewBox="0 0 200 64" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="32" x2="200" y2="32" stroke="#2a2a2a" /><path d={wavePath(o)} fill="none" stroke={o.on ? c : '#5a5a5a'} stroke-width="2" vector-effect="non-scaling-stroke" /></svg>
+      <button class={'chip' + (o.on ? ' on' : '')} style={{ '--c': c } as any} onClick={() => setP((p) => { p[k].on = !p[k].on; })}>{o.on ? 'Encendido' : 'Apagado'}</button>
+    </div>
+    <div class="chips">{WTABLES.map(([w, l]) => <button class={'chip' + (o.table === w ? ' on' : '')} style={{ '--c': c } as any} onClick={() => setP((p) => { p[k].table = w; })}>{l}</button>)}</div>
+    {o.table === 'basic' && <div class="chips" style={{ marginTop: '6px' }}>{([[0, 'Seno'], [0.25, 'Triángulo'], [0.5, 'Sierra'], [0.75, 'Cuadrada'], [1, 'Pulso']] as [number, string][]).map(([v, l]) => <button class={'chip mini-chip' + (Math.abs(o.pos - v) < 0.01 ? ' on' : '')} style={{ '--c': c } as any} onClick={() => setP((p) => { p[k].pos = v; })}>{l}</button>)}</div>}
+    <div class="knobs">
+      {K('Forma', o.pos, 0, 1, (p, v) => { p[k].pos = +v.toFixed(3); }, { def: 0.5 })}
+      {K('Octava', o.oct, -3, 3, (p, v) => { p[k].oct = v; }, { step: 1, def: 0, fmt: (v) => (v > 0 ? '+' : '') + v })}
+      {K('Semitono', o.semi, -12, 12, (p, v) => { p[k].semi = v; }, { step: 1, def: 0, fmt: (v) => (v > 0 ? '+' : '') + v })}
+      {K('Fino', o.fine, -50, 50, (p, v) => { p[k].fine = Math.round(v); }, { def: 0, fmt: (v) => Math.round(v) + 'ct' })}
+      {K('Unísono', o.uni, 1, 7, (p, v) => { p[k].uni = v; }, { step: 1, def: 1, fmt: (v) => v + (v === 1 ? ' voz' : ' voces') })}
+      {K('Detune', o.det, 0, 100, (p, v) => { p[k].det = Math.round(v); }, { def: 0, fmt: (v) => Math.round(v) + 'ct' })}
+      {K('Ancho', o.width, 0, 1, (p, v) => { p[k].width = v; }, { def: 0.5 })}
+      {K('Nivel', o.level, 0, 1, (p, v) => { p[k].level = v; }, { def: 1 })}
+      {k === 'b' && K('FM a A', P.fm, 0, 1, (p, v) => { p.fm = v < 0.01 ? 0 : v; }, { def: 0, fmt: (v) => (v < 0.01 ? 'no' : pct(v)) })}
+    </div>
+    <div class="hint">{k === 'a' ? 'Forma recorre la tabla de onda: en Básica va de seno a triángulo, sierra, cuadrada y pulso; las otras tablas cambian de color a medida que la movés. Unísono apila voces desafinadas (Detune) y Ancho las abre en estéreo.' : 'El oscilador B suena junto al A o, con "FM a A", lo modula (B deja de sonar y le da al A un brillo metálico o de campana).'}</div>
+  </>; };
+  const lfoBox = (i: 1 | 2) => { const L: ProLfo = i === 1 ? P.lfo1 : P.lfo2, set = (fn: (l: ProLfo) => void) => setP((p) => fn(i === 1 ? p.lfo1 : p.lfo2)); return <>
+    <div class="sub">LFO {i}</div>
+    <div class="chips">{([['sine', 'Seno'], ['tri', 'Triángulo'], ['saw', 'Sierra'], ['sqr', 'Cuadrada'], ['rand', 'Al azar']] as const).map(([k, l]) => <button class={'chip' + (L.shape === k ? ' on' : '')} style={{ '--c': c } as any} onClick={() => set((x) => { x.shape = k; })}>{l}</button>)}</div>
+    <div class="chips" style={{ marginTop: '6px' }}>{LFO_RATES.map(([r, l]) => <button class={'chip mini-chip' + (L.rate === r ? ' on' : '')} style={{ '--c': c } as any} onClick={() => set((x) => { x.rate = r; })}>{l}</button>)}
+      <button class={'chip mini-chip' + (L.trig ? ' on' : '')} style={{ '--c': c } as any} onClick={() => set((x) => { x.trig = !x.trig; })}>Arranca con cada nota</button></div>
+  </>; };
+  return <div class="pro" style={{ '--c': c } as any}>
+    <div class="sub">Sinte pro</div>
+    <div class="chips">{Object.entries(PRO_PRESETS).filter(([, v]) => v.for.includes(t.type)).map(([k, v]) => <button class="chip" style={{ '--c': c } as any} onClick={() => upT(t.id, (x) => { x.synth = { ...x.synth!, pro: clone(PRO_PRESETS[k].p) }; })}>{v.label}</button>)}</div>
+    {(mine.length > 0 || naming) && <div class="chips" style={{ marginTop: '6px' }}>
+      {mine.map((m, i) => <span class="mychip"><button class="chip" onClick={() => upT(t.id, (x) => { x.synth = { ...x.synth!, pro: clone(m.pro) }; })}>★ {m.name}</button><button class="chip x" aria-label={'Borrar ' + m.name} onClick={() => { const l = mine.filter((_, j) => j !== i); try { localStorage.setItem(MY_KEY, JSON.stringify(l)); } catch { /* */ } setMine(l); }}>×</button></span>)}
+    </div>}
+    {naming ? <form class="gp-row" style={{ marginTop: '8px' }} onSubmit={(e) => { e.preventDefault(); const n = nm.trim().slice(0, 24) || 'Mi sonido'; const l = [...mine.filter((m) => m.name !== n), { name: n, pro: clone(P) }]; try { localStorage.setItem(MY_KEY, JSON.stringify(l)); flashG('Guardado en Mis sonidos: ' + n); } catch { flashG('No queda lugar para guardarlo.'); } setMine(l); setNaming(false); setNm(''); }}>
+      <input value={nm} placeholder="Nombre del sonido" maxLength={24} onInput={(e) => setNm((e.target as HTMLInputElement).value)} /><button class="btn hot" type="submit">Guardar</button><button class="btn" type="button" onClick={() => setNaming(false)}>Cancelar</button>
+    </form> : <div class="chips" style={{ marginTop: '6px' }}><button class="chip" onClick={() => setNaming(true)}>Guardar en Mis sonidos</button><button class="chip" onClick={() => upT(t.id, (x) => { const { pro, ...rest } = x.synth!; void pro; x.synth = rest; })}>Volver al sinte simple</button></div>}
+    <div class="pro-tabs">{([['a', 'Osc A'], ['b', 'Osc B'], ['sub', 'Sub y ruido'], ['filt', 'Filtro'], ['env', 'Envolventes'], ['lfo', 'LFO'], ['mod', 'Matriz'], ['voice', 'Voz']] as [ProTab, string][]).map(([k, l]) => <button class={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}{k === 'mod' && P.mods.length ? ' ' + P.mods.length : ''}</button>)}</div>
+    {tab === 'a' && oscTab('a')}
+    {tab === 'b' && oscTab('b')}
+    {tab === 'sub' && <><div class="knobs">
+      {K('Sub', P.sub, 0, 1, (p, v) => { p.sub = v < 0.01 ? 0 : v; }, { def: 0 })}
+      {K('Ruido', P.noise, 0, 0.5, (p, v) => { p.noise = v < 0.005 ? 0 : v; }, { def: 0 })}
+    </div>
+      <div class="chips">{([[-1, 'Sub 1 octava abajo'], [-2, 'Sub 2 octavas abajo']] as [-1 | -2, string][]).map(([v, l]) => <button class={'chip' + (P.subOct === v ? ' on' : '')} style={{ '--c': c } as any} onClick={() => setP((p) => { p.subOct = v; })}>{l}</button>)}</div>
+      <div class="hint">Sub: un seno grave que le da cuerpo (ideal en bajos). Ruido: aire o ataque, para plucks y subidas.</div></>}
+    {tab === 'filt' && <>
+      <svg class="pro-filt" viewBox="0 0 300 80" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="28" x2="300" y2="28" stroke="#2a2a2a" /><path d={filterPath(P) + ' L300 80 L0 80 Z'} fill={c} fill-opacity="0.15" /><path d={filterPath(P)} fill="none" stroke={c} stroke-width="2" vector-effect="non-scaling-stroke" /></svg>
+      <div class="chips">{([['lp12', 'Pasa bajos 12'], ['lp24', 'Pasa bajos 24'], ['hp', 'Pasa altos'], ['bp', 'Pasa banda'], ['notch', 'Notch']] as [Pro['fType'], string][]).map(([k, l]) => <button class={'chip' + (P.fType === k ? ' on' : '')} style={{ '--c': c } as any} onClick={() => setP((p) => { p.fType = k; })}>{l}</button>)}</div>
+      <div class="knobs">
+        {K('Corte', P.cut, 30, 18000, (p, v) => { p.cut = Math.round(v); }, { log: true, def: D.cut, fmt: hz })}
+        {K('Reso', P.res, 0, 0.95, (p, v) => { p.res = v; }, { def: D.res })}
+        {K('Drive', P.drive, 0, 1, (p, v) => { p.drive = v < 0.01 ? 0 : v; }, { def: 0 })}
+        {K('Env 2', P.fEnv, -1, 1, (p, v) => { p.fEnv = Math.abs(v) < 0.01 ? 0 : v; }, { def: 0, fmt: (v) => (v > 0 ? '+' : '') + Math.round(v * 100) })}
+        {K('Teclado', P.fKey, 0, 1, (p, v) => { p.fKey = v; }, { def: 0 })}
+      </div>
+      <div class="hint">Env 2 abre (o cierra, si es negativo) el filtro con la envolvente 2: es lo que hace sonar "pluck" a un sinte. Teclado: las notas agudas abren más el filtro.</div></>}
+    {tab === 'env' && ([['env1', 'Envolvente 1 · volumen'], ['env2', 'Envolvente 2 · modulación']] as ['env1' | 'env2', string][]).map(([k, l]) => { const e = P[k]; return <>
+      <div class="sub">{l}</div>
+      <div class="pro-env"><svg viewBox="0 0 140 44" preserveAspectRatio="none" aria-hidden="true"><path d={envPath(e)} fill="none" stroke={c} stroke-width="2" vector-effect="non-scaling-stroke" /></svg>
+        <div class="knobs">
+          {K('Ataque', e.a, 0.001, 4, (p, v) => { p[k].a = v; }, { log: true, fmt: sec, def: D[k].a })}
+          {K('Decay', e.d, 0.02, 4, (p, v) => { p[k].d = v; }, { log: true, fmt: sec, def: D[k].d })}
+          {K('Sustain', e.s, 0, 1, (p, v) => { p[k].s = v; }, { def: D[k].s })}
+          {K('Release', e.r, 0.01, 6, (p, v) => { p[k].r = v; }, { log: true, fmt: sec, def: D[k].r })}
+        </div></div>
+    </>; })}
+    {tab === 'env' && <div class="hint">La envolvente 2 no suena sola: movela al filtro (Env 2 en Filtro) o a cualquier destino en la Matriz.</div>}
+    {tab === 'lfo' && <>{lfoBox(1)}{lfoBox(2)}<div class="hint">Los LFO van al ritmo del loop (4 c = una vuelta cada 4 compases, 1/16 = cada semicorchea). Para que muevan algo, asignalos en la Matriz.</div></>}
+    {tab === 'mod' && <>
+      <div class="mods">{P.mods.map((m, i) => <div class="modrow">
+        <select value={m.src} aria-label="Fuente" onChange={(e) => setP((p) => { p.mods[i].src = (e.target as HTMLSelectElement).value as any; })}>{MOD_SRC.map(([k, l]) => <option value={k}>{l}</option>)}</select>
+        <span>→</span>
+        <select value={m.dst} aria-label="Destino" onChange={(e) => setP((p) => { p.mods[i].dst = (e.target as HTMLSelectElement).value as any; })}>{MOD_DST.map(([k, l]) => <option value={k}>{l}</option>)}</select>
+        <div class="mini">{K('Cantidad', m.amt, -1, 1, (p, v) => { p.mods[i].amt = Math.abs(v) < 0.005 ? 0 : +v.toFixed(3); }, { def: 0, fmt: (v) => (v > 0 ? '+' : '') + Math.round(v * 100) })}</div>
+        <button class="chip x" aria-label="Quitar ruta" onClick={() => setP((p) => { p.mods.splice(i, 1); })}>×</button>
+      </div>)}</div>
+      {P.mods.length < 6 && <button class="chip" style={{ marginTop: '8px' }} onClick={() => setP((p) => { p.mods.push({ src: 'lfo1', dst: 'cut', amt: 0.3 }); })}>+ Ruta de modulación</button>}
+      <div class="hint">Cada ruta conecta una fuente con un destino: LFO 1 → Filtro hace un wobble, LFO → Tono es un vibrato (con poquito alcanza), Env 2 → Forma A cambia el color del ataque y Velocidad → Filtro hace que los acentos suenen más brillantes.</div></>}
+    {tab === 'voice' && <>
+      <div class="chips">
+        <button class={'chip' + (P.mono ? ' on' : '')} style={{ '--c': c } as any} onClick={() => setP((p) => { p.mono = !p.mono; })}>Mono</button>
+        <button class={'chip' + (P.legato ? ' on' : '')} style={{ '--c': c } as any} onClick={() => setP((p) => { p.legato = !p.legato; })}>Legato (desliza entre notas)</button>
+      </div>
+      <div class="knobs">
+        {K('Glide', P.glide, 0.005, 1, (p, v) => { p.glide = v; }, { log: true, fmt: sec, def: 0.06 })}
+        {K('Volumen', P.gain, 0, 2, (p, v) => { p.gain = v; }, { def: 0.3 })}
+      </div>
+      <div class="hint">Mono: una nota por vez. Con Legato, si las notas se pisan, la nueva se desliza desde la anterior (Glide es cuánto tarda). Los bajos siempre son mono.</div></>}
+  </div>;
 }
 
 /* ---------- mis loops: varios proyectos guardados en el celu ---------- */
