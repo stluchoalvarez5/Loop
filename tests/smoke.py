@@ -10,7 +10,7 @@ with sync_playwright() as p:
     pg.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
     pg.goto(URL); pg.wait_for_timeout(800)
     while pg.locator(".tut").count(): pg.click(".tut-skip"); pg.wait_for_timeout(200)
-    pg.fill("input", "Luciano"); pg.click("button[type=submit]")
+    pg.click(".playbtn")  # arranca con el loop desde cero del primer uso
     pg.wait_for_timeout(7000)
     full = pg.inner_text(".stat >> nth=0") if pg.locator(".stat").count() else None
     lufs = lambda: pg.evaluate("document.querySelector('.lcd .l1 span:last-child b').textContent")
@@ -19,6 +19,7 @@ with sync_playwright() as p:
     # silenciar kick, golpe, hat y bajo
     for nm in ["Kick", "Bajo", "Hat"]:
         pg.click(f".tname:has-text('{nm}')")
+    pg.keyboard.press("Escape")  # cierra el editor de abajo
     pg.click("nav button:has-text('Mixer')")
     for i in [0, 1, 2, 5]:
         pg.locator(".strip .ms .m").nth(i).click()
