@@ -50,14 +50,14 @@ class SampleVoice {
     this.fade = Math.exp(-1 / (sr * 0.02)); this.n = 0;
     this.pl = Math.cos((pan + 1) * Math.PI / 4); this.pr = Math.sin((pan + 1) * Math.PI / 4);
   }
-  render(L, R, a, b) {
-    const d = this.buf, len = d.length;
+  render(L, R, a, b, cm, gps, pm) {
+    const d = this.buf, len = d.length, rt = this.rate * (pm || 1);
     for (let i = a; i < b; i++) {
       const p = this.pos, ip = p | 0;
       if (ip + 1 >= len) { this.on = false; return; }
       const s = (d[ip] + (d[ip + 1] - d[ip]) * (p - ip)) * this.g;
       L[i] += s * this.pl; R[i] += s * this.pr;
-      this.pos += this.rate;
+      this.pos += rt;
       if (++this.n > this.hold) { this.g *= this.fade; if (this.g < 1e-4) { this.on = false; return; } }
     }
   }
@@ -79,7 +79,7 @@ class SynthVoice {
   }
   /* slide (303): la voz que suena se desliza a la nota nueva sin volver a atacar */
   glideTo(p, note, vel, lenSamp) { this.tf = mtof(note + (p.octave || 0) * 12); this.len = this.t + lenSamp; this.vel = vel; }
-  render(L, R, a, b, cm) {
+  render(L, R, a, b, cm, gps, pm) {
     const p = this.p, sr = this.sr, n = this.n, wave = p.wave, cut = p.cutoff * (cm || 1);
     const k = 2 - 2 * Math.min(0.97, p.reso);
     for (let i = a; i < b; i++) {
@@ -92,7 +92,7 @@ class SynthVoice {
       if (this.tf !== this.freq) this.freq += (this.tf - this.freq) * this.gk;
       // osciladores
       let s = 0;
-      const base = this.freq;
+      const base = this.freq * (pm || 1);
       if (wave === 'fm') {
         const dt = base / sr;
         this.mph += dt * p.fmRatio; if (this.mph >= 1) this.mph -= 1;
@@ -227,7 +227,7 @@ class ProVoice {
       if (m[md.dst] !== undefined) m[md.dst] += v * md.amt;
     }
     if (this.tf !== this.freq) this.freq += (this.tf - this.freq) * this.gk;
-    const pm = m.pitch ? Math.pow(2, m.pitch) : 1, f0 = this.freq * pm; // tono: 1 = una octava
+    const pm = (m.pitch ? Math.pow(2, m.pitch) : 1) * (this.tpm || 1), f0 = this.freq * pm; // tono: 1 = una octava; tpm = tono de la pista (afinación, vibrato, automatización)
     this.dA = f0 * this.mA / sr; this.dB = f0 * this.mB / sr;
     this.pA = Math.min(1, Math.max(0, P.a.pos + m.posA)); this.pB = Math.min(1, Math.max(0, P.b.pos + m.posB));
     // cuadro de la tabla (según la forma) y tope de armónicos (según la nota más aguda del unísono)
@@ -244,7 +244,8 @@ class ProVoice {
     const vg = Math.max(0, 1 + m.vol) * P.gain * this.vel, pn = Math.max(-1, Math.min(1, this.pan + m.pan));
     this.ol = vg * Math.cos((pn + 1) * Math.PI / 4); this.or = vg * Math.sin((pn + 1) * Math.PI / 4);
   }
-  render(L, R, a, b, cm, gps) {
+  render(L, R, a, b, cm, gps, pm) {
+    this.tpm = pm || 1;
     const P = this.P, sub = P.sub || 0, noise = P.noise || 0, lvA = P.a.level ?? 1, lvB = P.b.level ?? 1, drv = P.drive || 0, dk = 1 + drv * 8, dg = (1 + drv) / dk;
     const nA = this.nA, nB = this.nB, iA = nA ? 1 / Math.sqrt(nA) : 0, iB = nB ? 1 / Math.sqrt(nB) : 0, ft = this.ft, f24 = this.f24, sdiv = P.subOct === -2 ? 4 : 2;
     let i = a;
@@ -377,7 +378,7 @@ class LoopEngine extends AudioWorkletProcessor {
       const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing; this.mod = m.project.mod || null; this.swingA = m.project.swingA || null;
       this.tracks = m.project.tracks.map((t) => {
         const o = old.find((x) => x.id === t.id);
-        const nt = { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
+        const nt = { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, vph: o ? o.vph : 0, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
         // inserto por pista: saturación, filtros pasa altos / pasa bajos y chorus (los buffers se reservan acá, nunca en process)
         const fx = t.fx || {};
         if (!nt.ins) nt.ins = { hpL: new Biquad(), hpR: new Biquad(), lpL: new Biquad(), lpR: new Biquad(), cb: null, ci: 0, cph: 0, ap: null, pph: 0, pfl: 0, pfr: 0, chL: 0, chR: 0, cn: 0 };
@@ -474,11 +475,16 @@ class LoopEngine extends AudioWorkletProcessor {
     for (const t of tracks) {
       B.tL.fill(0); B.tR.fill(0);
       const cm = t.cutAmt && mCut !== 1 ? Math.pow(mCut, t.cutAmt) : 1;
+      // tono de la pista (semitonos): afinación (los samples ya la usan al disparar), fino, automatización (±12) y vibrato
+      let pst = (t.kind === 'sample' ? 0 : t.pitch || 0) + (t.fine || 0) / 100;
+      if (on && t.auto && t.auto.pitch) pst += (autoAt(t.auto.pitch, k0, k1, fr) * 2 - 1) * 12;
+      if (t.vib && t.vib.d) { t.vph = (t.vph || 0) + (N * t.vib.r) / sr; if (t.vph >= 1) t.vph -= Math.floor(t.vph); pst += t.vib.d * Math.sin(TAU * t.vph); }
+      const pm = pst ? Math.pow(2, pst / 12) : 1;
       for (const v of t.voices) {
         if (!v.on) continue;
         const a = v.delay || 0;
         if (a >= N) { v.delay = a - N; continue; } // golpe atrasado por el groove: todavía no empieza
-        v.delay = 0; v.render(B.tL, B.tR, a, N, cm, ps + a / slen);
+        v.delay = 0; v.render(B.tL, B.tR, a, N, cm, ps + a / slen, pm);
       }
       const I = t.ins;
       // automatización: valor de cada parámetro en este momento de los 4 compases (interpolado entre pasos)

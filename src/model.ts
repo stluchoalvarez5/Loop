@@ -66,7 +66,7 @@ export const PRO_PRESETS: Record<string, { label: string; for: TrackType[]; p: P
   stab: { label: 'Stab filtrado', for: ['chords'], p: mkPro({ a: osc({ pos: 0.5, uni: 3, det: 12, width: 0.6 }), b: osc({ pos: 0.75, uni: 2, det: 8, level: 0.5 }), fType: 'lp24', cut: 500, res: 0.4, fEnv: 0.5, env2: { a: 0.001, d: 0.14, s: 0, r: 0.1 }, env1: { a: 0.003, d: 0.25, s: 0, r: 0.12 }, gain: 1.06 }) },
 };
 /* automatización: qué se puede mover a lo largo de los 4 compases y en qué rango */
-export type AutoKey = 'lp' | 'vol' | 'rev' | 'dly' | 'drive' | 'pan' | 'hp';
+export type AutoKey = 'lp' | 'vol' | 'rev' | 'dly' | 'drive' | 'pan' | 'hp' | 'pitch';
 export const AUTO_PARAMS: { k: AutoKey; label: string; lo: number; hi: number; fmt: (v: number) => string }[] = [
   { k: 'lp', label: 'Filtro', lo: 0.3, hi: 1, fmt: (v) => { const f = 200 * Math.pow(100, v); return v >= 0.995 ? 'abierto' : f >= 1000 ? (f / 1000).toFixed(1) + 'k' : Math.round(f) + ' Hz'; } },
   { k: 'vol', label: 'Volumen', lo: 0.15, hi: 1, fmt: (v) => Math.round(v * 100) + '%' },
@@ -74,6 +74,7 @@ export const AUTO_PARAMS: { k: AutoKey; label: string; lo: number; hi: number; f
   { k: 'dly', label: 'Delay', lo: 0, hi: 0.8, fmt: (v) => Math.round(v * 100) + '%' },
   { k: 'drive', label: 'Saturación', lo: 0, hi: 0.8, fmt: (v) => Math.round(v * 100) + '%' },
   { k: 'pan', label: 'Pan', lo: 0.1, hi: 0.9, fmt: (v) => (Math.abs(v - 0.5) < 0.03 ? 'centro' : v < 0.5 ? 'izq ' + Math.round((0.5 - v) * 200) : 'der ' + Math.round((v - 0.5) * 200)) },
+  { k: 'pitch', label: 'Tono', lo: 0.5, hi: 1, fmt: (v) => { const st = (v * 2 - 1) * 12; return Math.abs(st) < 0.05 ? '0 st' : (st > 0 ? '+' : '') + st.toFixed(1) + ' st'; } },
   { k: 'hp', label: 'Corta graves', lo: 0, hi: 0.65, fmt: (v) => (v < 0.01 ? 'no' : Math.round(20 * Math.pow(100, v)) + ' Hz') },
 ];
 export const AUTO_SHAPES = [
@@ -106,6 +107,8 @@ export type Track = {
   chordLen?: number; // largo de cada golpe de acorde en pasos (stab y gate)
   bassLine?: number[]; // bajo: semitonos sobre la fundamental en cada paso (0, 12 = octava, 7 = quinta…)
   bassLen?: number; // bajo: largo de cada nota en pasos
+  fine?: number; // afinación fina en cents (−100..100)
+  vib?: { d: number; r: number }; // vibrato: profundidad en semitonos y velocidad en Hz
   eq?: EqBand[]; // EQ de la pista: 4 bandas [grave (estante), medio 1, medio 2, agudo (estante)]
   fx?: { drive?: number; hp?: number; lp?: number; chorus?: number; crush?: number; phaser?: number }; // inserto: saturación, bitcrusher, pasa altos, pasa bajos, phaser, chorus
   groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
@@ -700,7 +703,7 @@ export function compile(p: Project) {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
-      eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined,
+      eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined, fine: t.fine || 0, vib: t.vib && t.vib.d > 0.001 ? t.vib : undefined,
       mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' ? 0 : 0.05,
       cutAmt: t.type === 'drum' || t.type === 'vocal' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum', spAdd: t.type !== 'drum' && t.type !== 'bass',

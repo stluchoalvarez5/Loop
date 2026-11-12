@@ -275,7 +275,7 @@ function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }
       </div>
       <div class="dtabs">{tabs.map(([k, l, ic]) => <button class={cur === k ? 'on' : ''} onClick={() => setTab(k)}>{ic}<span>{l}</span></button>)}</div>
       <div class="db">
-        {cur === 'snd' && (t.type === 'vocal' ? <VocalEditor p={p} t={t} upT={upT} power={null} onDelete={onDelete} bare /> : <TrackEditor p={p} t={t} upT={upT} up={up} part="snd" adv={adv} />)}
+        {cur === 'snd' && (t.type === 'vocal' ? <><VocalEditor p={p} t={t} upT={upT} power={null} onDelete={onDelete} bare /><PitchRow t={t} upT={upT} /></> : <TrackEditor p={p} t={t} upT={upT} up={up} part="snd" adv={adv} />)}
         {cur === 'notes' && <TrackEditor p={p} t={t} upT={upT} up={up} part="notes" adv={adv} />}
         {cur === 'eq' && <EqEditor t={t} upT={upT} />}
         {cur === 'move' && <AutoEditor key={t.id} t={t} upT={upT} playing={playing} bare />}
@@ -655,9 +655,35 @@ function AddTrack({ onAdd, full }: { onAdd: (t: TrackType, s?: string) => void; 
     {drums && DRUM_GROUPS.map(([g, list]) => <><div class="sub">{g}</div><div class="chips">{list.map((k) => <button class="chip" onClick={() => { onAdd('drum', k); setOpen(false); setDrums(false); }}>{DRUM_SOUNDS[k]}</button>)}</div></>)}
   </div>;
 }
+/* volumen y pan del instrumento, arriba de su editor: son los mismos del Mixer (y respetan la automatización) */
+/* tono del instrumento: afinación (sintes; batería y voz la tienen en su sección), fino y vibrato */
+function PitchRow({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const synth = t.type !== 'drum' && t.type !== 'vocal', vib = t.vib ?? { d: 0, r: 5 };
+  return <>
+    <div class="sub">Tono</div>
+    <div class="knobs">
+      {synth && <Knob label="Afinación" value={t.pitch} min={-24} max={24} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + ' st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />}
+      <Knob label="Fino" value={t.fine ?? 0} min={-100} max={100} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 1 ? '0 ct' : (v > 0 ? '+' : '') + Math.round(v) + ' ct')} onChange={(v) => upT(t.id, (x) => { x.fine = Math.abs(v) < 1 ? 0 : Math.round(v); })} />
+      <Knob label="Vibrato" value={vib.d} min={0} max={1} def={0} color={t.color} fmt={(v) => (v < 0.005 ? 'no' : v.toFixed(2) + ' st')} onChange={(v) => upT(t.id, (x) => { x.vib = { r: x.vib?.r ?? 5, d: v < 0.005 ? 0 : +v.toFixed(3) }; })} />
+      <Knob label="Velocidad" value={vib.r} min={0.5} max={12} log def={5} color={t.color} fmt={(v) => v.toFixed(1) + ' Hz'} onChange={(v) => upT(t.id, (x) => { x.vib = { d: x.vib?.d ?? 0, r: +v.toFixed(2) }; })} />
+    </div>
+  </>;
+}
+function LevelRow({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const vol = autoKnob(t, 'vol', upT), pan = autoKnob(t, 'pan', upT);
+  return <>
+    <div class="sub">Nivel</div>
+    <div class="knobs">
+      <Knob label="Volumen" {...vol} min={0} max={1} def={0.8} color={t.color} fmt={(v) => (v < 0.005 ? 'mudo' : (20 * Math.log10(v * v * 1.6)).toFixed(1) + ' dB')} />
+      <Knob label="Pan" {...pan} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.02 ? 'centro' : (v < 0 ? 'izq ' : 'der ') + Math.round(Math.abs(v) * 100))} />
+    </div>
+  </>;
+}
 function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; part: 'snd' | 'notes'; adv: boolean }) {
   if (t.type === 'drum') {
     return <>
+      <LevelRow t={t} upT={upT} />
+      <PitchRow t={t} upT={upT} />
       <div class="sub">Golpe</div>
       {DRUM_GROUPS.map(([g, list]) => <><div class="sub2">{g}</div><div class="chips">{list.map((o) => <button class={'chip' + (t.sound === o ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.sound = o; if (x.name === DRUM_SOUNDS[x.sound] || Object.values(DRUM_SOUNDS).includes(x.name)) x.name = DRUM_SOUNDS[o]; })}>{DRUM_SOUNDS[o]}</button>)}</div></>)}
       <div class="sub">Ajustes</div>
@@ -684,6 +710,8 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
   const s = t.synth ?? SYNTHS[t.sound]?.p;
   const setS = (k: string, v: number) => upT(t.id, (x) => { x.synth = { ...(x.synth ?? SYNTHS[x.sound].p), [k]: v }; });
   return <>
+    <LevelRow t={t} upT={upT} />
+    <PitchRow t={t} upT={upT} />
     <div class="sub">Sonido{t.synth && <button class="lnk" onClick={() => upT(t.id, (x) => { x.synth = undefined; })}>Restablecer</button>}</div>
     <label class="sel-w"><select class="sel" value={s?.pro ? '' : t.sound} onChange={(e) => { const k = (e.target as HTMLSelectElement).value; if (k) upT(t.id, (x) => { x.sound = k; x.synth = undefined; }); }}>
       {s?.pro && <option value="">Sinte pro</option>}
@@ -780,7 +808,7 @@ function AutoEditor({ t, upT, playing, bare }: { t: Track; upT: (id: string, fn:
   const [k, setK] = useState<AutoKey>('lp');
   const P = AUTO_PARAMS.find((x) => x.k === k)!, data = t.auto?.[k];
   // valor de partida si todavía no hay automatización: lo que la pista tiene hoy
-  const base = () => { const f = t.fx ?? {}; const v = k === 'lp' ? (f.lp ? Math.log(f.lp / 200) / Math.log(100) : 1) : k === 'hp' ? (f.hp ? Math.log(f.hp / 20) / Math.log(100) : 0) : k === 'vol' ? 1 : k === 'rev' ? t.rev : k === 'dly' ? t.dly : k === 'drive' ? f.drive ?? 0 : (t.pan + 1) / 2; return Math.max(0, Math.min(1, v)); };
+  const base = () => { const f = t.fx ?? {}; const v = k === 'lp' ? (f.lp ? Math.log(f.lp / 200) / Math.log(100) : 1) : k === 'hp' ? (f.hp ? Math.log(f.hp / 20) / Math.log(100) : 0) : k === 'vol' ? 1 : k === 'rev' ? t.rev : k === 'dly' ? t.dly : k === 'drive' ? f.drive ?? 0 : k === 'pitch' ? 0.5 : (t.pan + 1) / 2; return Math.max(0, Math.min(1, v)); };
   const has = (key: AutoKey) => !!t.auto?.[key];
   return (
     <div class={bare ? 'auto-ed' : 'card a-autoed'} style={{ '--c': t.color } as any}>
@@ -985,7 +1013,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
   pat: [
     { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos. Arriba de la grilla elegís el compás: en "Todos" lo que tocás se repite en los 4 compases; en 1, 2, 3 o 4 cambiás solo ese compás (por ejemplo, un golpe distinto al final). "Copiar a los 4 compases" y "Vaciar compás" aplican al compás elegido, y las pistas con compases distintos muestran un 4 al lado del nombre.', art: artGrid },
     { title: 'Grupos y orden', body: 'En modo Avanzado, arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando el nombre de un grupo abrís su panel para renombrarlo, sumar o sacar instrumentos o borrarlo. El botón de las flechas ordena los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
-    { title: 'Editar una pista', body: 'Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
+    { title: 'Editar una pista', body: 'Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo. Arriba de Sonido tenés el volumen y el pan del instrumento (los mismos del Mixer) y el tono: afinación, fino y vibrato. En Movimiento también podés automatizar el Tono para que suba o baje a lo largo de los 4 compases.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Variación, copiar y pegar', body: 'El dado arriba del editor de cada instrumento le da otro patrón (de los que usa el género, o cambiando algunos golpes y notas). En la pestaña Más, "Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. Arriba de la grilla, las barritas agregan un redoble y el tacho vacía la batería.', art: artChips(['Variación', 'Copiar patrón', 'Pegar'], 0) },
     { title: 'Sinte pro', body: 'En modo Avanzado, en la pestaña Sonido del bajo, el arpegio, los acordes o la melodía, "Editar a fondo" abre un sinte completo, estilo Serum: dos osciladores con tablas de onda (Forma recorre la tabla), unísono con detune y ancho estéreo, sub y ruido, filtro de varios tipos, dos envolventes, dos LFO al ritmo del loop y una matriz para conectar todo. Hay sonidos pro listos y podés guardar los tuyos en Mis sonidos.', art: artKnobs(['Forma', 'Detune', 'Corte', 'LFO']) },
     { title: 'Ecualizador de cada instrumento', body: 'En el editor de cada instrumento, la pestaña EQ tiene un ecualizador de 4 bandas: arrastrás los puntos de la curva con el dedo (a los costados la frecuencia, arriba o abajo cuánto sube o baja) o usás las perillas y los ajustes rápidos (Menos barro, Más brillo, Radio…). En el Mixer lo abrís con el botón EQ de cada columna.', art: artKnobs(['Graves', 'Medio', 'Agudos', 'Ancho']) },
