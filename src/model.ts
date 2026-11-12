@@ -256,12 +256,12 @@ export const sampleKey = (kit: string, sound: string) => KITS[kit]?.map[sound] ?
 
 const R = (on: number[], acc: number[] = []) => { const s = Array(16).fill(0); on.forEach((i) => (s[i] = 1)); acc.forEach((i) => (s[i] = 2)); return s; };
 
-const COLORS: Record<string, string> = { kick: '#ff2e97', clap: '#ff8a3d', hat: '#ffe45c', open: '#7dff9b', perc: '#22e5ff', bass: '#4d7cff', arp: '#b26bff', chords: '#ff5fd2' };
+const COLORS: Record<string, string> = { kick: '#e5655b', clap: '#e98a5f', hat: '#e9c46a', open: '#d6cf7e', perc: '#a7c973', bass: '#6fbf86', arp: '#e3b04b', chords: '#8fc7a0' };
 const mkTrack = (id: string, name: string, type: TrackType, sound: string, extra: Partial<Track> = {}): Track => ({
   id, name, color: COLORS[id], type, steps: Array(16).fill(0), sound, pitch: 0, decay: 1, vol: 0.8, pan: 0, mute: false, solo: false, rev: 0, dly: 0, duck: 0, ...extra,
 });
 
-const PALETTE = ['#ff2e97', '#ff8a3d', '#ffe45c', '#7dff9b', '#22e5ff', '#4d7cff', '#b26bff', '#ff5fd2', '#ff6b6b', '#5ce1e6', '#c38bff', '#ffd166'];
+const PALETTE = ['#e5655b', '#e98a5f', '#e9c46a', '#d6cf7e', '#a7c973', '#6fbf86', '#e3b04b', '#8fc7a0', '#c97a6e', '#b8d39a', '#f0d99a', '#5fa877'];
 export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   const n = p.tracks.length, id = type + '-' + Date.now().toString(36), color = PALETTE[n % PALETTE.length];
   if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
@@ -337,7 +337,7 @@ export function projectFromName(name: string, variant = 0): Project {
   const g = wpick(r, GENRE_WEIGHTS);
   const p = newProject(name, g);
   // melodía de 4 compases propia del nombre
-  const mel = newTrack(p, 'melody'); mel.id = 'melody'; mel.color = '#ffd166';
+  const mel = newTrack(p, 'melody'); mel.id = 'melody'; mel.color = '#f0d99a';
   p.tracks.splice(p.tracks.findIndex((t) => t.id === 'arp') + 1, 0, mel);
   applyGenre(p, g, variant);
   p.seed = r();
@@ -391,8 +391,8 @@ export function arpPreview(p: Project, t: Track) { const f = arpNotes(p, t); ret
 
 /* macros: 4 controles que mueven muchos parámetros a la vez, sin tocar el proyecto (se aplican al compilar) */
 export const MACROS = [
-  { k: 'energy', label: 'Energía', color: '#ff2e97' }, { k: 'dark', label: 'Oscuridad', color: '#9d5cff' },
-  { k: 'space', label: 'Espacio', color: '#22e5ff' }, { k: 'groove', label: 'Groove', color: '#ffb12b' },
+  { k: 'energy', label: 'Energía', color: '#e5655b' }, { k: 'dark', label: 'Oscuridad', color: '#9a9a9a' },
+  { k: 'space', label: 'Espacio', color: '#6fbf86' }, { k: 'groove', label: 'Groove', color: '#e9c46a' },
 ] as const;
 export function compile(p: Project) {
   const anyGain = (v: number) => v * v * 1.6;
