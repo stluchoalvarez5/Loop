@@ -8,6 +8,7 @@ import '@fontsource/jetbrains-mono/600.css';
 import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
+import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks } from './vox';
 import { renderAudio, wav, mp3, abletonZip, baseName } from './engine/export';
 import {
   MACROS,
@@ -112,6 +113,11 @@ function App() {
 
   const up = (fn: (d: Project) => void) => setP((cur) => { const d = clone(cur); fn(d); engine.update(d); save(d); return d; });
   useEffect(() => { engine.update(p); save(p); }, []);
+  // voces grabadas guardadas en este celu: se cargan al abrir
+  useEffect(() => {
+    const vs = p.tracks.filter((t) => t.type === 'vocal' && t.vox?.has); if (!vs.length) return;
+    (async () => { await engine.init(); for (const t of vs) { const v = await loadVox(t.id).catch(() => undefined); if (v) engine.setVox(t.id, v.data, v.sr); } })();
+  }, []);
   useEffect(() => {
     let lastStat = 0;
     engine.onStep = (s) => {
@@ -248,7 +254,7 @@ function App() {
           <div class="hint">El botón de la izquierda enciende o apaga cada instrumento. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves que pone el género.</div>
         </div>
 
-        {tr && <div class="a-ed"><TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); setSel(left[0].id); flash(tr.name + ' eliminada'); }} /></div>}
+        {tr && <div class="a-ed"><TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); if (tr.type === 'vocal') deleteVox(tr.id).catch(() => {}); setSel(left[0].id); flash(tr.name + ' eliminada'); }} /></div>}
       </div>}
       {toast && <div class="toast">{toast}</div>}
 
@@ -306,7 +312,7 @@ function AddTrack({ onAdd, full }: { onAdd: (t: TrackType, s?: string) => void; 
   return <div style={{ marginTop: '10px' }}>
     <div class="chips">
       <button class={'chip' + (drums ? ' on' : '')} onClick={() => setDrums(!drums)}>Batería / percusión</button>
-      {([['bass', 'Bajo'], ['arp', 'Arpegio'], ['chords', 'Acordes'], ['melody', 'Melodía (piano roll)']] as [TrackType, string][]).map(([k, l]) => <button class="chip" onClick={() => { onAdd(k); setOpen(false); }}>{l}</button>)}
+      {([['vocal', 'Voz (grabá tu voz)'], ['bass', 'Bajo'], ['arp', 'Arpegio'], ['chords', 'Acordes'], ['melody', 'Melodía (piano roll)']] as [TrackType, string][]).map(([k, l]) => <button class="chip" onClick={() => { onAdd(k); setOpen(false); }}>{l}</button>)}
       <button class="chip" onClick={() => { setOpen(false); setDrums(false); }}>Cancelar</button>
     </div>
     {drums && DRUM_GROUPS.map(([g, list]) => <><div class="sub">{g}</div><div class="chips">{list.map((k) => <button class="chip" onClick={() => { onAdd('drum', k); setOpen(false); setDrums(false); }}>{DRUM_SOUNDS[k]}</button>)}</div></>)}
@@ -314,6 +320,7 @@ function AddTrack({ onAdd, full }: { onAdd: (t: TrackType, s?: string) => void; 
 }
 function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; onDelete: () => void }) {
   const power = <button class={'pw' + (t.mute ? '' : ' on')} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} />;
+  if (t.type === 'vocal') return <VocalEditor t={t} upT={upT} power={power} onDelete={onDelete} />;
   if (t.type === 'drum') {
     return (
       <div class="card" style={{ '--c': t.color } as any}>
@@ -366,6 +373,87 @@ function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (
 }
 
 const CHROM = ['DO', 'DO#', 'RE', 'RE#', 'MI', 'FA', 'FA#', 'SOL', 'SOL#', 'LA', 'LA#', 'SI'];
+/* editor de voz: grabar o subir audio, recortar, afinar y efectos */
+const VOX_FX: [string, string, Partial<Track>, Track['fx']][] = [
+  ['Seca', 'Sin efectos', { rev: 0.05, dly: 0 }, { hp: 110 }],
+  ['Eco', 'Delay largo', { rev: 0.2, dly: 0.6 }, { hp: 150 }],
+  ['Catedral', 'Reverb enorme', { rev: 0.75, dly: 0.1 }, { hp: 200 }],
+  ['Radio', 'Telefónica', { rev: 0.1, dly: 0.25 }, { hp: 700, lp: 3200, drive: 0.35 }],
+  ['Robot', 'Chorus y delay', { rev: 0.2, dly: 0.35 }, { hp: 150, chorus: 0.8 }],
+  ['Sucia', 'Distorsión', { rev: 0.15, dly: 0.2 }, { hp: 180, drive: 0.75 }],
+];
+function VocalEditor({ t, upT, power, onDelete }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void; power: any; onDelete: () => void }) {
+  const [st, setSt] = useState<'idle' | 'rec' | 'busy'>('idle'), [err, setErr] = useState(''), [wave, setWave] = useState<number[]>([]), [secs, setSecs] = useState(0);
+  const stopRef = useRef<null | (() => Promise<AudioBuffer>)>(null), lvlRef = useRef<HTMLElement>(null), timer = useRef<any>(0);
+  const refresh = () => { const d = engine.sampleData['vox:' + t.id]; setWave(d ? peaks(d) : []); };
+  useEffect(refresh, [t.id, t.vox?.has]);
+  const store = async (buf: AudioBuffer) => {
+    const v = cleanVox(buf); engine.setVox(t.id, v.data, v.sr); await saveVox(t.id, v).catch(() => {});
+    upT(t.id, (x) => { x.vox = { ...(x.vox ?? { from: 0, rev: false, has: false }), has: true, from: 0 }; x.mute = false; }); refresh(); setSt('idle');
+  };
+  const start = async () => {
+    setErr('');
+    try {
+      await engine.init(); setSt('rec'); setSecs(0);
+      const t0 = performance.now();
+      stopRef.current = await startRecording(engine.ctx!, (lv) => { if (lvlRef.current) lvlRef.current.style.width = Math.min(100, lv * 140) + '%'; });
+      timer.current = setInterval(() => { const s = (performance.now() - t0) / 1000; setSecs(s); if (s >= 8) stop(); }, 100);
+    } catch { setSt('idle'); setErr('No se pudo usar el micrófono. Revisá el permiso del navegador.'); }
+  };
+  const stop = async () => {
+    clearInterval(timer.current); const f = stopRef.current; stopRef.current = null; if (!f) return; setSt('busy');
+    try { await store(await f()); } catch { setSt('idle'); setErr('No se pudo procesar la grabación.'); }
+  };
+  const upload = async (file?: File) => {
+    if (!file) return; setErr(''); setSt('busy');
+    try { await engine.init(); await store(await engine.ctx!.decodeAudioData(await file.arrayBuffer())); } catch { setSt('idle'); setErr('No se pudo leer ese archivo de audio.'); }
+  };
+  const fx = t.fx ?? {}, from = t.vox?.from ?? 0;
+  const setFx = (k: keyof NonNullable<Track['fx']>, v: number) => upT(t.id, (x) => { x.fx = { ...x.fx, [k]: v }; });
+  return (
+    <div class="card" style={{ '--c': t.color } as any}>
+      <div class="ct"><h3>{t.name}</h3>{power}</div>
+      <div class="vox-rec">
+        {st !== 'rec'
+          ? <button class="btn rec" disabled={st === 'busy'} onClick={start}><span class="dotrec" />{t.vox?.has ? 'Grabar de nuevo' : 'Grabar'}</button>
+          : <button class="btn rec on" onClick={stop}><span class="sq" />Parar · {secs.toFixed(1)} s</button>}
+        <label class="btn up">Subir audio<input type="file" accept="audio/*" onChange={(e) => upload((e.target as HTMLInputElement).files?.[0])} /></label>
+      </div>
+      {st === 'rec' && <div class="vox-lvl"><i ref={lvlRef as any} /></div>}
+      {st === 'busy' && <div class="exp-status"><span class="spin" />Procesando…</div>}
+      {err && <div class="hint" style={{ color: 'var(--red)' }}>{err}</div>}
+      {wave.length > 0 && <div class="vox-wave">
+        <svg viewBox={`0 0 ${wave.length} 40`} preserveAspectRatio="none" aria-hidden="true">
+          {wave.map((v, i) => <rect x={i + 0.15} width="0.7" y={20 - v * 19} height={Math.max(0.6, v * 38)} fill={i / wave.length < from ? '#3a3a3a' : t.color} />)}
+          <rect x={from * wave.length} width="0.6" y="0" height="40" fill="#ececec" />
+        </svg>
+      </div>}
+      <div class="hint">{t.vox?.has ? 'En la grilla elegís en qué pasos suena (una grabación por golpe). Grabá hasta 8 segundos; los silencios del principio y del final se recortan solos.' : 'Grabá una palabra o una frase (hasta 8 segundos) o subí un audio. Después elegís en la grilla en qué pasos suena.'}</div>
+      {t.vox?.has && <>
+        <div class="sub">Efecto rápido</div>
+        <div class="chips">{VOX_FX.map(([n, d, mix, ins]) => <button class="chip" title={d} onClick={() => upT(t.id, (x) => { Object.assign(x, mix); x.fx = { ...ins }; })}>{n}</button>)}
+          <button class={'chip' + (t.vox?.rev ? ' on' : '')} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, rev: !x.vox!.rev }; })}>Al revés</button></div>
+        <div class="sub">Recorte y tono</div>
+        <div class="knobs">
+          <Knob label="Inicio" value={from} min={0} max={0.9} def={0} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.vox = { ...x.vox!, from: v }; })} />
+          <Knob label="Largo" value={t.decay} min={0.05} max={1} def={1} color={t.color} fmt={(v) => (v >= 0.99 ? 'todo' : pct(v))} onChange={(v) => upT(t.id, (x) => { x.decay = v; })} />
+          <Knob label="Afinación" value={t.pitch} min={-12} max={12} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
+          <Knob label="Volumen" value={t.vol} min={0} max={1} def={0.8} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.vol = v; })} />
+        </div>
+        <div class="sub">Efectos</div>
+        <div class="knobs">
+          <Knob label="Delay" value={t.dly} min={0} max={1} def={0.3} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.dly = v; })} />
+          <Knob label="Reverb" value={t.rev} min={0} max={1} def={0.25} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.rev = v; })} />
+          <Knob label="Saturación" value={fx.drive ?? 0} min={0} max={1} def={0} color={t.color} fmt={pct} onChange={(v) => setFx('drive', v)} />
+          <Knob label="Chorus" value={fx.chorus ?? 0} min={0} max={1} def={0} color={t.color} fmt={pct} onChange={(v) => setFx('chorus', v)} />
+          <Knob label="Corta graves" value={Math.max(20, fx.hp || 20)} min={20} max={2000} log def={110} color={t.color} fmt={(v) => (v <= 21 ? 'no' : hz(v))} onChange={(v) => setFx('hp', v <= 21 ? 0 : v)} />
+          <Knob label="Corta agudos" value={fx.lp || 20000} min={200} max={20000} log def={20000} color={t.color} fmt={(v) => (v >= 19500 ? 'no' : hz(v))} onChange={(v) => setFx('lp', v >= 19500 ? 0 : v)} />
+        </div>
+      </>}
+      <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
+    </div>
+  );
+}
 function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
   const [bar, setBar] = useState(0), [len, setLen] = useState(2), [onlyName, setOnlyName] = useState(true), [oct, setOct] = useState(0);
   const rows = (onlyName ? nameScale(p, 2) : Array.from({ length: 24 }, (_, i) => 60 + i)).map((m) => m + oct * 12).reverse();

@@ -7,7 +7,7 @@ export type Synth = {
   envAmt: number; fdecay: number; attack: number; decay: number; sustain: number; release: number; gain: number;
   octave?: number; sub?: number; fmRatio?: number; fmIndex?: number; fmDecay?: number; poles4?: boolean;
 };
-export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody';
+export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal';
 export type Note = { s: number; n: number; l: number };
 export type Track = {
   id: string; name: string; color: string; type: TrackType;
@@ -23,6 +23,7 @@ export type Track = {
   bassLen?: number; // bajo: largo de cada nota en pasos
   fx?: { drive?: number; hp?: number; lp?: number; chorus?: number }; // inserto: saturación, pasa altos, pasa bajos, chorus
   groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
+  vox?: { from: number; rev: boolean; has: boolean }; // voz grabada: desde dónde arranca (0..1), al revés, y si ya hay audio
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
@@ -264,6 +265,7 @@ const mkTrack = (id: string, name: string, type: TrackType, sound: string, extra
 const PALETTE = ['#e5655b', '#e98a5f', '#e9c46a', '#d6cf7e', '#a7c973', '#6fbf86', '#e3b04b', '#8fc7a0', '#c97a6e', '#b8d39a', '#f0d99a', '#5fa877'];
 export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   const n = p.tracks.length, id = type + '-' + Date.now().toString(36), color = PALETTE[n % PALETTE.length];
+  if (type === 'vocal') { const t = mkTrack(id, 'Voz', 'vocal', 'vox', { color: '#e5655b', vol: 0.8, rev: 0.25, dly: 0.3, duck: 0.2 }); t.steps = Array(16).fill(0); t.steps[0] = 2; t.fx = { hp: 110 }; t.vox = { from: 0, rev: false, has: false }; return t; }
   if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
   if (type === 'bass') return mkTrack(id, 'Bajo 2', 'bass', sound ?? 'fmBass', { color, vol: 0.7, duck: 0.5 });
   if (type === 'chords') return mkTrack(id, 'Acordes 2', 'chords', sound ?? 'airy', { color, vol: 0.55, rev: 0.4, duck: 0.4, chordMode: 'pad', steps: [1, ...Array(15).fill(0)] });
@@ -406,7 +408,10 @@ export function compile(p: Project) {
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
     let kind = 'synth', synth: Synth | undefined, sample: string | undefined;
-    if (t.type === 'drum') {
+    if (t.type === 'vocal') {
+      kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
+      for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (v) ev[s].push({ v: v === 2 ? 1 : v === 3 ? 0.4 : 0.75 }); }
+    } else if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(p.kit, t.sound);
       const ghost = clamp(0.38 * (1 + e * 1.2), 0.15, 0.7), fillHats = t.id === 'hat' && e > 0.22;
       for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (v) ev[s].push({ v: v === 2 ? 1 : v === 3 ? ghost : 0.72 }); else if (fillHats && s % 2 === 1) ev[s].push({ v: 0.22 + e * 0.3 }); }
@@ -438,7 +443,7 @@ export function compile(p: Project) {
     return {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: t.mute, solo: t.solo,
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
-      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx, groove,
+      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : 0.05,
     };
   });

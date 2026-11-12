@@ -220,3 +220,16 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .macro{display:flex;flex-direction:column;align-items:center;gap:3px}
 .macro b{font-size:11.5px;font-weight:500;color:var(--txt)}
 .macro span{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--mut)}
+
+/* voz */
+.vox-rec{display:flex;gap:8px;flex-wrap:wrap}
+.vox-rec .btn{flex:1;min-width:130px;min-height:46px;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn.rec .dotrec{width:12px;height:12px;border-radius:50%;background:var(--red)}
+.btn.rec .sq{width:11px;height:11px;border-radius:2px;background:var(--bg)}
+.btn.rec.on{background:var(--red);border-color:var(--red);color:var(--bg);font-weight:600}
+.btn.up{position:relative;cursor:pointer}
+.btn.up input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.vox-lvl{height:4px;border-radius:2px;background:#1f1f1f;margin-top:10px;overflow:hidden}
+.vox-lvl i{display:block;height:100%;width:0;background:var(--red);transition:width .05s}
+.vox-wave{height:64px;margin-top:10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:4px}
+.vox-wave svg{width:100%;height:100%;display:block}

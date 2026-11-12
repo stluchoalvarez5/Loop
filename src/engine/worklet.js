@@ -43,8 +43,8 @@ class SVF {
 /* ---------- voces ---------- */
 class SampleVoice {
   constructor() { this.on = false; }
-  start(buf, rate, vel, dec, pan, sr) {
-    this.buf = buf; this.pos = 0; this.rate = rate; this.g = vel; this.on = true;
+  start(buf, rate, vel, dec, pan, sr, from) {
+    this.buf = buf; this.pos = from ? Math.floor(from * buf.length) : 0; this.rate = rate; this.g = vel; this.on = true;
     this.hold = dec >= 0.99 ? 1e12 : buf.length * (0.15 + dec * 0.8) / rate;
     this.fade = Math.exp(-1 / (sr * 0.02)); this.n = 0;
     this.pl = Math.cos((pan + 1) * Math.PI / 4); this.pr = Math.sin((pan + 1) * Math.PI / 4);
@@ -235,8 +235,10 @@ class LoopEngine extends AudioWorkletProcessor {
     const pan = (t.spread || 0) * (Math.random() * 2 - 1);
     if (t.kind === 'sample') {
       const key = ev.k || t.sample, buf = this.samples[key]; if (!buf) return;
+      // voz: corta la anterior (choke) para que una palabra no se pise con la siguiente
+      if (t.choke) for (const x of t.voices) if (x.on && x !== v) x.hold = Math.min(x.hold, x.n + offset);
       const hum = 1 + (Math.random() * 2 - 1) * (t.human || 0);
-      v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr);
+      v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0);
       v.delay = offset;
     } else {
       v.start(t.synth, ev.n, ev.v, ev.l * this.stepLen(), this.sr, pan);

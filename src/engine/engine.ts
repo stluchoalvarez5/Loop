@@ -37,6 +37,7 @@ export class Engine {
       node.port.onmessage = (e) => { const m = e.data; if (m.type === 'step') this.onStep(m.step); else if (m.type === 'meter') this.onMeter(m); };
       this.node = node;
       await this.loadSamples();
+      Object.keys(this.sampleData).filter((k) => k.startsWith('vox:')).forEach((k) => this.send(k, this.sampleData[k])); // voces cargadas antes de arrancar el audio
       if (this.pending) this.update(this.pending);
     })();
     return this.ready;
@@ -57,6 +58,16 @@ export class Engine {
     ([['lofiKick', 'kA909', 0.9], ['lofiClap', 'clap1', 0.8], ['lofiHat', 'hat1', 0.7], ['lofiOpen', 'open', 0.7], ['lofiSnare', 'snare', 0.8]] as const).forEach(([k, src, pk]) => { const d = this.sampleData[src]; if (d) this.send(k, crush(d, pk)); });
   }
 
+  /* voz grabada: se guarda la versión normal y la invertida; si el audio está a otra frecuencia de muestreo, se remuestrea */
+  setVox(id: string, data: Float32Array, sr: number) {
+    const target = this.ctx?.sampleRate ?? 48000, ratio = sr / target;
+    let d = data;
+    if (Math.abs(ratio - 1) > 1e-3) { const n = Math.floor(data.length / ratio); d = new Float32Array(n); for (let i = 0; i < n; i++) { const x = i * ratio, xi = x | 0, f = x - xi; d[i] = data[xi] + ((data[xi + 1] ?? 0) - data[xi]) * f; } }
+    const r = d.slice().reverse();
+    this.sampleData['vox:' + id] = d; this.sampleData['vox:' + id + ':r'] = r;
+    if (this.node) { this.send('vox:' + id, d); this.send('vox:' + id + ':r', r); }
+  }
+  get sr() { return this.ctx?.sampleRate ?? 48000; }
   update(p: Project) {
     if (!this.node) { this.pending = p; return; }
     this.node.port.postMessage({ type: 'project', project: compile(p) });

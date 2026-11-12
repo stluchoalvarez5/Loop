@@ -68,7 +68,7 @@ export function midi(p: Project, only?: string): Uint8Array {
   let ch = 0;
   p.tracks.forEach((t, k) => {
     if (only && t.id !== only) return;
-    if (t.mute) return;
+    if (t.mute || t.type === 'vocal') return; // la voz va como audio en los stems, no como MIDI
     const ct = c.tracks[k], evs: { t: number; d: number[] }[] = [];
     ct.ev.forEach((list: any[], s: number) => list.forEach((e) => {
       const tick = s * T;
@@ -97,7 +97,7 @@ export async function abletonZip(engine: Engine, p: Project, loops: number, prog
   files[`${base} (mezcla).wav`] = [wav(await renderAudio(engine, p, loops), 24), { level: 0 }];
   prog('Armando los MIDI…');
   files['MIDI/Todo (todas las pistas).mid'] = midi(p);
-  p.tracks.forEach((t) => { if (!t.mute && t.type !== 'drum') files[`MIDI/${t.name}.mid`] = midi(p, t.id); });
+  p.tracks.forEach((t) => { if (!t.mute && t.type !== 'drum' && t.type !== 'vocal') files[`MIDI/${t.name}.mid`] = midi(p, t.id); });
   const drumsOnly = { ...p, tracks: p.tracks.map((t) => (t.type === 'drum' ? t : { ...t, mute: true })) };
   files['MIDI/Batería.mid'] = midi(drumsOnly);
   files['LEEME.txt'] = new TextEncoder().encode([
