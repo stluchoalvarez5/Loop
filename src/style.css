@@ -328,3 +328,11 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
   .page.scene{grid-template-areas:"stage name" "stage projs" "stage macros" "kits macros"}
   .a-projs{grid-area:projs}
 }
+/* panel de grupo */
+.grp.ed{border-color:var(--hot)}
+.gpanel{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px;margin:0 0 10px}
+.gp-row{display:flex;gap:8px}
+.gp-row input{flex:1;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:10px;color:var(--txt);font:inherit;font-size:16px;padding:8px 10px;outline:none}
+.gpanel .sub{margin-top:10px}
+.gother{color:var(--mut);font-size:10.5px}
+.strip .gt{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--mut);max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin-top:-2px}

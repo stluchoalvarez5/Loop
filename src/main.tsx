@@ -385,6 +385,7 @@ function App() {
           {p.tracks.map((t) => { const K = (k: keyof typeof AKN) => autoKnob(t, k, upT), vol = K('vol'); return (
             <div class={'strip' + (gMuted(p, t) ? ' gmute' : '')} style={{ '--c': t.color } as any}>
               <div class="nm">{t.name}{vol.mark && <i class="ka">A</i>}</div>
+              <div class="gt">{t.group ? p.groups?.find((g) => g.id === t.group)?.name : ' '}</div>
               <Fader h={land ? 96 : 150} label={'Volumen ' + t.name} value={vol.value} def={0.8} color={t.color} onChange={vol.onChange} />
               <div class="ms">
                 <button class={'m' + (t.mute ? ' on' : '')} {...tap(() => upT(t.id, (x) => { x.mute = !x.mute; }))} aria-label={'Mutear ' + t.name}>M</button>
@@ -767,14 +768,14 @@ const TUTS: Record<TutKey, TutStep[]> = {
   ],
   pat: [
     { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos.', art: artGrid },
-    { title: 'Grupos y orden', body: 'Arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando su nombre lo renombrás o lo borrás. Cada pista elige su grupo al final de su editor. "Ordenar" te deja subir y bajar los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
+    { title: 'Grupos y orden', body: 'Arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando el nombre de un grupo abrís su panel: le cambiás el nombre, tocás los instrumentos para sumarlos o sacarlos, o lo borrás. "Ordenar" te deja subir y bajar los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
     { title: 'Editar una pista', body: 'Tocá el nombre de una pista para abrir su editor abajo: elegís el sonido, el orden de las notas del arpegio, la forma de tocar los acordes y el sonido fino con perillas. Las pistas de batería eligen kit y golpe.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Piano roll', body: 'La melodía son 4 compases que salen de tu nombre, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
     { title: 'Automatización', body: 'Abajo del editor de cada pista está su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
   ],
   mix: [
-    { title: 'Faders y botones', body: 'Cada columna es una pista: el fader es su volumen, M la silencia y S la deja sonando sola. Podés apretar varios M o S al mismo tiempo, y arriba están los grupos para mutear varios instrumentos juntos. Deslizá de costado para ver todas.', art: artBars([R, Y, G, '#e98a5f', '#8fc7a0'], [0.75, 0.5, 0.62, 0.35, 0.8]) },
+    { title: 'Faders y botones', body: 'Cada columna es una pista: el fader es su volumen, M la silencia y S la deja sonando sola. Podés apretar varios M o S al mismo tiempo, y arriba están los grupos para mutear varios instrumentos juntos: tocá el nombre de un grupo para elegir qué instrumentos tiene. Debajo del nombre de cada columna ves su grupo. Deslizá de costado para ver todas.', art: artBars([R, Y, G, '#e98a5f', '#8fc7a0'], [0.75, 0.5, 0.62, 0.35, 0.8]) },
     { title: 'Pan, efectos y sidechain', body: 'Pan la manda a la izquierda o a la derecha. Reverb y Delay le suman ambiente y eco. Sidechain es cuánto se "agacha" la pista cuando pega el bombo: es lo que hace que el loop bombee.', art: artKnobs(['Pan', 'Reverb', 'Delay', 'Sidechain']) },
     { title: 'El inserto de cada pista', body: 'Abajo de cada columna: Saturación (calienta o ensucia), Chorus (la abre y la engorda), Corta graves y Corta agudos (filtros), Bitcrusher (sonido digital roto, de consola vieja) y Phaser (un barrido que gira cada 2 compases). Cada género trae los suyos armados; los podés ajustar a gusto.', art: artKnobs(['Saturación', 'Chorus', 'Bitcrusher', 'Phaser']) },
     { title: 'Grabar movimientos', body: 'Tocá "Grabar movimientos" y, mientras suena, mové el volumen, el pan, la reverb, el delay, la saturación o los filtros: cada movimiento queda grabado en la automatización de esa pista, en el paso exacto. Al soltar, queda lo grabado y se repite en cada vuelta. Las perillas con una A ya tienen automatización. Para corregir, grabás encima o la editás en Patrón.', art: <div class="art-vox"><span class="dot" />Grabar movimientos<svg viewBox="0 0 160 30" aria-hidden="true"><path d="M0 24 C 30 24, 40 6, 70 8 S 120 26, 160 12" fill="none" stroke={Y} stroke-width="2" /></svg></div> },
@@ -813,17 +814,38 @@ function Tutorial({ kind, onClose }: { kind: TutKey; onClose: (never: boolean) =
 /* ---------- grupos de instrumentos ---------- */
 const gMuted = (p: Project, t: Track) => !!(t.group && p.groups?.find((g) => g.id === t.group)?.mute);
 function Groups({ p, up }: { p: Project; up: (fn: (d: Project) => void) => void }) {
-  const gs = p.groups ?? [];
+  const gs = p.groups ?? [], [edit, setEdit] = useState<string | null>(null), [sure, setSure] = useState(false);
   const setG = (id: string, fn: (g: Group) => void) => up((d) => { const g = d.groups?.find((x) => x.id === id); if (g) fn(g); });
-  const rename = (g: Group) => { const n = prompt('Nombre del grupo (dejalo vacío para borrarlo)', g.name); if (n === null) return; if (!n.trim()) up((d) => { d.groups = d.groups?.filter((x) => x.id !== g.id); d.tracks.forEach((t) => { if (t.group === g.id) t.group = undefined; }); }); else setG(g.id, (x) => { x.name = n.trim().slice(0, 18); }); };
+  const add = () => { const id = 'g' + Date.now().toString(36); up((d) => { d.groups = [...(d.groups ?? []), { id, name: 'Grupo ' + ((d.groups?.length ?? 0) + 1) }]; }); setEdit(id); setSure(false); };
+  const eg = gs.find((g) => g.id === edit);
   return (
-    <div class="groups">
-      {gs.map((g) => { const n = p.tracks.filter((t) => t.group === g.id).length; return <div class="grp">
-        <button class="gname" onClick={() => rename(g)} aria-label={'Renombrar o borrar ' + g.name}>{g.name}<small>{n}</small></button>
-        <button class={'m' + (g.mute ? ' on' : '')} aria-label={'Mutear grupo ' + g.name} {...tap(() => setG(g.id, (x) => { x.mute = !x.mute; }))}>M</button>
-        <button class={'s' + (g.solo ? ' on' : '')} aria-label={'Solo grupo ' + g.name} {...tap(() => setG(g.id, (x) => { x.solo = !x.solo; }))}>S</button>
-      </div>; })}
-      <button class="chip" onClick={() => { const n = prompt('Nombre del grupo nuevo', 'Grupo ' + (gs.length + 1)); if (n && n.trim()) up((d) => { d.groups = [...(d.groups ?? []), { id: 'g' + Date.now().toString(36), name: n.trim().slice(0, 18) }]; }); }}>+ Grupo</button>
+    <div class="groups-w">
+      <div class="groups">
+        {gs.map((g) => { const n = p.tracks.filter((t) => t.group === g.id).length; return <div class={'grp' + (edit === g.id ? ' ed' : '')}>
+          <button class="gname" onClick={() => { setEdit(edit === g.id ? null : g.id); setSure(false); }} aria-label={'Editar grupo ' + g.name} aria-expanded={edit === g.id}>{g.name}<small>{n}</small></button>
+          <button class={'m' + (g.mute ? ' on' : '')} aria-label={'Mutear grupo ' + g.name} {...tap(() => setG(g.id, (x) => { x.mute = !x.mute; }))}>M</button>
+          <button class={'s' + (g.solo ? ' on' : '')} aria-label={'Solo grupo ' + g.name} {...tap(() => setG(g.id, (x) => { x.solo = !x.solo; }))}>S</button>
+        </div>; })}
+        <button class="chip" onClick={add}>+ Grupo</button>
+      </div>
+      {/* panel del grupo: nombre, qué instrumentos tiene (tocás para sumar o sacar) y borrar */}
+      {eg && <div class="gpanel">
+        <div class="gp-row">
+          <input value={eg.name} maxLength={18} aria-label="Nombre del grupo" onInput={(e) => { const v = (e.target as HTMLInputElement).value; setG(eg.id, (x) => { x.name = v || 'Grupo'; }); }} />
+          <button class="btn hot" onClick={() => setEdit(null)}>Listo</button>
+        </div>
+        <div class="sub">Instrumentos del grupo (tocá para sumar o sacar)</div>
+        <div class="chips">{p.tracks.map((t) => { const inG = t.group === eg.id, other = t.group && !inG ? gs.find((g) => g.id === t.group)?.name : ''; return (
+          <button class={'chip' + (inG ? ' on' : '')} style={{ '--c': t.color } as any} aria-pressed={inG} {...tap(() => up((d) => { const x = d.tracks.find((y) => y.id === t.id); if (x) x.group = inG ? undefined : eg.id; }))}>
+            {inG ? '✓ ' : ''}{t.name}{other ? <small class="gother"> · {other}</small> : null}
+          </button>); })}</div>
+        <div class="chips" style={{ marginTop: '10px' }}>
+          <button class="chip" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type === 'drum') t.group = eg.id; }))}>Toda la batería</button>
+          <button class="chip" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal') t.group = eg.id; }))}>Todos los sintes</button>
+          <button class={'chip' + (sure ? ' on' : '')} style={{ '--c': 'var(--red)' } as any} onClick={() => { if (!sure) { setSure(true); setTimeout(() => setSure(false), 2500); return; } up((d) => { d.groups = d.groups?.filter((x) => x.id !== eg.id); d.tracks.forEach((t) => { if (t.group === eg.id) t.group = undefined; }); }); setEdit(null); setSure(false); }}>{sure ? 'Tocá de nuevo para borrar' : 'Borrar grupo'}</button>
+        </div>
+        <div class="hint">Cada instrumento está en un solo grupo: si lo sumás acá, sale del otro. Borrar el grupo no borra los instrumentos.</div>
+      </div>}
     </div>
   );
 }
