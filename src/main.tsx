@@ -898,10 +898,12 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
   const rows = (all ? Array.from({ length: 36 }, (_, i) => lo - 12 + i) : inKey).filter((m) => m >= 21 && m <= 108).reverse();
   const notes = t.notes ?? [];
   const at = (s: number, n: number) => notes.find((x) => x.n === n && s >= x.s && s < x.s + x.l);
+  const [hear, setHearS] = useState(() => lsGet('loop.rollHear') === '1');
+  const setHear = (v: boolean) => { setHearS(v); lsSet('loop.rollHear', v ? '1' : '0'); };
   const tap = (i: number, n: number) => {
     const s = bar * 16 + i, hit = at(s, n);
     upT(t.id, (x) => { x.autoMelody = false; x.rollEdited = true; const ns = x.notes ?? []; if (hit) x.notes = ns.filter((y) => !(y.s === hit.s && y.n === hit.n)); else { x.notes = [...ns, { s, n, l: Math.min(len, 64 - s) }]; } });
-    if (!hit) engine.preview(t.id, n);
+    if (!hit && hear) engine.preview(t.id, n); // por defecto no suena al ponerla: solo cuando le toca en el loop (en vivo no se escapa nada)
   };
   return <>
     <div class="sub">Piano roll · compás {bar + 1}</div>
@@ -918,6 +920,7 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
     <div class="chips">{[[1, '1/16'], [2, '1/8'], [4, '1/4'], [8, '1/2'], [16, 'Compás']].map(([v, l]) => <button class={'chip' + (len === v ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setLen(v as number)}>{l}</button>)}</div>
     <div class="chips" style={{ marginTop: '8px' }}>
       <button class={'chip' + (all ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setAll(!all)}>Usar todas las notas</button>
+      <button class={'chip' + (hear ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setHear(!hear)} aria-pressed={hear}>Escuchar al poner notas</button>
       <button class="chip" onClick={() => setOct(Math.max(-4, oct - 1))}>Octava −</button>
       <button class="chip" onClick={() => setOct(Math.min(3, oct + 1))}>Octava +</button>
       <button class="chip" onClick={() => upT(t.id, (x) => { x.autoMelody = false; const src = (x.notes ?? []).filter((y) => Math.floor(y.s / 16) === bar); x.notes = [0, 1, 2, 3].flatMap((b) => src.map((y) => ({ ...y, s: b * 16 + (y.s % 16) }))); })}>Copiar a los 4 compases</button>
@@ -925,7 +928,7 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
       {t.type === 'melody' && <button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.notes = generateMelody(p, String(Date.now())); x.autoMelody = true; })}>Nueva melodía</button>}
       {t.type !== 'melody' && <button class="chip" onClick={() => upT(t.id, (x) => { x.notes = rollFromTrack(p, { ...x, roll: false }); x.rollEdited = false; })}>Traer de nuevo lo generado</button>}
     </div>
-    <div class="hint">Tocá un casillero para poner una nota (suena al agregarla) y tocala de nuevo para sacarla. Podés poner varias notas en el mismo paso para armar acordes. Sin "Usar todas las notas" ves las notas de la tonalidad del loop; con esa opción, el piano entero (con Octava − y + llegás a cualquier altura).</div>
+    <div class="hint">Tocá un casillero para poner una nota y tocala de nuevo para sacarla. La nota suena recién cuando le toca en el loop, así en vivo no se escapa nada; si querés oírla al ponerla (por ejemplo con el loop parado), activá "Escuchar al poner notas". Podés poner varias notas en el mismo paso para armar acordes. Sin "Usar todas las notas" ves las notas de la tonalidad del loop; con esa opción, el piano entero (con Octava − y + llegás a cualquier altura).</div>
   </>;
 }
 
