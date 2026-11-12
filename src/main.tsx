@@ -12,7 +12,7 @@ import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
-import { renderAudio, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
+import { renderAudio, renderArrangement, defaultArrangement, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
 import { migrate, listProjects, loadProject, saveProject, deleteProject, renameProject, duplicate, currentId, newId, titleOf, exportFile, importFile, type Meta } from './store';
 import { registerSW } from 'virtual:pwa-register';
 import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
@@ -611,7 +611,7 @@ function App() {
 
       {tab === 'master' && <div class="page master">
         <Session p={p} rec={rec} secs={recSecs} take={take} toggleRec={toggleRec} clear={() => setTake(null)} />
-        <Export p={p} />
+        <Export p={p} up={up} />
         {adv && <Master p={p} up={up} stats={stats} />}
         {adv && <MidiCard p={p} />}
         <AppCard adv={adv} setAdv={setAdv} />
@@ -990,7 +990,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
   ],
   master: [
     { title: 'Grabar sesión', body: 'El botón rojo (al lado del play, o acá en Master) graba en vivo todo lo que suena mientras tocás: perillas, pistas que prendés y apagás, cambios de género. Hasta 20 minutos. Cuando terminás, la descargás en WAV o MP3.', art: <div class="art-vox"><span class="dot" />● REC 2:41<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 6 + Math.abs(Math.sin(k * 0.9) * Math.cos(k * 0.3)) * 20; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
-    { title: 'Exportar', body: 'Elegí cuántos compases y descargá en WAV (máxima calidad), MP3 (liviano) o el paquete para Ableton, con cada pista por separado, la mezcla y los MIDI. Después lo compartís desde el botón Compartir.', art: artChips(['WAV', 'MP3', 'Ableton'], 0) },
+    { title: 'Exportar', body: 'Con "Tema con escenas" armás el orden de las partes (por ejemplo A A B B C C C C D D C C) y sale un tema entero, de una pasada. Elegí cuántos compases y descargá en WAV (máxima calidad), MP3 (liviano) o el paquete para Ableton, con cada pista por separado, la mezcla y los MIDI. Después lo compartís desde el botón Compartir.', art: artChips(['WAV', 'MP3', 'Ableton'], 0) },
     { title: 'Salida y volumen', body: '(Modo Avanzado) El volumen se mantiene parejo solo: la ganancia automática lleva el loop al nivel elegido (en LUFS) y el limitador evita que sature. Los medidores te muestran cuánto está trabajando cada uno.', art: <div class="art-meter"><div><i style={{ width: '72%' }} /></div><small>-14 LUFS · limitador -1 dB</small></div> },
     { title: 'Controlador MIDI', body: '(Modo Avanzado) Con Chrome (Android o compu) podés enchufar un controlador MIDI: "Conectar controlador", tocás lo que querés manejar (una macro, un volumen, una escena, play…) y movés la perilla o el pad. Las teclas sin asignar tocan la pista elegida. En iPhone no hay MIDI en el navegador.', art: artKnobs(['Energía', 'Espacio', 'Bajo', 'Kick']) },
     { title: 'La app en tu celu', body: 'El panel App muestra la versión, si Loop está instalada y si ya funciona sin conexión, y ahí también elegís modo Simple o Avanzado. "Instalar Loop" la pone en tu pantalla de inicio (en iPhone: Compartir → Agregar a inicio). "Proteger mis loops" le pide al navegador que no borre lo guardado. Cuando hay una versión nueva aparece un aviso arriba.', art: artChips(['Instalada', 'Sin conexión', 'Protegida'], 1) },
@@ -1435,7 +1435,9 @@ function UpdateBar() {
 
 /* ---------- exportar ---------- */
 type Out = { url: string; file: File; name: string; size: number };
-function Export({ p }: { p: Project }) {
+function Export({ p, up }: { p: Project; up: (fn: (d: Project) => void) => void }) {
+  const [song, setSong] = useState(false), seq = p.arrangement?.length ? p.arrangement : defaultArrangement(p), used = SCENES.filter((k) => sceneUsed(p, k));
+  const setSeq = (v: string[]) => up((d) => { d.arrangement = v; });
   const [loops, setLoops] = useState(1), [busy, setBusy] = useState(''), [out, setOut] = useState<Out | null>(null), [err, setErr] = useState('');
   const make = async (kind: 'wav' | 'mp3' | 'zip') => {
     if (busy) return; setErr(''); if (out) { URL.revokeObjectURL(out.url); setOut(null); }
@@ -1443,10 +1445,10 @@ function Export({ p }: { p: Project }) {
       let data: Uint8Array, ext: string, mime: string;
       if (kind === 'zip') { data = await abletonZip(engine, p, loops, setBusy); ext = 'zip'; mime = 'application/zip'; }
       else {
-        setBusy('Renderizando el loop…'); const a = await renderAudio(engine, p, loops);
+        setBusy(song ? 'Renderizando el tema…' : 'Renderizando el loop…'); const a = song ? await renderArrangement(engine, p, seq) : await renderAudio(engine, p, loops);
         if (kind === 'wav') { data = wav(a, 24); ext = 'wav'; mime = 'audio/wav'; } else { setBusy('Codificando MP3…'); data = await mp3(a); ext = 'mp3'; mime = 'audio/mpeg'; }
       }
-      const name = baseName(p) + (kind === 'zip' ? '_ableton' : '') + '.' + ext, file = new File([data as BlobPart], name, { type: mime });
+      const name = baseName(p) + (kind === 'zip' ? '_ableton' : song ? '_tema' : '') + '.' + ext, file = new File([data as BlobPart], name, { type: mime });
       setOut({ url: URL.createObjectURL(file), file, name, size: data.length });
     } catch (e: any) { console.error(e); setErr('No se pudo exportar en este navegador. Probá desde Chrome o Safari actualizados.'); }
     setBusy('');
@@ -1455,12 +1457,20 @@ function Export({ p }: { p: Project }) {
   return (
     <Panel id="export" title="Exportar" icon={Ic.export}>
 
-      <div class="sub" style={{ marginTop: 0 }}>Largo</div>
-      <div class="chips">{[[1, '4 compases'], [2, '8 compases'], [4, '16 compases']].map(([v, l]) => <button class={'chip' + (loops === v ? ' on' : '')} onClick={() => setLoops(v as number)}>{l}</button>)}</div>
+      <div class="seg" style={{ marginBottom: '10px' }}><button class={!song ? 'on' : ''} onClick={() => setSong(false)}>Loop</button><button class={song ? 'on' : ''} onClick={() => setSong(true)}>Tema con escenas</button></div>
+      {!song ? <>
+        <div class="sub" style={{ marginTop: 0 }}>Largo</div>
+        <div class="chips">{[[1, '4 compases'], [2, '8 compases'], [4, '16 compases']].map(([v, l]) => <button class={'chip' + (loops === v ? ' on' : '')} onClick={() => setLoops(v as number)}>{l}</button>)}</div>
+      </> : <>
+        <div class="sub" style={{ marginTop: 0 }}>Orden · {seq.length} vueltas · {fmtT((seq.length * 64 * 60) / p.bpm / 4)}</div>
+        <div class="arr">{seq.map((k, i) => <button class="scn used" aria-label={'Quitar ' + k + ' (posición ' + (i + 1) + ')'} onClick={() => setSeq(seq.filter((_, j) => j !== i))}>{k}</button>)}</div>
+        <div class="chips" style={{ marginTop: '8px' }}>{used.map((k) => <button class="chip" onClick={() => setSeq([...seq, k])}>+ {k}</button>)}
+          <button class="chip" onClick={() => setSeq(defaultArrangement(p))}>Restablecer</button></div>
+      </>}
       <div class="exp-btns">
-        <button class="btn hot" disabled={!!busy} onClick={() => make('wav')}>WAV</button>
-        <button class="btn hot" disabled={!!busy} onClick={() => make('mp3')}>MP3</button>
-        <button class="btn vio" disabled={!!busy} onClick={() => make('zip')}>Para Ableton (.zip)</button>
+        <button class="btn hot" disabled={!!busy || (song && !seq.length)} onClick={() => make('wav')}>WAV</button>
+        <button class="btn hot" disabled={!!busy || (song && !seq.length)} onClick={() => make('mp3')}>MP3</button>
+        {!song && <button class="btn vio" disabled={!!busy} onClick={() => make('zip')}>Para Ableton (.zip)</button>}
       </div>
       {busy && <div class="exp-status"><i class="spin" />{busy}</div>}
       {err && <div class="exp-status" style={{ color: '#ff7b7b' }}>{err}</div>}
@@ -1471,7 +1481,7 @@ function Export({ p }: { p: Project }) {
           {canShare && <button class="btn" onClick={() => (navigator as any).share({ files: [out.file], title: out.name }).catch(() => {})}>Compartir / Guardar en el celu</button>}
         </div>
       </div>}
-      <div class="hint">El WAV y el MP3 empalman perfecto si los ponés en loop. El paquete para Ableton trae un WAV por pista (stems), la mezcla, los MIDI de cada pista y de la batería, y un LEEME con el tempo y la tonalidad: arrastrás todo al compás 1 y queda alineado.</div>
+      <div class="hint">Tema con escenas: cada letra es una vuelta de 4 compases de esa escena, en el orden que armes (tocá una letra para sacarla). Sale todo de una pasada, con las colas de reverb de una parte a la otra, y el volumen se ajusta con la parte más llena, así la intro y el break quedan más bajos que el drop. El WAV y el MP3 de un loop empalman perfecto si los ponés en loop. El paquete para Ableton trae un WAV por pista (stems), la mezcla, los MIDI de cada pista y de la batería, y un LEEME con el tempo y la tonalidad: arrastrás todo al compás 1 y queda alineado.</div>
     </Panel>
   );
 }

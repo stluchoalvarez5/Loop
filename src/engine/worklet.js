@@ -358,6 +358,7 @@ class LoopEngine extends AudioWorkletProcessor {
     const o = options && options.processorOptions;
     if (o && o.export) {
       this.samples = o.samples; this.onMsg({ type: 'project', project: o.project }); this.quiet = true; this.freezeAt = o.freezeAt || 0;
+      this.arr = o.arr || null; this.arrI = -1; // tema: una escena compilada por vuelta, después de la vuelta de calentamiento
       this.playing = true; this.pos = 0; this.next = 0; this.nextT = 0;
     }
   }
@@ -442,7 +443,7 @@ class LoopEngine extends AudioWorkletProcessor {
           for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off); }
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
-          if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; if (this.pendingProj) { const pp = this.pendingProj; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; } }
+          if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; if (this.pendingProj) { const pp = this.pendingProj; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; } else if (this.arr) { const np = this.arr[++this.arrI]; if (np) { this.onMsg({ type: 'project', project: np }); tracks = this.tracks; } } }
           this.nextT = this.next * sl + swOff(this.next);
         }
         this.pos++;

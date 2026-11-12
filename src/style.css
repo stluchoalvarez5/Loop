@@ -582,3 +582,4 @@ html,body{font-family:'Inter',system-ui,sans-serif;font-size:14px}
   .sheet-bg{align-items:center}
   .sheet{border-radius:6px;max-height:92vh}
 }
+.arr{display:flex;flex-wrap:wrap;gap:4px}

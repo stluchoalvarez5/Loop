@@ -189,7 +189,8 @@ export type Project = {
   edited?: boolean;
   scene?: string; scenes?: Record<string, SceneSnap>; // escenas A..D: variaciones del patrón que cambian al terminar la vuelta
   chain?: boolean; // encadenar escenas: al terminar cada vuelta pasa a la siguiente que tenga algo
-  fill?: boolean; // redoble de batería en los últimos 2 tiempos del compás 4 // se tocó algo después de generarlo: generar otro nombre no lo pisa, va a un lugar nuevo
+  fill?: boolean;
+  arrangement?: string[]; // orden de escenas para exportar el tema (una vuelta de 4 compases por letra) // redoble de batería en los últimos 2 tiempos del compás 4 // se tocó algo después de generarlo: generar otro nombre no lo pisa, va a un lugar nuevo
   macros?: { energy: number; dark: number; space: number; groove: number }; // 0..1, 0.5 = como lo dejó el género
   macroAuto?: Partial<Record<MacroKey, number[]>>; // automatización de las macros: 64 valores 0..1, mandan sobre el fader
   harmony?: 'tonal' | 'puro'; // tonal: se busca la tonalidad del nombre; puro: solo las notas exactas de las letras

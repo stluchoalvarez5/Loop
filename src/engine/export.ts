@@ -1,7 +1,7 @@
 /* Exportación: renderiza el loop con el mismo motor (worklet) dentro de un OfflineAudioContext
    y lo codifica a WAV, MP3 o un paquete para Ableton (stems WAV + MIDI). */
 import workletUrl from './worklet.js?url';
-import { compile, clean, type Project } from '../model';
+import { compile, clean, switchScene, sceneUsed, SCENES, type Project } from '../model';
 import type { Engine } from './engine';
 
 export type Progress = (msg: string) => void;
@@ -26,6 +26,27 @@ export async function renderAudio(engine: Engine, p: Project, loops: number, ste
   node.connect(ctx.destination);
   const buf = await ctx.startRendering();
   return { L: buf.getChannelData(0).slice(start, len), R: buf.getChannelData(1).slice(start, len), sr };
+}
+
+/* Tema: una secuencia de escenas (una vuelta de 4 compases cada una) en una sola pasada, así las colas de reverb y delay
+   pasan de una parte a la otra. La ganancia automática se calibra con la escena más llena y queda fija: la intro y el break
+   suenan más bajos que el drop, como en un tema de verdad. */
+export const defaultArrangement = (p: Project) => { const used = SCENES.filter((k) => sceneUsed(p, k)); return used.flatMap((k) => [k, k]); };
+export async function renderArrangement(engine: Engine, p: Project, seq: string[]): Promise<Audio> {
+  await engine.init();
+  const sr = engine.ctx!.sampleRate, L1 = loopSamples(p, sr), start = Math.round(L1), len = Math.round((1 + seq.length) * L1);
+  const comp: Record<string, any> = {}, live: Record<string, number> = {};
+  for (const k of new Set(seq)) { const d: Project = JSON.parse(JSON.stringify(p)); switchScene(d, k); const c: any = compile(d); comp[k] = c; live[k] = c.tracks.filter((t: any) => !t.mute).length; }
+  const warmK = Object.keys(comp).sort((a, b) => live[b] - live[a])[0];
+  const ctx = new OfflineAudioContext(2, len, sr);
+  await ctx.audioWorklet.addModule(workletUrl);
+  const node = new AudioWorkletNode(ctx, 'loop-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { export: true, project: comp[warmK], arr: seq.map((k) => comp[k]), samples: engine.sampleData, freezeAt: start } });
+  node.connect(ctx.destination);
+  const buf = await ctx.startRendering();
+  // final: medio segundo de fundido para que no corte seco
+  const L = buf.getChannelData(0).slice(start, len), R = buf.getChannelData(1).slice(start, len), f = Math.min(L.length, Math.round(sr * 0.5));
+  for (let i = 0; i < f; i++) { const g = i / f; L[L.length - 1 - i] *= g; R[R.length - 1 - i] *= g; }
+  return { L, R, sr };
 }
 
 export function wav({ L, R, sr }: Audio, bits: 16 | 24 = 24): Uint8Array {
