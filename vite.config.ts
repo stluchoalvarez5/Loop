@@ -7,18 +7,18 @@ export default defineConfig({
   plugins: [
     preact(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt', // una versión nueva se avisa y se instala con un toque (no recarga sola en medio de un loop)
       includeAssets: ['icons/*.png', 'samples/*.WAV', 'samples/*.TXT'],
       manifest: {
         name: 'Loop', short_name: 'Loop', description: 'Estudio de loops: batería, sintes, mixer y master.',
-        lang: 'es', start_url: './', display: 'standalone', orientation: 'any', background_color: '#0a0517', theme_color: '#0a0517',
+        id: './', scope: './', lang: 'es', dir: 'ltr', start_url: './', display: 'standalone', orientation: 'any', background_color: '#0a0a0a', theme_color: '#0a0a0a', categories: ['music', 'entertainment'],
         icons: [
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: { globPatterns: ['**/*.{js,css,html,png,WAV,TXT,woff2}'], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
+      workbox: { globPatterns: ['**/*.{js,css,html,png,svg,WAV,TXT,woff2,webmanifest}'], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, cleanupOutdatedCaches: true, navigateFallback: 'index.html' },
     }),
   ],
 });

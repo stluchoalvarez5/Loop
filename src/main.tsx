@@ -10,18 +10,76 @@ import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
 import { renderAudio, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
+import { migrate, listProjects, loadProject, saveProject, deleteProject, renameProject, duplicate, currentId, newId, titleOf, exportFile, importFile, type Meta } from './store';
+import { registerSW } from 'virtual:pwa-register';
 import {
-  rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
 const clone = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
-const load = (): Project | null => {
-  try { const s = localStorage.getItem('loop.project'); if (!s) return null; const p: Project = JSON.parse(s); if (!GENRES[p.genre]) applyGenre(p, 'prog'); if (!p.groups) { p.groups = [{ id: 'drums', name: 'Batería' }]; p.tracks.forEach((t) => { if (t.type === 'drum') t.group = 'drums'; }); } p.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal' && !SYNTHS[t.sound]) t.sound = t.type === 'bass' ? 'bassSaw' : t.type === 'chords' ? 'strings' : 'pluck'; }); return p; } catch { return null; }
+/* proyectos: se abre el último que usaste. Se guarda solo, un instante después de cada cambio (no en cada movimiento de perilla) */
+const load = (): Project | null => { migrate(); return loadProject(currentId()) ?? loadProject(listProjects()[0]?.id ?? null); };
+let saveT: any = 0, saveP: Project | null = null, onSaveFail: () => void = () => {};
+const flushSave = () => { clearTimeout(saveT); saveT = 0; if (saveP && !saveProject(saveP)) onSaveFail(); saveP = null; };
+const save = (p: Project) => { saveP = p; clearTimeout(saveT); saveT = setTimeout(flushSave, 400); };
+if (typeof document !== 'undefined') { document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); }); window.addEventListener('pagehide', flushSave); }
+/* carga en el motor las voces grabadas de un proyecto (están en IndexedDB) */
+const loadVoxes = async (p: Project) => {
+  const vs = p.tracks.filter((t) => t.type === 'vocal' && t.vox?.has); if (!vs.length) return;
+  await engine.init(); for (const t of vs) { const v = await loadVox(t.id).catch(() => undefined); if (v) engine.setVox(t.id, v.data, v.sr); }
 };
-const save = (p: Project) => { try { localStorage.setItem('loop.project', JSON.stringify(p)); } catch { /* sin almacenamiento */ } };
+
+/* ---------- instalación y modo sin conexión ---------- */
+const pwa = { prompt: null as any, update: null as null | (() => void), listeners: new Set<() => void>() };
+const pwaPing = () => pwa.listeners.forEach((f) => f());
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pwa.prompt = e; pwaPing(); });
+  window.addEventListener('appinstalled', () => { pwa.prompt = null; pwaPing(); });
+  // "prompt": una versión nueva no recarga sola (cortaría lo que está sonando); se avisa y se actualiza con un toque
+  const upd = registerSW({ immediate: true, onNeedRefresh: () => { pwa.update = () => upd(true); pwaPing(); }, onOfflineReady: () => pwaPing() });
+}
+const usePwa = () => { const [, f] = useState(0); useEffect(() => { const g = () => f((x) => x + 1); pwa.listeners.add(g); return () => { pwa.listeners.delete(g); }; }, []); return pwa; };
+
+/* ---------- grabar movimientos ----------
+   Con "Grabar movimientos" activado y el loop sonando, lo que movés en el Mixer o en las Macros se escribe en la automatización,
+   en el paso que está sonando (rellena los pasos que se saltean si movés rápido). Al soltar, queda lo grabado. */
+const REC = { on: false };
+const recLast: Record<string, { s: number; t: number }> = {};
+const recording = () => REC.on && engine.playing;
+const stepNow = () => ((engine.beat.step % 64) + 64) % 64;
+function writeRec(arr: number[], id: string, v: number) {
+  const s = stepNow(), now = performance.now(), L = recLast[id];
+  let i = L && now - L.t < 400 ? L.s : s; arr[i] = v;
+  while (i !== s) { i = (i + 1) % 64; arr[i] = v; }
+  recLast[id] = { s, t: now };
+}
+/* perillas de pista que se pueden automatizar: valor de la perilla ⇄ valor 0..1 de la automatización */
+type AK = { k: AutoKey; get: (t: Track) => number; set: (t: Track, v: number) => void; norm: (v: number, t: Track) => number; den: (a: number, t: Track) => number };
+const AKN: Record<string, AK> = {
+  pan: { k: 'pan', get: (t) => t.pan, set: (t, v) => { t.pan = v; }, norm: (v) => (v + 1) / 2, den: (a) => a * 2 - 1 },
+  rev: { k: 'rev', get: (t) => t.rev, set: (t, v) => { t.rev = v; }, norm: (v) => v, den: (a) => a },
+  dly: { k: 'dly', get: (t) => t.dly, set: (t, v) => { t.dly = v; }, norm: (v) => v, den: (a) => a },
+  drive: { k: 'drive', get: (t) => t.fx?.drive ?? 0, set: (t, v) => { t.fx = { ...t.fx, drive: v }; }, norm: (v) => v, den: (a) => a },
+  hp: { k: 'hp', get: (t) => Math.max(20, t.fx?.hp || 20), set: (t, v) => { t.fx = { ...t.fx, hp: v <= 21 ? 0 : v }; }, norm: (v) => (v <= 21 ? 0 : Math.log(v / 20) / Math.log(100)), den: (a) => (a < 0.01 ? 20 : 20 * Math.pow(100, a)) },
+  lp: { k: 'lp', get: (t) => t.fx?.lp || 20000, set: (t, v) => { t.fx = { ...t.fx, lp: v >= 19500 ? 0 : v }; }, norm: (v) => Math.max(0, Math.min(1, v >= 19500 ? 1 : Math.log(v / 200) / Math.log(100))), den: (a) => (a >= 0.995 ? 20000 : 200 * Math.pow(100, a)) },
+  // el volumen grabado baja desde donde está el fader (la automatización multiplica al fader)
+  vol: { k: 'vol', get: (t) => t.vol, set: (t, v) => { t.vol = v; }, norm: (v, t) => (t.vol > 0.001 ? Math.min(1, (v / t.vol) ** 2) : 1), den: (a, t) => t.vol * Math.sqrt(a) },
+};
+/* valor que muestra la perilla (si tiene automatización, el del paso actual) y qué hace al moverla */
+function autoKnob(t: Track, key: keyof typeof AKN, upT: (id: string, fn: (t: Track) => void) => void) {
+  const A = AKN[key], data = t.auto?.[A.k];
+  return {
+    value: data ? A.den(data[stepNow()] ?? 0, t) : A.get(t), mark: !!data,
+    onChange: (v: number) => upT(t.id, (x) => {
+      if (!recording()) { A.set(x, v); return; }
+      const arr = x.auto?.[A.k] ? [...x.auto[A.k]!] : Array(64).fill(+A.norm(A.get(x), x).toFixed(3));
+      writeRec(arr, x.id + ':' + A.k, +A.norm(v, x).toFixed(3)); x.auto = { ...x.auto, [A.k]: arr };
+    }),
+  };
+}
 
 /* ---------- controles ---------- */
 function arc(a0: number, a1: number) { const r = 21, c = 27, p = (a: number) => [(c + r * Math.sin(a * Math.PI / 180)).toFixed(2), (c - r * Math.cos(a * Math.PI / 180)).toFixed(2)]; const s = p(a0), e = p(a1); return `M${s[0]} ${s[1]} A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${e[0]} ${e[1]}`; }
@@ -45,8 +103,8 @@ function useGrab(instant: boolean, h: { start: (e: PointerEvent) => void; move: 
     onContextMenu: (e: Event) => e.preventDefault(),
   };
 }
-type KP = { label: string; value: number; min: number; max: number; onChange: (v: number) => void; fmt?: (v: number) => string; log?: boolean; color?: string; def?: number; step?: number; instant?: boolean };
-function Knob({ label, value, min, max, onChange, fmt = (v) => v.toFixed(2), log, color = 'var(--vio)', def, step, instant = false }: KP) {
+type KP = { label: string; value: number; min: number; max: number; onChange: (v: number) => void; fmt?: (v: number) => string; log?: boolean; color?: string; def?: number; step?: number; instant?: boolean; mark?: boolean };
+function Knob({ label, value, min, max, onChange, fmt = (v) => v.toFixed(2), log, color = 'var(--vio)', def, step, instant = false, mark }: KP) {
   const norm = (v: number) => log ? Math.log(v / min) / Math.log(max / min) : (v - min) / (max - min);
   const den = (n: number) => { let v = log ? min * Math.pow(max / min, n) : min + n * (max - min); if (step) v = Math.round(v / step) * step; return v; };
   const st = useRef({ y: 0, n: 0 });
@@ -62,7 +120,7 @@ function Knob({ label, value, min, max, onChange, fmt = (v) => v.toFixed(2), log
       <svg viewBox="0 0 54 54"><path d={arc(-135, 135)} stroke="#2a2a2a" stroke-width="5" fill="none" stroke-linecap="round" />
         {n > 0.004 && <path d={arc(-135, a)} stroke={color} stroke-width="5" fill="none" stroke-linecap="round" />}
         <circle cx="27" cy="27" r="14" fill="#1d1d1d" /><line x1="27" y1="27" x2="27" y2="15" stroke="#ececec" stroke-width="2.5" stroke-linecap="round" transform={`rotate(${a} 27 27)`} /></svg>
-      <div class="kl">{label}</div><div class="kv">{fmt(value)}</div>
+      <div class="kl">{label}{mark && <i class="ka" title="Tiene automatización">A</i>}</div><div class="kv">{fmt(value)}</div>
     </div>
   );
 }
@@ -99,6 +157,7 @@ const hz = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : Math.round(
 /* ---------- app ---------- */
 function App() {
   const [p, setP] = useState<Project>(() => load() ?? projectFromName('Loop'));
+  const [recA, setRecA] = useState(false); // grabar movimientos
   const [tab, setTab] = useState<'scene' | 'pat' | 'mix' | 'master'>('scene');
   const [vis, setVis] = useState<StageMode>('wave');
   const [order, setOrder] = useState(false);
@@ -138,13 +197,11 @@ function App() {
   const [stats, setStats] = useState({ lufs: -70, auto: 0, gr: 0 });
   const vuRefs = useRef<Record<string, HTMLElement | null>>({});
 
-  const up = (fn: (d: Project) => void) => setP((cur) => { const d = clone(cur); fn(d); engine.update(d); save(d); return d; });
-  useEffect(() => { engine.update(p); save(p); }, []);
-  // voces grabadas guardadas en este celu: se cargan al abrir
-  useEffect(() => {
-    const vs = p.tracks.filter((t) => t.type === 'vocal' && t.vox?.has); if (!vs.length) return;
-    (async () => { await engine.init(); for (const t of vs) { const v = await loadVox(t.id).catch(() => undefined); if (v) engine.setVox(t.id, v.data, v.sr); } })();
-  }, []);
+  const up = (fn: (d: Project) => void) => setP((cur) => { const d = clone(cur); fn(d); d.edited = true; engine.update(d); save(d); return d; });
+  useEffect(() => { onSaveFail = () => flash('No queda lugar en el celu para guardar: borrá algún loop en Mis loops.', 5000); engine.update(p); save(p); loadVoxes(p); }, []);
+  // abrir otro proyecto: suena al instante (si estaba sonando, sigue) y se cargan sus voces
+  const openProject = (np: Project) => { flushSave(); setP(np); setNameIn(np.name === 'Loop' ? '' : np.name); setVariant(0); engine.update(np); save(np); loadVoxes(np); if (!np.tracks.some((t) => t.id === sel)) setSel(np.tracks[0]?.id ?? ''); };
+  const toggleRecA = () => { const on = !REC.on; REC.on = on; setRecA(on); if (on) { if (!engine.playing) toggle(); flash('Grabando movimientos: lo que muevas en el Mixer o en las Macros queda en la automatización.', 3500); } };
   useEffect(() => {
     let lastStat = 0;
     engine.onStep = (s) => {
@@ -177,7 +234,10 @@ function App() {
     ['pointerdown', 'touchend', 'keydown'].forEach((e) => window.addEventListener(e, f, true));
   }, []);
   const fromName = async (v = 0, word?: string) => {
-    const np = projectFromName(word ?? (nameIn || 'Loop'), v, v ? p.genre : 'deep'); setVariant(v); setP(np); engine.update(np); save(np);
+    // si no tocaste nada, el loop nuevo ocupa el mismo lugar (el nombre lo vuelve a armar igual); si lo editaste, el nuevo va a un lugar aparte
+    const np = projectFromName(word ?? (nameIn || 'Loop'), v, v ? p.genre : 'deep'); np.id = p.edited ? newId() : p.id; np.edited = false;
+    if (p.edited) flash('"' + titleOf(p) + '" quedó guardado en Mis loops');
+    flushSave(); setVariant(v); setP(np); engine.update(np); save(np);
     if (!engine.playing) { await engine.play(np); setPlaying(true); checkAudio(); }
   };
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
@@ -243,15 +303,20 @@ function App() {
           </div>
         </div>
 
+        <Projects p={p} open={openProject} flash={flash} />
         <div class="card a-macros">
-          <div class="ct"><h3>Macros</h3><button class="chip" onClick={() => up((d) => { d.macros = { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }; })}>Centrar</button></div>
+          <div class="ct"><h3>Macros</h3><RecChip on={recA} toggle={toggleRecA} /><button class="chip" onClick={() => up((d) => { d.macros = { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }; })}>Centrar</button></div>
           <div class="macros">
-            {MACROS.map((m) => { const v = (p.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 })[m.k]; return <div class="macro">
-              <Fader h={land ? 92 : 128} label={m.label} value={v} def={0.5} color={m.color} onChange={(x) => up((d) => { d.macros = { ...(d.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }), [m.k]: x }; })} />
-              <b style={{ color: m.color }}>{m.label}</b><span>{Math.round(v * 100)}</span>
+            {MACROS.map((m) => { const base = (p.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 })[m.k], ma = p.macroAuto?.[m.k], v = ma ? ma[stepNow()] ?? base : base; return <div class="macro">
+              <Fader h={land ? 92 : 128} label={m.label} value={v} def={0.5} color={m.color} onChange={(x) => up((d) => {
+                if (recording()) { const arr = d.macroAuto?.[m.k] ? [...d.macroAuto[m.k]!] : Array(64).fill(+base.toFixed(3)); writeRec(arr, 'macro:' + m.k, +x.toFixed(3)); d.macroAuto = { ...d.macroAuto, [m.k]: arr }; return; }
+                d.macros = { ...(d.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }), [m.k]: x };
+              })} />
+              <b style={{ color: m.color }}>{m.label}{ma && <i class="ka">A</i>}</b><span>{Math.round(v * 100)}</span>
             </div>; })}
           </div>
           <div class="hint">Energía: más brillo, saturación y hats. Oscuridad: cierra los filtros. Espacio: más reverb y delay. Groove: más swing y arrastre. Al medio queda como lo armó el género.</div>
+          <MacroAuto p={p} up={up} playing={playing} />
         </div>
         <div class="card a-auto">
           <div class="ct"><h3>Automatización rápida</h3></div>
@@ -314,37 +379,42 @@ function App() {
       {noAudio && <div class="toast">Este navegador no puede reproducir el audio de la app. En iPhone hace falta iOS 14.5 o más nuevo: actualizá el sistema o probá con otro navegador.</div>}
 
       {tab === 'mix' && <div class="card">
-        <div class="ct"><h3>Mixer</h3></div>
+        <div class="ct"><h3>Mixer</h3><RecChip on={recA} toggle={toggleRecA} /></div>
         <Groups p={p} up={up} />
         <div class="mixer">
-          {p.tracks.map((t) => (
+          {p.tracks.map((t) => { const K = (k: keyof typeof AKN) => autoKnob(t, k, upT), vol = K('vol'); return (
             <div class={'strip' + (gMuted(p, t) ? ' gmute' : '')} style={{ '--c': t.color } as any}>
-              <div class="nm">{t.name}</div>
-              <Fader h={land ? 96 : 150} label={'Volumen ' + t.name} value={t.vol} def={0.8} color={t.color} onChange={(v) => upT(t.id, (x) => { x.vol = v; })} />
+              <div class="nm">{t.name}{vol.mark && <i class="ka">A</i>}</div>
+              <Fader h={land ? 96 : 150} label={'Volumen ' + t.name} value={vol.value} def={0.8} color={t.color} onChange={vol.onChange} />
               <div class="ms">
                 <button class={'m' + (t.mute ? ' on' : '')} {...tap(() => upT(t.id, (x) => { x.mute = !x.mute; }))} aria-label={'Mutear ' + t.name}>M</button>
                 <button class={'s' + (t.solo ? ' on' : '')} {...tap(() => upT(t.id, (x) => { x.solo = !x.solo; }))} aria-label={'Solo ' + t.name}>S</button>
               </div>
               <div class="kn4">
-              <div class="mini"><Knob label="Pan" value={t.pan} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.02 ? 'C' : (v < 0 ? 'L' : 'R') + Math.round(Math.abs(v) * 100))} onChange={(v) => upT(t.id, (x) => { x.pan = v; })} /></div>
-              <div class="mini"><Knob label="Reverb" value={t.rev} min={0} max={1} def={0} color="var(--mint)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.rev = v; })} /></div>
-              <div class="mini"><Knob label="Delay" value={t.dly} min={0} max={1} def={0} color="var(--mint)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.dly = v; })} /></div>
+              <div class="mini"><Knob label="Pan" {...K('pan')} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.02 ? 'C' : (v < 0 ? 'L' : 'R') + Math.round(Math.abs(v) * 100))} /></div>
+              <div class="mini"><Knob label="Reverb" {...K('rev')} min={0} max={1} def={0} color="var(--mint)" fmt={pct} /></div>
+              <div class="mini"><Knob label="Delay" {...K('dly')} min={0} max={1} def={0} color="var(--mint)" fmt={pct} /></div>
               {t.id === 'kick' && <div class="mini" />}
               {t.id !== 'kick' && <div class="mini"><Knob label="Sidechain" value={t.duck} min={0} max={1} def={0} color="var(--hot)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.duck = v; })} /></div>}
               </div>
               <div class="kn4">
-              <div class="mini"><Knob label="Saturación" value={t.fx?.drive ?? 0} min={0} max={1} def={0} color="var(--hot)" fmt={pct} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, drive: v }; })} /></div>
+              <div class="mini"><Knob label="Saturación" {...K('drive')} min={0} max={1} def={0} color="var(--hot)" fmt={pct} /></div>
               <div class="mini"><Knob label="Chorus" value={t.fx?.chorus ?? 0} min={0} max={1} def={0} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, chorus: v }; })} /></div>
-              <div class="mini"><Knob label="Corta graves" value={Math.max(20, t.fx?.hp || 20)} min={20} max={2000} log def={20} color={t.color} fmt={(v) => (v <= 21 ? 'no' : hz(v))} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, hp: v <= 21 ? 0 : v }; })} /></div>
-              <div class="mini"><Knob label="Corta agudos" value={t.fx?.lp || 20000} min={200} max={20000} log def={20000} color={t.color} fmt={(v) => (v >= 19500 ? 'no' : hz(v))} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, lp: v >= 19500 ? 0 : v }; })} /></div>
+              <div class="mini"><Knob label="Corta graves" {...K('hp')} min={20} max={2000} log def={20} color={t.color} fmt={(v) => (v <= 21 ? 'no' : hz(v))} /></div>
+              <div class="mini"><Knob label="Corta agudos" {...K('lp')} min={200} max={20000} log def={20000} color={t.color} fmt={(v) => (v >= 19500 ? 'no' : hz(v))} /></div>
+              </div>
+              <div class="kn4">
+              <div class="mini"><Knob label="Bitcrusher" value={t.fx?.crush ?? 0} min={0} max={1} def={0} color="var(--red)" fmt={(v) => (v < 0.01 ? 'no' : pct(v))} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, crush: v < 0.01 ? 0 : v }; })} /></div>
+              <div class="mini"><Knob label="Phaser" value={t.fx?.phaser ?? 0} min={0} max={1} def={0} color={t.color} fmt={(v) => (v < 0.01 ? 'no' : pct(v))} onChange={(v) => upT(t.id, (x) => { x.fx = { ...x.fx, phaser: v < 0.01 ? 0 : v }; })} /></div>
               </div>
             </div>
-          ))}
+          ); })}
         </div>
-        <div class="hint">Deslizá para recorrer el mixer. Para mover un control, mantené el dedo quieto un instante sobre él hasta que se ilumine y después arrastrá. Doble toque lo vuelve a su valor inicial. Sidechain: cuánto se "agacha" la pista cuando pega el kick. Abajo, el inserto de cada pista: saturación, chorus y filtros que cortan graves o agudos (cada género los trae armados).</div>
+        <div class="hint">Deslizá para recorrer el mixer. Para mover un control, mantené el dedo quieto un instante sobre él hasta que se ilumine y después arrastrá. Doble toque lo vuelve a su valor inicial. Sidechain: cuánto se "agacha" la pista cuando pega el kick. Abajo, el inserto de cada pista: saturación, chorus, filtros que cortan graves o agudos, bitcrusher (sonido digital roto, de consola vieja) y phaser (un barrido que gira cada 2 compases). Con "Grabar movimientos" y el loop sonando, lo que muevas en volumen, pan, reverb, delay, saturación y filtros queda grabado en la automatización (las perillas con A ya tienen).</div>
       </div>}
 
-      {tab === 'master' && <div class="page master"><Session p={p} rec={rec} secs={recSecs} take={take} toggleRec={toggleRec} clear={() => setTake(null)} /><Master p={p} up={up} stats={stats} /></div>}
+      {tab === 'master' && <div class="page master"><Session p={p} rec={rec} secs={recSecs} take={take} toggleRec={toggleRec} clear={() => setTake(null)} /><Master p={p} up={up} stats={stats} /><AppCard /></div>}
+      <UpdateBar />
 
       {guide && <Tutorial key={guide} kind={guide} onClose={closeGuide} />}
       <nav class="nav">
@@ -447,6 +517,8 @@ const VOX_FX: [string, string, Partial<Track>, Track['fx']][] = [
   ['Radio', 'Telefónica', { rev: 0.1, dly: 0.25 }, { hp: 700, lp: 3200, drive: 0.35 }],
   ['Robot', 'Chorus y delay', { rev: 0.2, dly: 0.35 }, { hp: 150, chorus: 0.8 }],
   ['Sucia', 'Distorsión', { rev: 0.15, dly: 0.2 }, { hp: 180, drive: 0.75 }],
+  ['Consola', 'Bitcrusher', { rev: 0.15, dly: 0.25 }, { hp: 200, lp: 7000, crush: 0.6 }],
+  ['Espacial', 'Phaser y eco', { rev: 0.4, dly: 0.45 }, { hp: 150, phaser: 0.75 }],
 ];
 /* ---------- automatización ---------- */
 const MEL_T = (d: Project) => d.tracks.filter((t) => t.type !== 'drum');
@@ -456,50 +528,80 @@ const QUICK_AUTO: [string, (d: Project) => void][] = [
   ['Filtro que respira', (d) => MEL_T(d).forEach((t) => setAuto(t, 'lp', autoShape('wave', t.type === 'bass' ? 0.55 : 0.4, 1)))],
   ['Delay al final', (d) => MEL_T(d).filter((t) => t.type !== 'bass').forEach((t) => setAuto(t, 'dly', autoShape('last', t.dly, 0.85)))],
   ['Bombeo', (d) => MEL_T(d).filter((t) => t.type === 'chords' || t.type === 'arp').forEach((t) => setAuto(t, 'vol', autoShape('pump', 0.25, 1)))],
-  ['Borrar todo', (d) => d.tracks.forEach((t) => { t.auto = undefined; })],
+  ['Energía que crece', (d) => { d.macroAuto = { ...d.macroAuto, energy: autoShape('up', 0.25, 0.85) }; }],
+  ['Espacio al final', (d) => { d.macroAuto = { ...d.macroAuto, space: autoShape('last', (d.macros?.space ?? 0.5), 0.95) }; }],
+  ['Borrar todo', (d) => { d.tracks.forEach((t) => { t.auto = undefined; }); d.macroAuto = undefined; }],
 ];
-function AutoEditor({ t, upT, playing }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void; playing: boolean }) {
-  const [k, setK] = useState<AutoKey>('lp'), [touch, setTouch] = useState<string>('');
-  const P = AUTO_PARAMS.find((x) => x.k === k)!, data = t.auto?.[k];
+/* línea de automatización: se dibuja con el dedo (64 pasos); la usan las pistas y las macros */
+function AutoLane({ data, color, label, fmt, base, playing, onChange, hint = 'Dibujá con el dedo o elegí una forma' }: { data?: number[]; color: string; label: string; fmt: (v: number) => string; base: () => number; playing: boolean; onChange: (d: number[]) => void; hint?: string }) {
+  const [touch, setTouch] = useState<string>('');
   const laneRef = useRef<HTMLDivElement>(null), headRef = useRef<HTMLElement>(null), draft = useRef<number[] | null>(null), last = useRef(-1), raf = useRef(0);
-  // valor de partida si todavía no hay automatización: lo que la pista tiene hoy
-  const base = () => { const f = t.fx ?? {}; const v = k === 'lp' ? (f.lp ? Math.log(f.lp / 200) / Math.log(100) : 1) : k === 'hp' ? (f.hp ? Math.log(f.hp / 20) / Math.log(100) : 0) : k === 'vol' ? 1 : k === 'rev' ? t.rev : k === 'dly' ? t.dly : k === 'drive' ? f.drive ?? 0 : (t.pan + 1) / 2; return Math.max(0, Math.min(1, v)); };
-  const commit = () => { const d = draft.current; if (!d) return; cancelAnimationFrame(raf.current); raf.current = requestAnimationFrame(() => upT(t.id, (x) => setAuto(x, k, [...d]))); };
+  const commit = () => { const d = draft.current; if (!d) return; cancelAnimationFrame(raf.current); raf.current = requestAnimationFrame(() => onChange([...d])); };
   const at = (e: PointerEvent) => { const r = laneRef.current!.getBoundingClientRect(); return { i: Math.max(0, Math.min(63, Math.floor(((e.clientX - r.left) / r.width) * 64))), v: Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height)) }; };
   const paint = (e: PointerEvent) => {
     const { i, v } = at(e), d = draft.current!; const a = last.current < 0 ? i : last.current;
     for (let j = Math.min(a, i); j <= Math.max(a, i); j++) d[j] = +v.toFixed(3); // rellena el hueco si el dedo va rápido
-    last.current = i; setTouch(P.fmt(v)); commit();
+    last.current = i; setTouch(fmt(v)); commit();
   };
   useEffect(() => {
     if (!playing) { if (headRef.current) headRef.current.style.opacity = '0'; return; }
     let id = 0; const loop = () => { if (headRef.current) { headRef.current.style.opacity = '1'; headRef.current.style.left = ((engine.beat.step % 64) / 64) * 100 + '%'; } id = requestAnimationFrame(loop); };
     id = requestAnimationFrame(loop); return () => cancelAnimationFrame(id);
   }, [playing]);
+  return (
+    <div class={'lane' + (data ? '' : ' empty')} ref={laneRef}
+      onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); draft.current = data ? [...data] : Array(64).fill(+base().toFixed(3)); last.current = -1; paint(e as any); }}
+      onPointerMove={(e) => { if (draft.current) paint(e as any); }}
+      onPointerUp={() => { draft.current = null; last.current = -1; setTouch(''); }} onPointerCancel={() => { draft.current = null; setTouch(''); }}>
+      {[0, 1, 2, 3].map((b) => <span class="bar" style={{ left: b * 25 + '%' }}>{b + 1}</span>)}
+      {data ? <svg viewBox="0 0 64 100" preserveAspectRatio="none" aria-hidden="true">
+        <path d={'M0 100 ' + data.map((v, i) => `L${i} ${100 - v * 100} L${i + 1} ${100 - v * 100}`).join(' ') + ' L64 100 Z'} fill={color} fill-opacity="0.18" />
+        <path d={data.map((v, i) => `${i ? 'L' : 'M'}${i} ${100 - v * 100} L${i + 1} ${100 - v * 100}`).join(' ')} fill="none" stroke={color} stroke-width="1.5" vector-effect="non-scaling-stroke" />
+      </svg> : <div class="lane-hint">{hint}</div>}
+      <i class="head" ref={headRef as any} />
+      {touch && <b class="lane-val">{label}: {touch}</b>}
+    </div>
+  );
+}
+function AutoEditor({ t, upT, playing }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void; playing: boolean }) {
+  const [k, setK] = useState<AutoKey>('lp');
+  const P = AUTO_PARAMS.find((x) => x.k === k)!, data = t.auto?.[k];
+  // valor de partida si todavía no hay automatización: lo que la pista tiene hoy
+  const base = () => { const f = t.fx ?? {}; const v = k === 'lp' ? (f.lp ? Math.log(f.lp / 200) / Math.log(100) : 1) : k === 'hp' ? (f.hp ? Math.log(f.hp / 20) / Math.log(100) : 0) : k === 'vol' ? 1 : k === 'rev' ? t.rev : k === 'dly' ? t.dly : k === 'drive' ? f.drive ?? 0 : (t.pan + 1) / 2; return Math.max(0, Math.min(1, v)); };
   const has = (key: AutoKey) => !!t.auto?.[key];
   return (
     <div class="card a-autoed" style={{ '--c': t.color } as any}>
       <div class="ct"><h3>Automatización · {t.name}</h3></div>
       <div class="chips">{AUTO_PARAMS.map((x) => <button class={'chip' + (k === x.k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setK(x.k)}>{x.label}{has(x.k) ? ' •' : ''}</button>)}</div>
-      <div class={'lane' + (data ? '' : ' empty')} ref={laneRef}
-        onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); draft.current = data ? [...data] : Array(64).fill(+base().toFixed(3)); last.current = -1; paint(e as any); }}
-        onPointerMove={(e) => { if (draft.current) paint(e as any); }}
-        onPointerUp={() => { draft.current = null; last.current = -1; setTouch(''); }} onPointerCancel={() => { draft.current = null; setTouch(''); }}>
-        {[0, 1, 2, 3].map((b) => <span class="bar" style={{ left: b * 25 + '%' }}>{b + 1}</span>)}
-        {data ? <svg viewBox="0 0 64 100" preserveAspectRatio="none" aria-hidden="true">
-          <path d={'M0 100 ' + data.map((v, i) => `L${i} ${100 - v * 100} L${i + 1} ${100 - v * 100}`).join(' ') + ' L64 100 Z'} fill={t.color} fill-opacity="0.18" />
-          <path d={data.map((v, i) => `${i ? 'L' : 'M'}${i} ${100 - v * 100} L${i + 1} ${100 - v * 100}`).join(' ')} fill="none" stroke={t.color} stroke-width="1.5" vector-effect="non-scaling-stroke" />
-        </svg> : <div class="lane-hint">Dibujá con el dedo o elegí una forma</div>}
-        <i class="head" ref={headRef as any} />
-        {touch && <b class="lane-val">{P.label}: {touch}</b>}
-      </div>
+      <AutoLane data={data} color={t.color} label={P.label} fmt={P.fmt} base={base} playing={playing} onChange={(d) => upT(t.id, (x) => setAuto(x, k, d))} />
       <div class="chips" style={{ marginTop: '10px' }}>
         {AUTO_SHAPES.map((sh) => <button class="chip" onClick={() => upT(t.id, (x) => setAuto(x, k, autoShape(sh.k, P.lo, P.hi)))}>{sh.label}</button>)}
         {data && <button class="chip" onClick={() => upT(t.id, (x) => { const a = { ...x.auto }; delete a[k]; x.auto = Object.keys(a).length ? a : undefined; })}>Borrar</button>}
       </div>
-      <div class="hint">{P.label} a lo largo de los 4 compases. {k === 'pan' ? 'Arriba es derecha, abajo es izquierda.' : 'Arriba es más, abajo es menos.'} Mientras haya automatización, manda sobre la perilla de ese parámetro.</div>
+      <div class="hint">{P.label} a lo largo de los 4 compases. {k === 'pan' ? 'Arriba es derecha, abajo es izquierda.' : 'Arriba es más, abajo es menos.'} Mientras haya automatización, manda sobre la perilla de ese parámetro. También podés grabarla moviendo las perillas del Mixer con "Grabar movimientos".</div>
     </div>
   );
+}
+/* automatización de las macros: se dibuja igual que la de una pista */
+function MacroAuto({ p, up, playing }: { p: Project; up: (fn: (d: Project) => void) => void; playing: boolean }) {
+  const [open, setOpen] = useState(!!p.macroAuto), [k, setK] = useState<MacroKey>('energy');
+  const m = MACROS.find((x) => x.k === k)!, data = p.macroAuto?.[k], base = (p.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 })[k];
+  const setM = (d: Project, v: number[] | undefined) => { const a = { ...d.macroAuto }; if (v) a[k] = v; else delete a[k]; d.macroAuto = Object.keys(a).length ? a : undefined; };
+  if (!open) return <div class="chips" style={{ marginTop: '10px' }}><button class="chip" onClick={() => setOpen(true)}>Automatizar macros</button></div>;
+  return <>
+    <div class="sub">Automatización de macros</div>
+    <div class="chips">{MACROS.map((x) => <button class={'chip' + (k === x.k ? ' on' : '')} style={{ '--c': x.color } as any} onClick={() => setK(x.k)}>{x.label}{p.macroAuto?.[x.k] ? ' •' : ''}</button>)}</div>
+    <AutoLane data={data} color={m.color} label={m.label} fmt={(v) => String(Math.round(v * 100))} base={() => base} playing={playing} onChange={(d) => up((x) => setM(x, d))} />
+    <div class="chips" style={{ marginTop: '10px' }}>
+      {AUTO_SHAPES.map((sh) => <button class="chip" onClick={() => up((x) => setM(x, autoShape(sh.k, 0.2, 0.85)))}>{sh.label}</button>)}
+      {data && <button class="chip" onClick={() => up((x) => setM(x, undefined))}>Borrar</button>}
+      {!p.macroAuto && <button class="chip" onClick={() => setOpen(false)}>Cerrar</button>}
+    </div>
+    <div class="hint">{m.label} a lo largo de los 4 compases: el medio es como lo armó el género. Mientras tenga automatización, manda sobre su fader (el fader muestra el valor del paso que suena).</div>
+  </>;
+}
+function RecChip({ on, toggle }: { on: boolean; toggle: () => void }) {
+  return <button class={'chip recchip' + (on ? ' on' : '')} style={{ '--c': 'var(--red)' } as any} onClick={toggle} aria-pressed={on}><span class="dotrec" />{on ? 'Grabando movimientos' : 'Grabar movimientos'}</button>;
 }
 function VocalEditor({ p, t, upT, power, onDelete }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; power: any; onDelete: () => void }) {
   const [st, setSt] = useState<'idle' | 'loop' | 'free' | 'busy'>('idle'), [err, setErr] = useState(''), [wave, setWave] = useState<number[]>([]), [info, setInfo] = useState('');
@@ -586,6 +688,8 @@ function VocalEditor({ p, t, upT, power, onDelete }: { p: Project; t: Track; upT
           <Knob label="Reverb" value={t.rev} min={0} max={1} def={0.25} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.rev = v; })} />
           <Knob label="Saturación" value={fx.drive ?? 0} min={0} max={1} def={0} color={t.color} fmt={pct} onChange={(v) => setFx('drive', v)} />
           <Knob label="Chorus" value={fx.chorus ?? 0} min={0} max={1} def={0} color={t.color} fmt={pct} onChange={(v) => setFx('chorus', v)} />
+          <Knob label="Bitcrusher" value={fx.crush ?? 0} min={0} max={1} def={0} color={t.color} fmt={(v) => (v < 0.01 ? 'no' : pct(v))} onChange={(v) => setFx('crush', v < 0.01 ? 0 : v)} />
+          <Knob label="Phaser" value={fx.phaser ?? 0} min={0} max={1} def={0} color={t.color} fmt={(v) => (v < 0.01 ? 'no' : pct(v))} onChange={(v) => setFx('phaser', v < 0.01 ? 0 : v)} />
           <Knob label="Corta graves" value={Math.max(20, fx.hp || 20)} min={20} max={2000} log def={110} color={t.color} fmt={(v) => (v <= 21 ? 'no' : hz(v))} onChange={(v) => setFx('hp', v <= 21 ? 0 : v)} />
           <Knob label="Corta agudos" value={fx.lp || 20000} min={200} max={20000} log def={20000} color={t.color} fmt={(v) => (v >= 19500 ? 'no' : hz(v))} onChange={(v) => setFx('lp', v >= 19500 ? 0 : v)} />
         </div>
@@ -656,8 +760,9 @@ const TUTS: Record<TutKey, TutStep[]> = {
   scene: [
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
     { title: 'Nombre, versión y género', body: 'Generar arma el loop del nombre. Cada nombre nuevo arranca en Deep House. "Otra versión" prueba otra progresión en el mismo género. Los botones de género (Trance, Techno, House…) cambian batería, bajo, sonidos y armonía manteniendo tus notas. Armónico busca la tonalidad que mejor encaja; Puro usa las notas exactas de las letras.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
-    { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
-    { title: 'Automatización rápida', body: 'Con un toque hacés que el loop se mueva a lo largo de los 4 compases. Subida: los filtros y la reverb van creciendo, como antes de un drop. Filtro que respira: abre y cierra en cada compás. Delay al final: eco en el último tiempo. Bombeo: los acordes y el arpegio laten con el pulso.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 70 C 60 68, 120 50, 192 10 L192 74 L8 74 Z" fill={Y} fill-opacity="0.18" /><path d="M8 70 C 60 68, 120 50, 192 10" fill="none" stroke={Y} stroke-width="2" /></svg> },
+    { title: 'Mis loops', body: 'Todo se guarda solo en el celu. En Mis loops abrís cualquier loop anterior, lo duplicás, lo renombrás o lo borrás. Si generás otro nombre sin haber tocado nada, reemplaza al abierto; si lo editaste, queda guardado y el nuevo va aparte. "Guardar en un archivo" te lo llevás a otro celu, con tu voz incluida.', art: <div class="art-chips"><span class="on">Luciano · deep</span><span>Noche · techno</span><span>Fiesta · house</span></div> },
+    { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí. Con "Automatizar macros" dibujás cómo cambian en los 4 compases, y con "Grabar movimientos" las grabás moviendo los faders mientras suena.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
+    { title: 'Automatización rápida', body: 'Con un toque hacés que el loop se mueva a lo largo de los 4 compases. Subida: los filtros y la reverb van creciendo, como antes de un drop. Filtro que respira: abre y cierra en cada compás. Delay al final: eco en el último tiempo. Bombeo: los acordes y el arpegio laten con el pulso. Energía que crece y Espacio al final mueven las macros.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 70 C 60 68, 120 50, 192 10 L192 74 L8 74 Z" fill={Y} fill-opacity="0.18" /><path d="M8 70 C 60 68, 120 50, 192 10" fill="none" stroke={Y} stroke-width="2" /></svg> },
     { title: 'Batería', body: 'Elegí el kit: el 909 y el 808 clásicos, uno por género, Synthwave 80s, Electro o Lo-Fi. Cambia el sonido del bombo, el clap, los hats y el redoblante sin tocar el patrón.', art: artChips(['909', '808', 'Techno', 'Lo-Fi'], 1) },
   ],
   pat: [
@@ -671,12 +776,14 @@ const TUTS: Record<TutKey, TutStep[]> = {
   mix: [
     { title: 'Faders y botones', body: 'Cada columna es una pista: el fader es su volumen, M la silencia y S la deja sonando sola. Podés apretar varios M o S al mismo tiempo, y arriba están los grupos para mutear varios instrumentos juntos. Deslizá de costado para ver todas.', art: artBars([R, Y, G, '#e98a5f', '#8fc7a0'], [0.75, 0.5, 0.62, 0.35, 0.8]) },
     { title: 'Pan, efectos y sidechain', body: 'Pan la manda a la izquierda o a la derecha. Reverb y Delay le suman ambiente y eco. Sidechain es cuánto se "agacha" la pista cuando pega el bombo: es lo que hace que el loop bombee.', art: artKnobs(['Pan', 'Reverb', 'Delay', 'Sidechain']) },
-    { title: 'El inserto de cada pista', body: 'Abajo de cada columna: Saturación (calienta o ensucia), Chorus (la abre y la engorda), Corta graves y Corta agudos (filtros). Cada género los trae armados; los podés ajustar a gusto.', art: artKnobs(['Saturación', 'Chorus', 'Graves', 'Agudos']) },
+    { title: 'El inserto de cada pista', body: 'Abajo de cada columna: Saturación (calienta o ensucia), Chorus (la abre y la engorda), Corta graves y Corta agudos (filtros), Bitcrusher (sonido digital roto, de consola vieja) y Phaser (un barrido que gira cada 2 compases). Cada género trae los suyos armados; los podés ajustar a gusto.', art: artKnobs(['Saturación', 'Chorus', 'Bitcrusher', 'Phaser']) },
+    { title: 'Grabar movimientos', body: 'Tocá "Grabar movimientos" y, mientras suena, mové el volumen, el pan, la reverb, el delay, la saturación o los filtros: cada movimiento queda grabado en la automatización de esa pista, en el paso exacto. Al soltar, queda lo grabado y se repite en cada vuelta. Las perillas con una A ya tienen automatización. Para corregir, grabás encima o la editás en Patrón.', art: <div class="art-vox"><span class="dot" />Grabar movimientos<svg viewBox="0 0 160 30" aria-hidden="true"><path d="M0 24 C 30 24, 40 6, 70 8 S 120 26, 160 12" fill="none" stroke={Y} stroke-width="2" /></svg></div> },
   ],
   master: [
     { title: 'Grabar sesión', body: 'El botón rojo (al lado del play, o acá en Master) graba en vivo todo lo que suena mientras tocás: perillas, pistas que prendés y apagás, cambios de género. Hasta 20 minutos. Cuando terminás, la descargás en WAV o MP3.', art: <div class="art-vox"><span class="dot" />● REC 2:41<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 6 + Math.abs(Math.sin(k * 0.9) * Math.cos(k * 0.3)) * 20; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
     { title: 'Exportar', body: 'Elegí cuántos compases y descargá en WAV (máxima calidad), MP3 (liviano) o el paquete para Ableton, con cada pista por separado, la mezcla y los MIDI. Después lo compartís desde el botón Compartir.', art: artChips(['WAV', 'MP3', 'Ableton'], 0) },
     { title: 'Salida y volumen', body: 'El volumen se mantiene parejo solo: la ganancia automática lleva el loop al nivel elegido (en LUFS) y el limitador evita que sature. Los medidores te muestran cuánto está trabajando cada uno.', art: <div class="art-meter"><div><i style={{ width: '72%' }} /></div><small>-14 LUFS · limitador -1 dB</small></div> },
+    { title: 'La app en tu celu', body: 'En la tarjeta App ves si Loop está instalada y si ya funciona sin conexión. "Instalar Loop" la pone en tu pantalla de inicio (en iPhone: Compartir → Agregar a inicio). "Proteger mis loops" le pide al navegador que no borre lo guardado. Cuando hay una versión nueva, aparece un aviso arriba y se actualiza con un toque, sin cortar lo que está sonando.', art: artChips(['Instalada', 'Sin conexión', 'Protegida'], 1) },
     { title: 'Ecualizador y efectos', body: 'El EQ de 8 bandas sube o baja graves, medios y agudos de todo el loop. En Efectos ajustás el tamaño de la reverb y cuánto se repite el delay, para todas las pistas a la vez.', art: artBars([G, G, Y, Y, Y, R, R, R], [0.6, 0.55, 0.45, 0.4, 0.5, 0.55, 0.62, 0.5]) },
   ],
 };
@@ -779,6 +886,94 @@ function Session({ p, rec, secs, take, toggleRec, clear }: { p: Project; rec: bo
       {!rec && !take && <div class="hint">Graba en vivo todo lo que sale por los parlantes, con cada cambio que hagas mientras suena, hasta 20 minutos. Al terminar la descargás en WAV o MP3. Si el loop está parado, arranca solo.</div>}
     </div>
   );
+}
+
+/* ---------- mis loops: varios proyectos guardados en el celu ---------- */
+const when = (t: number) => { const d = new Date(t), now = new Date(), hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); return d.toDateString() === now.toDateString() ? 'hoy ' + hm : d.getDate() + '/' + (d.getMonth() + 1) + ' ' + hm; };
+function Projects({ p, open, flash }: { p: Project; open: (np: Project) => void; flash: (m: string, ms?: number) => void }) {
+  const [list, setList] = useState<Meta[]>(listProjects), [all, setAll] = useState(false), [sure, setSure] = useState(''), [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const refresh = () => setList(listProjects());
+  useEffect(() => { const id = setTimeout(refresh, 600); return () => clearTimeout(id); }, [p]); // después de que se guarde solo
+  const cur: Meta = { id: p.id ?? '', title: titleOf(p), genre: p.genre, key: p.key, updated: Date.now() };
+  const items = [cur, ...list.filter((m) => m.id !== p.id)], shown = all ? items : items.slice(0, 5);
+  const go = (id: string) => { flushSave(); const np = loadProject(id); if (np) { open(np); flash('Abriste "' + titleOf(np) + '"'); } else { flash('No se pudo abrir ese loop.'); refresh(); } };
+  const remove = async (id: string) => {
+    setSure(''); flushSave(); await deleteProject(id); const rest = listProjects(); setList(rest);
+    if (id === p.id) { const nx = loadProject(rest[0]?.id ?? null); open(nx ?? projectFromName('Loop')); }
+    flash('Loop borrado');
+  };
+  const copy = async () => { flushSave(); const d = await duplicate(p); open(d); flushSave(); refresh(); flash('Copia guardada: ahora estás en "' + titleOf(d) + '"'); };
+  const rename = () => { const n = prompt('Nombre del loop (solo cambia cómo aparece en la lista, no el sonido)', titleOf(p)); if (n === null || !n.trim()) return; flushSave(); if (p.id) renameProject(p.id, n.trim().slice(0, 32)); const np = loadProject(p.id ?? null); if (np) open(np); refresh(); };
+  const toFile = async () => {
+    setBusy(true);
+    try {
+      flushSave(); const b = await exportFile(p), name = baseName({ ...p, name: titleOf(p) }) + '.loop.json', file = new File([b], name, { type: 'application/json' });
+      if ((navigator as any).canShare?.({ files: [file] })) await (navigator as any).share({ files: [file], title: name }).catch(() => {});
+      else { const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
+    } catch { flash('No se pudo armar el archivo.'); }
+    setBusy(false);
+  };
+  const fromFile = async (f?: File) => {
+    if (!f) return; setBusy(true);
+    try { flushSave(); const np = await importFile(f); if (!saveProject(np)) throw new Error('lleno'); open(np); refresh(); flash('Abriste "' + titleOf(np) + '" desde el archivo'); }
+    catch { flash('Ese archivo no es un loop de esta app (o no queda lugar).', 3500); }
+    setBusy(false); if (fileRef.current) fileRef.current.value = '';
+  };
+  return (
+    <div class="card a-projs">
+      <div class="ct"><h3>Mis loops</h3><button class="chip" onClick={rename}>Renombrar</button><button class="chip" onClick={copy}>Duplicar</button></div>
+      <div class="projs">
+        {shown.map((m) => <div class={'proj' + (m.id === p.id ? ' cur' : '')}>
+          <button class="pj-open" onClick={() => m.id !== p.id && go(m.id)} aria-label={m.id === p.id ? m.title + ' (abierto)' : 'Abrir ' + m.title}>
+            <b>{m.title}</b><span>{GENRES[m.genre]?.name ?? m.genre}{m.key ? ' · ' + m.key : ''} · {m.id === p.id ? 'abierto' : when(m.updated)}</span>
+          </button>
+          {(m.id !== p.id || items.length > 1) && <button class={'chip pj-del' + (sure === m.id ? ' on' : '')} style={{ '--c': 'var(--red)' } as any} onClick={() => (sure === m.id ? remove(m.id) : (setSure(m.id), setTimeout(() => setSure((x) => (x === m.id ? '' : x)), 2500)))}>{sure === m.id ? '¿Borrar?' : 'Borrar'}</button>}
+        </div>)}
+      </div>
+      {items.length > 5 && <button class="chip" style={{ marginTop: '8px' }} onClick={() => setAll(!all)}>{all ? 'Ver menos' : 'Ver todos (' + items.length + ')'}</button>}
+      <div class="chips" style={{ marginTop: '10px' }}>
+        <button class="chip" disabled={busy} onClick={toFile}>Guardar en un archivo</button>
+        <label class={'chip up' + (busy ? ' dis' : '')}>Abrir archivo<input ref={fileRef} type="file" accept=".json,.loop,application/json" disabled={busy} onChange={(e) => fromFile((e.target as HTMLInputElement).files?.[0])} /></label>
+      </div>
+      <div class="hint">Todo se guarda solo en este celu. Si generás un nombre nuevo sin haber tocado nada, reemplaza al loop abierto (el nombre lo vuelve a armar igual); si lo editaste, queda guardado acá y el nuevo va aparte. "Guardar en un archivo" lo lleva a otro celu o a la compu, con tu voz incluida.</div>
+    </div>
+  );
+}
+
+/* ---------- la app: instalar, sin conexión y espacio ---------- */
+function AppCard() {
+  const w = usePwa(), [persist, setPersist] = useState<boolean | null>(null), [use, setUse] = useState('');
+  const standalone = typeof matchMedia !== 'undefined' && (matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true);
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const offline = 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
+  useEffect(() => {
+    navigator.storage?.persisted?.().then(setPersist).catch(() => {});
+    navigator.storage?.estimate?.().then((e) => { if (e.usage != null) setUse((e.usage / 1048576).toFixed(1) + ' MB'); }).catch(() => {});
+    if (standalone) navigator.storage?.persist?.().then(setPersist).catch(() => {}); // instalada: que el navegador no borre los loops
+  }, []);
+  return (
+    <div class="card">
+      <div class="ct"><h3>App</h3></div>
+      <div class="appst">
+        <div><i class={standalone ? 'ok' : ''} />{standalone ? 'Instalada en este dispositivo' : 'Abierta en el navegador'}</div>
+        <div><i class={offline ? 'ok' : ''} />{offline ? 'Funciona sin conexión' : 'Preparando el modo sin conexión…'}</div>
+        <div><i class={persist ? 'ok' : ''} />{persist ? 'Tus loops están protegidos' : 'El navegador podría borrar tus loops si se queda sin espacio'}{use ? ' · ' + use + ' usados' : ''}</div>
+      </div>
+      <div class="chips" style={{ marginTop: '10px' }}>
+        {!standalone && w.prompt && <button class="btn hot" onClick={async () => { w.prompt.prompt(); await w.prompt.userChoice.catch(() => {}); w.prompt = null; pwaPing(); }}>Instalar Loop</button>}
+        {!persist && navigator.storage?.persist && <button class="chip" onClick={() => navigator.storage.persist().then((x) => { setPersist(x); if (!x) alert('El navegador no lo permitió todavía. Instalando la app suele alcanzar.'); }).catch(() => {})}>Proteger mis loops</button>}
+        {w.update && <button class="btn vio" onClick={() => w.update!()}>Actualizar a la versión nueva</button>}
+      </div>
+      {!standalone && <div class="hint">{ios ? 'En iPhone: abrila en Safari, tocá Compartir (el cuadrado con la flecha) y después "Agregar a inicio". Queda como una app, a pantalla completa y sin conexión.' : w.prompt ? 'Instalala para abrirla como una app, a pantalla completa y sin conexión.' : 'Para instalarla, abrí el menú del navegador y elegí "Instalar app" o "Agregar a la pantalla de inicio".'}</div>}
+    </div>
+  );
+}
+/* aviso de versión nueva: no recarga sola para no cortar lo que está sonando */
+function UpdateBar() {
+  const w = usePwa(), [hide, setHide] = useState(false);
+  if (!w.update || hide) return null;
+  return <div class="updbar"><span>Hay una versión nueva de Loop</span><button class="btn hot" onClick={() => w.update!()}>Actualizar</button><button class="chip" onClick={() => setHide(true)}>Después</button></div>;
 }
 
 /* ---------- exportar ---------- */

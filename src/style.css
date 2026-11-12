@@ -298,3 +298,33 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .ord .btn:disabled{opacity:.3}
 .gtag{font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
 .strip.gmute{opacity:.45}
+/* marca de automatización en perillas, faders y macros */
+.ka{display:inline-block;font-style:normal;font-family:'JetBrains Mono',monospace;font-size:9px;line-height:12px;color:var(--bg);background:var(--hot);border-radius:4px;padding:0 3px;margin-left:4px;vertical-align:1px}
+.ct{flex-wrap:wrap}
+/* grabar movimientos */
+.recchip{display:inline-flex;align-items:center;gap:6px}
+.recchip .dotrec{width:9px;height:9px;border-radius:50%;background:var(--red);flex:none}
+.recchip.on .dotrec{animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.25}}
+/* mis loops */
+.projs{display:flex;flex-direction:column;gap:6px}
+.proj{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:4px 6px 4px 4px}
+.proj.cur{border-color:var(--hot)}
+.pj-open{flex:1;min-width:0;text-align:left;padding:6px 8px;display:flex;flex-direction:column;gap:2px}
+.pj-open b{font-weight:500;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pj-open span{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj.cur .pj-open span{color:var(--hot)}
+.pj-del{flex:none}
+.chip.up{position:relative;cursor:pointer}
+.chip.up input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.chip.up.dis,.chip:disabled{opacity:.5;pointer-events:none}
+/* app: instalación y sin conexión */
+.appst{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.appst i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--dim);margin-right:8px;vertical-align:1px}
+.appst i.ok{background:var(--mint)}
+.updbar{position:fixed;left:50%;transform:translateX(-50%);top:calc(8px + var(--safe-t));z-index:45;display:flex;align-items:center;gap:8px;background:var(--card2);border:1px solid var(--hot);border-radius:12px;padding:6px 6px 6px 12px;font-size:13px;max-width:calc(100% - 24px)}
+.updbar .btn{padding:6px 10px}
+@media (orientation: landscape) and (max-height: 560px){
+  .page.scene{grid-template-areas:"stage name" "stage projs" "stage macros" "kits macros"}
+  .a-projs{grid-area:projs}
+}

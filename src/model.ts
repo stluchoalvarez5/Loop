@@ -48,7 +48,7 @@ export type Track = {
   chordLen?: number; // largo de cada golpe de acorde en pasos (stab y gate)
   bassLine?: number[]; // bajo: semitonos sobre la fundamental en cada paso (0, 12 = octava, 7 = quinta…)
   bassLen?: number; // bajo: largo de cada nota en pasos
-  fx?: { drive?: number; hp?: number; lp?: number; chorus?: number }; // inserto: saturación, pasa altos, pasa bajos, chorus
+  fx?: { drive?: number; hp?: number; lp?: number; chorus?: number; crush?: number; phaser?: number }; // inserto: saturación, bitcrusher, pasa altos, pasa bajos, phaser, chorus
   groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
   rollEdited?: boolean; // ya se tocaron a mano las notas del piano roll
   group?: string; // id del grupo al que pertenece
@@ -58,6 +58,7 @@ export type Track = {
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
+export type MacroKey = 'energy' | 'dark' | 'space' | 'groove';
 export type Group = { id: string; name: string; mute?: boolean; solo?: boolean };
 export type Project = {
   name: string; genre: string; bpm: number; swing: number; kit: string;
@@ -67,7 +68,10 @@ export type Project = {
   fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number };
   master: { eq: number[]; target: number; auto: boolean; ceiling: number };
   seed?: number;
+  id?: string; title?: string; // lugar donde se guarda y nombre que se muestra en Mis loops (el nombre musical es `name`)
+  edited?: boolean; // se tocó algo después de generarlo: generar otro nombre no lo pisa, va a un lugar nuevo
   macros?: { energy: number; dark: number; space: number; groove: number }; // 0..1, 0.5 = como lo dejó el género
+  macroAuto?: Partial<Record<MacroKey, number[]>>; // automatización de las macros: 64 valores 0..1, mandan sobre el fader
   harmony?: 'tonal' | 'puro'; // tonal: se busca la tonalidad del nombre; puro: solo las notas exactas de las letras
   key?: string; progression?: string; scale?: number[]; tonic?: number; letterNotes?: { ch: string; note: string; moved: boolean }[];
 };
@@ -448,8 +452,19 @@ export const MACROS = [
 export function compile(p: Project) {
   const anyGain = (v: number) => v * v * 1.6;
   const M = p.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 };
-  const e = M.energy - 0.5, dk = M.dark - 0.5, sp = M.space - 0.5, gr = M.groove - 0.5;
+  // macros automatizadas: su parte fija queda neutra y el movimiento va paso a paso (eventos) o como curva al motor (filtros, envíos)
+  const MA = p.macroAuto && Object.keys(p.macroAuto).length ? p.macroAuto : undefined;
+  const mAt = (k: MacroKey, s: number) => (MA?.[k] ? MA[k]![s] ?? 0.5 : M[k]) - 0.5;
+  const e = MA?.energy ? 0 : M.energy - 0.5, dk = MA?.dark ? 0 : M.dark - 0.5, sp = MA?.space ? 0 : M.space - 0.5, gr = MA?.groove ? 0 : M.groove - 0.5;
   const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+  const S64 = Array.from({ length: 64 }, (_, s) => s);
+  const mod: Record<string, number[]> = {};
+  if (MA?.energy || MA?.dark) mod.cut = S64.map((s) => +Math.pow(2, (MA.energy ? mAt('energy', s) : 0) * 1.4 - (MA.dark ? mAt('dark', s) : 0) * 2).toFixed(4));
+  if (MA?.energy) mod.en = S64.map((s) => mAt('energy', s));
+  if (MA?.space) {
+    mod.sk = S64.map((s) => +Math.pow(2, mAt('space', s) * 2.6).toFixed(4)); mod.sadd = S64.map((s) => Math.max(0, mAt('space', s)) * 0.15);
+    mod.room = S64.map((s) => clamp(p.fx.revSize + mAt('space', s) * 0.16, 0.3, 0.97)); mod.fb = S64.map((s) => clamp(p.fx.dlyFb + mAt('space', s) * 0.12, 0, 0.8));
+  }
   const cm = Math.pow(2, e * 1.4 - dk * 2); // brillo de los sintes
   const shape = (sy: Synth | undefined, amt = 1) => sy && (cm !== 1) ? { ...sy, cutoff: clamp(sy.cutoff * Math.pow(cm, amt), 60, 16000) } : sy;
   const sendK = Math.pow(2, sp * 2.6);
@@ -470,8 +485,10 @@ export function compile(p: Project) {
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - (t.type === 'chords' ? 0.05 : 0.15)) }); });
     } else if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(p.kit, t.sound);
-      const ghost = clamp(0.38 * (1 + e * 1.2), 0.15, 0.7), fillHats = t.id === 'hat' && e > 0.22;
-      for (let s = 0; s < 64; s++) { const v = t.steps[s % 16]; if (v) ev[s].push({ v: v === 2 ? 1 : v === 3 ? ghost : 0.72 }); else if (fillHats && s % 2 === 1) ev[s].push({ v: 0.22 + e * 0.3 }); }
+      for (let s = 0; s < 64; s++) {
+        const es = mAt('energy', s), ghost = clamp(0.38 * (1 + es * 1.2), 0.15, 0.7), v = t.steps[s % 16];
+        if (v) ev[s].push({ v: v === 2 ? 1 : v === 3 ? ghost : 0.72 }); else if (t.id === 'hat' && es > 0.22 && s % 2 === 1) ev[s].push({ v: 0.22 + es * 0.3 });
+      }
     } else if (t.type === 'bass') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.bassSaw.p;
       for (let s = 0; s < 64; s++) {
@@ -496,14 +513,21 @@ export function compile(p: Project) {
     }
     if (t.type !== 'drum') synth = shape(synth, t.type === 'bass' ? 0.5 : 1);
     const fx = t.type !== 'drum' && e > 0 ? { ...t.fx, drive: clamp((t.fx?.drive ?? 0) + e * 0.6, 0, 1) } : t.fx;
-    const groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
+    let groove: number[] | undefined;
+    if (MA?.groove) {
+      // groove automatizado: un atraso por cada uno de los 64 pasos
+      const g64 = S64.map((s) => { const g = mAt('groove', s); return t.groove ? Math.max(0, t.groove[s % 16] * (1 + g * 2.4)) : g > 0.15 && t.type === 'drum' && t.id !== 'kick' && s % 2 ? g * 0.12 : 0; });
+      groove = g64.some((x) => x > 0) ? g64 : undefined;
+    } else groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
     return {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' ? 0 : 0.05,
+      cutAmt: t.type === 'drum' || t.type === 'vocal' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum', spAdd: t.type !== 'drum' && t.type !== 'bass',
     };
   });
-  return { bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8) }, master: p.master, tracks };
+  const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;
+  return { bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8) }, master: p.master, tracks };
 }

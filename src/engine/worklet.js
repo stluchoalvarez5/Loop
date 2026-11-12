@@ -79,8 +79,8 @@ class SynthVoice {
   }
   /* slide (303): la voz que suena se desliza a la nota nueva sin volver a atacar */
   glideTo(p, note, vel, lenSamp) { this.tf = mtof(note + (p.octave || 0) * 12); this.len = this.t + lenSamp; this.vel = vel; }
-  render(L, R, a, b) {
-    const p = this.p, sr = this.sr, n = this.n, wave = p.wave;
+  render(L, R, a, b, cm) {
+    const p = this.p, sr = this.sr, n = this.n, wave = p.wave, cut = p.cutoff * (cm || 1);
     const k = 2 - 2 * Math.min(0.97, p.reso);
     for (let i = a; i < b; i++) {
       // envolvente ADSR
@@ -115,7 +115,7 @@ class SynthVoice {
         if (p.sub) { this.sph += base / sr / 2; if (this.sph >= 1) this.sph -= 1; s += Math.sin(TAU * this.sph) * p.sub; }
       }
       // filtro con envolvente
-      const fc = Math.min(sr * 0.45, p.cutoff * (1 + p.envAmt * 8 * this.fenv));
+      const fc = Math.min(sr * 0.45, cut * (1 + p.envAmt * 8 * this.fenv));
       const g = Math.tan(Math.PI * fc / sr);
       s = this.f.lp(s, g, k);
       if (p.poles4) s = this.f2.lp(s, g, 1.414);
@@ -199,14 +199,18 @@ class LoopEngine extends AudioWorkletProcessor {
   onMsg(m) {
     if (m.type === 'sample') { this.samples[m.key] = m.data; return; }
     if (m.type === 'project') {
-      const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing;
+      const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing; this.mod = m.project.mod || null; this.swingA = m.project.swingA || null;
       this.tracks = m.project.tracks.map((t) => {
         const o = old.find((x) => x.id === t.id);
         const nt = { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
         // inserto por pista: saturación, filtros pasa altos / pasa bajos y chorus (los buffers se reservan acá, nunca en process)
         const fx = t.fx || {};
-        if (!nt.ins) nt.ins = { hpL: new Biquad(), hpR: new Biquad(), lpL: new Biquad(), lpR: new Biquad(), cb: null, ci: 0, cph: 0 };
-        const I = nt.ins; I.drive = fx.drive || 0; I.hp = fx.hp || 0; I.lp = fx.lp || 0; I.chorus = fx.chorus || 0;
+        if (!nt.ins) nt.ins = { hpL: new Biquad(), hpR: new Biquad(), lpL: new Biquad(), lpR: new Biquad(), cb: null, ci: 0, cph: 0, ap: null, pph: 0, pfl: 0, pfr: 0, chL: 0, chR: 0, cn: 0 };
+        const I = nt.ins; I.drive0 = I.drive = fx.drive || 0; I.hp = fx.hp || 0; I.lp = fx.lp || 0; I.chorus = fx.chorus || 0; I.crush = fx.crush || 0; I.phaser = fx.phaser || 0;
+        // bitcrusher: menos bits (16 → 4) y menos frecuencia de muestreo (mantiene cada muestra hasta 16 veces)
+        if (I.crush) { const c = I.crush; I.cq = Math.pow(2, 15 - c * 11); I.cds = 1 + Math.floor(c * c * 15); }
+        // phaser: 4 pasa todo por canal (los estados se reservan una vez)
+        if (I.phaser && !I.ap) I.ap = new Float64Array(8);
         if (I.hp) { I.hpL.set('hp', I.hp, 0.707, 0, this.sr); I.hpR.set('hp', I.hp, 0.707, 0, this.sr); }
         if (I.lp) { I.lpL.set('lp', I.lp, 0.707, 0, this.sr); I.lpR.set('lp', I.lp, 0.707, 0, this.sr); }
         if (I.chorus && !I.cb) { I.cb = [new Float32Array(2048), new Float32Array(2048)]; }
@@ -254,11 +258,11 @@ class LoopEngine extends AudioWorkletProcessor {
     // secuenciador: disparos dentro de este bloque
     this.duckHit = -1; this.stepAt = -1;
     if (this.playing && this.compiled) {
-      const sl = this.stepLen(), loopLen = sl * STEPS, swOff = (st) => (st % 2 ? this.swing * sl * 0.33 : 0);
+      const sl = this.stepLen(), loopLen = sl * STEPS, swA = this.swingA, swOff = (st) => (st % 2 ? (swA ? swA[st] : this.swing) * sl * 0.33 : 0);
       for (let i = 0; i < N; i++) {
         while (this.pos >= this.nextT) {
           const st = this.next; this.step = st;
-          for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % 16] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off); }
+          for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off); }
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
           if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; }
@@ -276,20 +280,27 @@ class LoopEngine extends AudioWorkletProcessor {
       this.duckEnv = e;
     }
     const anySolo = tracks.some((t) => t.solo);
+    const on = this.playing && this.compiled, slen = this.stepLen(), ps = Math.max(0, this.pos / slen), k0 = Math.floor(ps) % STEPS, k1 = (k0 + 1) % STEPS, fr = ps - Math.floor(ps);
+    // macros automatizadas: curvas globales de 64 pasos (brillo, saturación, envíos, tamaño de la reverb, repeticiones del delay)
+    const MD = on ? this.mod : null;
+    const mCut = MD && MD.cut ? autoAt(MD.cut, k0, k1, fr) : 1, mEn = MD && MD.en ? autoAt(MD.en, k0, k1, fr) : 0;
+    const mSk = MD && MD.sk ? autoAt(MD.sk, k0, k1, fr) : 1, mSadd = MD && MD.sadd ? autoAt(MD.sadd, k0, k1, fr) : 0;
+    if (MD && MD.room) this.rev.room = autoAt(MD.room, k0, k1, fr);
+    if (MD && MD.fb) this.dly.fb = autoAt(MD.fb, k0, k1, fr);
     for (const t of tracks) {
       B.tL.fill(0); B.tR.fill(0);
+      const cm = t.cutAmt && mCut !== 1 ? Math.pow(mCut, t.cutAmt) : 1;
       for (const v of t.voices) {
         if (!v.on) continue;
         const a = v.delay || 0;
         if (a >= N) { v.delay = a - N; continue; } // golpe atrasado por el groove: todavía no empieza
-        v.delay = 0; v.render(B.tL, B.tR, a, N);
+        v.delay = 0; v.render(B.tL, B.tR, a, N, cm);
       }
       const I = t.ins;
       // automatización: valor de cada parámetro en este momento de los 4 compases (interpolado entre pasos)
       let aVol = 1, aRev = t.rev, aDly = t.dly, aPan = t.pan;
       const A = t.auto;
-      if (A && this.playing && this.compiled) {
-        const sl = this.stepLen(), ps = Math.max(0, this.pos / sl), k0 = Math.floor(ps) % STEPS, k1 = (k0 + 1) % STEPS, fr = ps - Math.floor(ps);
+      if (A && on) {
         if (A.vol) aVol = autoAt(A.vol, k0, k1, fr);
         if (A.rev) aRev = autoAt(A.rev, k0, k1, fr);
         if (A.dly) aDly = autoAt(A.dly, k0, k1, fr);
@@ -297,16 +308,37 @@ class LoopEngine extends AudioWorkletProcessor {
         if (I) {
           if (A.lp) { const f = 200 * Math.pow(100, autoAt(A.lp, k0, k1, fr)); if (Math.abs(f - (I.lp || 20000)) > I.lp * 0.004) { I.lp = f; I.lpL.set('lp', f, 0.707, 0, sr); I.lpR.set('lp', f, 0.707, 0, sr); } }
           if (A.hp) { const v = autoAt(A.hp, k0, k1, fr), f = 20 * Math.pow(100, v); if (v < 0.01) I.hp = 0; else if (Math.abs(f - (I.hp || 0)) > f * 0.004) { I.hp = f; I.hpL.set('hp', f, 0.707, 0, sr); I.hpR.set('hp', f, 0.707, 0, sr); } }
-          if (A.drive) { I.drive = autoAt(A.drive, k0, k1, fr); I.dk = 1 + I.drive * 10; I.dg = (1 + I.drive) / I.dk; }
         }
       }
-      if (I && (I.drive || I.hp || I.lp || I.chorus)) {
-        const cb = I.cb, cr = I.chorus, dinc = 0.55 / sr;
+      // saturación: la de la pista (o su automatización) más la que suma la macro Energía automatizada
+      if (I && (on && (A && A.drive || t.macDrive && MD && MD.en))) {
+        let dv = A && A.drive ? autoAt(A.drive, k0, k1, fr) : I.drive0;
+        if (t.macDrive && mEn > 0) dv = Math.min(1, dv + mEn * 0.6);
+        if (dv !== I.drive) { I.drive = dv; I.dk = 1 + dv * 10; I.dg = (1 + dv) / I.dk; }
+      }
+      if (I && (I.drive || I.hp || I.lp || I.chorus || I.crush || I.phaser)) {
+        const cb = I.cb, cr = I.chorus, dinc = 0.55 / sr, cq = I.cq, cds = I.cds, ph = I.phaser, ap = I.ap;
+        const pinc = ph ? this.bpm / 60 / 8 / sr : 0, pfb = ph * 0.55; // phaser: una vuelta cada 2 compases
         for (let i = 0; i < N; i++) {
           let l = B.tL[i], r = B.tR[i];
           if (I.drive) { l = Math.tanh(l * I.dk) * I.dg; r = Math.tanh(r * I.dk) * I.dg; }
+          if (I.crush) {
+            if (I.cn <= 0) { I.chL = Math.round(l * cq) / cq; I.chR = Math.round(r * cq) / cq; I.cn = cds; }
+            I.cn--; l = I.chL; r = I.chR;
+          }
           if (I.hp) { l = I.hpL.run(l); r = I.hpR.run(r); }
           if (I.lp) { l = I.lpL.run(l); r = I.lpR.run(r); }
+          if (ph && ap) {
+            I.pph += pinc; if (I.pph >= 1) I.pph -= 1;
+            // barrido exponencial 250 Hz .. 3,5 kHz; el canal derecho va un cuarto de vuelta corrido
+            const sL = 0.5 - 0.5 * Math.cos(TAU * I.pph), sR = 0.5 - 0.5 * Math.sin(TAU * I.pph);
+            const wL = Math.PI * 250 * Math.pow(14, sL) / sr, wR = Math.PI * 250 * Math.pow(14, sR) / sr;
+            const aL = (1 - wL) / (1 + wL), aR = (1 - wR) / (1 + wR);
+            let xl = l + I.pfl * pfb, xr = r + I.pfr * pfb;
+            for (let k = 0; k < 4; k++) { const yl = -aL * xl + ap[k]; ap[k] = xl + aL * yl; xl = yl; const yr = -aR * xr + ap[k + 4]; ap[k + 4] = xr + aR * yr; xr = yr; }
+            I.pfl = xl; I.pfr = xr;
+            l = l + (xl - l) * 0.5 * ph; r = r + (xr - r) * 0.5 * ph;
+          }
           if (cr && cb) {
             const w = I.ci; cb[0][w] = l; cb[1][w] = r; I.ci = (w + 1) & 2047;
             I.cph += dinc; if (I.cph >= 1) I.cph -= 1;
@@ -317,6 +349,7 @@ class LoopEngine extends AudioWorkletProcessor {
           B.tL[i] = l; B.tR[i] = r;
         }
       }
+      if (MD && MD.sk) { aRev = Math.min(1, aRev * mSk + (t.spAdd && mSadd > 0 ? mSadd : 0)); aDly = Math.min(1, aDly * mSk); }
       const audible = !t.mute && (!anySolo || t.solo);
       const g = audible ? t.gain * aVol : 0, gl = g * Math.cos((aPan + 1) * Math.PI / 4) * 1.414, gr = g * Math.sin((aPan + 1) * Math.PI / 4) * 1.414;
       // rampa dentro del bloque para que la automatización de volumen y paneo no haga "escalones"
