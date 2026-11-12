@@ -583,3 +583,4 @@ html,body{font-family:'Inter',system-ui,sans-serif;font-size:14px}
   .sheet{border-radius:6px;max-height:92vh}
 }
 .arr{display:flex;flex-wrap:wrap;gap:4px}
+.bars4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.bars4 .sel{padding-right:22px;background-position:right 4px center}

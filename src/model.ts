@@ -190,7 +190,8 @@ export type Project = {
   scene?: string; scenes?: Record<string, SceneSnap>; // escenas A..D: variaciones del patrón que cambian al terminar la vuelta
   chain?: boolean; // encadenar escenas: al terminar cada vuelta pasa a la siguiente que tenga algo
   fill?: boolean;
-  arrangement?: string[]; // orden de escenas para exportar el tema (una vuelta de 4 compases por letra) // redoble de batería en los últimos 2 tiempos del compás 4 // se tocó algo después de generarlo: generar otro nombre no lo pisa, va a un lugar nuevo
+  arrangement?: string[];
+  manual?: Manual; // armado desde cero: tonalidad y acordes elegidos a mano (en vez de salir del nombre) // orden de escenas para exportar el tema (una vuelta de 4 compases por letra) // redoble de batería en los últimos 2 tiempos del compás 4 // se tocó algo después de generarlo: generar otro nombre no lo pisa, va a un lugar nuevo
   macros?: { energy: number; dark: number; space: number; groove: number }; // 0..1, 0.5 = como lo dejó el género
   macroAuto?: Partial<Record<MacroKey, number[]>>; // automatización de las macros: 64 valores 0..1, mandan sobre el fader
   harmony?: 'tonal' | 'puro'; // tonal: se busca la tonalidad del nombre; puro: solo las notas exactas de las letras
@@ -305,8 +306,46 @@ export function harmonyFromName(raw: string, mode: 'tonal' | 'puro' = 'tonal', s
   const c = clean(raw) || 'LOOP';
   return mode === 'puro' ? pureHarmony(c) : tonalHarmony(c, salt, o);
 }
+/* ---------- desde cero: tonalidad y acordes elegidos a mano ---------- */
+export type Manual = { tonic: number; mode: 'maj' | 'min'; degrees: number[]; ext: number }; // ext: 0 tríadas, 7 séptimas, 9 novenas
+export const ROMAN = { maj: ROMAN_MAJ, min: ROMAN_MIN };
+export const PROGS: Record<'maj' | 'min', [string, number[]][]> = {
+  min: [['i – VI – III – VII', [0, 5, 2, 6]], ['i – VII – VI – v', [0, 6, 5, 4]], ['i – iv – VII – III', [0, 3, 6, 2]], ['i – VI – VII – i', [0, 5, 6, 0]], ['i – i – VI – VI', [0, 0, 5, 5]], ['i – iv – v – i', [0, 3, 4, 0]], ['Un solo acorde (i)', [0, 0, 0, 0]]],
+  maj: [['I – V – vi – IV', [0, 4, 5, 3]], ['I – vi – IV – V', [0, 5, 3, 4]], ['vi – IV – I – V', [5, 3, 0, 4]], ['I – IV – I – V', [0, 3, 0, 4]], ['IV – V – iii – vi', [3, 4, 2, 5]], ['ii – V – I – I', [1, 4, 0, 0]], ['Un solo acorde (I)', [0, 0, 0, 0]]],
+};
+export function manualHarmony(m: Manual) {
+  const scale = (m.mode === 'maj' ? MAJ : MIN).map((i) => (m.tonic + i) % 12), roman = m.mode === 'maj' ? ROMAN_MAJ : ROMAN_MIN;
+  const chords = m.degrees.map((d) => {
+    const root = scale[d], iv = (x: number) => (x - root + 12) % 12, ivs = [0, iv(scale[(d + 2) % 7]), iv(scale[(d + 4) % 7])];
+    const minor = ivs[1] === 3, dim = ivs[2] === 6; let name = NOTE_EN[root] + (dim ? 'dim' : minor ? 'm' : '');
+    if (m.ext >= 7) { const s7 = iv(scale[(d + 6) % 7]); ivs.push(s7); name = NOTE_EN[root] + (dim ? 'm7b5' : minor ? 'm7' : s7 === 11 ? 'maj7' : '7'); }
+    if (m.ext >= 9 && !dim && iv(scale[(d + 1) % 7]) === 2) { ivs.push(14); name = name.replace(/maj7$/, 'maj9').replace(/m7$/, 'm9').replace(/7$/, '9'); }
+    return { name, tones: ivs.map((i) => NOTE_ES[(root + i) % 12]), midi: voice({ root, ivs, name, score: 0 }) };
+  });
+  // notas de referencia (arpegio "Nombre" y melodías nuevas): fundamental y tercera de cada acorde
+  const seq = m.degrees.flatMap((d) => [60 + scale[d], 60 + scale[(d + 2) % 7]]);
+  return { letters: '', seq, chords, scale, tonic: m.tonic, key: NOTE_ES[m.tonic] + (m.mode === 'maj' ? ' mayor' : ' menor'), progression: m.degrees.map((d) => roman[d]).join(' – '), letterNotes: [] as { ch: string; note: string; moved: boolean }[] };
+}
+/* loop vacío: sonidos, kit y mezcla del género, la armonía elegida y la grilla limpia (con o sin la batería del género) */
+export function blankProject(m: Manual, genre: string, bpm: number, drums: boolean): Project {
+  const p = newProject('', GENRES[genre] ? genre : 'deep');
+  const mel = newTrack(p, 'melody'); mel.id = 'melody'; mel.color = '#f0d99a'; p.tracks.splice(p.tracks.findIndex((t) => t.id === 'arp') + 1, 0, mel);
+  applyGenre(p, p.genre);
+  p.manual = { ...m, degrees: [...m.degrees] }; applyHarmony(p);
+  p.bpm = Math.max(60, Math.min(200, Math.round(bpm))); p.title = 'Desde cero';
+  p.tracks.forEach((t) => {
+    t.mute = false; t.groove = t.type === 'drum' && drums ? t.groove : undefined;
+    if (t.type === 'drum') { if (!drums) t.steps = Array(16).fill(0); else if (!t.steps.some(Boolean)) t.mute = true; }
+    if (t.type === 'bass') { t.steps = Array(16).fill(0); t.bassLine = Array(16).fill(0); }
+    if (t.type === 'arp' && t.arp) t.arp = { ...t.arp, mode: 'chord', gate: Array(16).fill(false) };
+    if (t.type === 'chords') { t.chordMode = 'stab'; t.steps = Array(16).fill(0); t.chordLen = 1; }
+    if (t.type === 'melody') { t.notes = []; t.autoMelody = false; }
+  });
+  return p;
+}
+
 export function applyHarmony(p: Project, salt = '') {
-  const h = harmonyFromName(p.name, p.harmony ?? 'tonal', salt, GENRES[p.genre]?.harm);
+  const h = p.manual ? manualHarmony(p.manual) : harmonyFromName(p.name, p.harmony ?? 'tonal', salt, GENRES[p.genre]?.harm);
   p.seq = h.seq; p.chords = h.chords; p.key = h.key; p.progression = h.progression; p.letterNotes = h.letterNotes; p.scale = h.scale; p.tonic = h.tonic;
   p.tracks.forEach((t) => { if (t.type === 'melody' && t.autoMelody) t.notes = generateMelody(p, salt); });
 }

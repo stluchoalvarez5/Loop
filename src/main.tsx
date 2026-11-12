@@ -17,7 +17,7 @@ import { migrate, listProjects, loadProject, saveProject, deleteProject, renameP
 import { registerSW } from 'virtual:pwa-register';
 import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
-  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, manualHarmony, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -428,6 +428,14 @@ function App() {
     remember(p, true); flushSave(); setVariant(v); setP(np); engine.update(np); save(np);
     if (!engine.playing) { await engine.play(np); setPlaying(true); checkAudio(); }
   };
+  // desde cero: loop vacío con la tonalidad y los acordes elegidos (no pisa un loop editado, igual que generar)
+  const fromScratch = (m: Manual, genre: string, drums: boolean) => {
+    const np = blankProject(m, genre, p.bpm, drums); np.id = p.edited ? newId() : p.id; np.edited = true;
+    if (p.edited) flash('"' + titleOf(p) + '" quedó guardado en Mis loops');
+    remember(p, true); flushSave(); setNameIn(''); setP(np); engine.update(np); save(np);
+    setTimeout(() => { goTab('pat'); flash(drums ? 'Loop nuevo con la batería del género: sumale bajo, acordes y melodía.' : 'Loop vacío: tocá los casilleros para armar tu ritmo.', 3500); }, 0);
+  };
+  const [genMode, setGenMode] = useState<'name' | 'zero'>(() => (p.manual ? 'zero' : 'name'));
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
   const [toast, setToast] = useState('');
   const flash = (m: string, ms = 1800) => { setToast(m); setTimeout(() => setToast(''), ms); };
@@ -478,6 +486,8 @@ function App() {
           <div class="seg2 vis-seg">{([['wave', 'Onda'], ['spectrum', 'Espectro'], ['circle', 'Círculo']] as const).map(([k, l]) => <button class={vis === k ? 'on' : ''} onClick={() => setVis(k)}>{l}</button>)}</div>
         </div>
         <Panel id="name" title="Generar" icon={Ic.spark} cls="a-name">
+          <div class="seg" style={{ marginBottom: '10px' }}><button class={genMode === 'name' ? 'on' : ''} onClick={() => setGenMode('name')}>Con un nombre</button><button class={genMode === 'zero' ? 'on' : ''} onClick={() => setGenMode('zero')}>Desde cero</button></div>
+          {genMode === 'zero' ? <Scratch p={p} up={up} create={fromScratch} /> : <>
           <form class="name-in" onSubmit={(e) => { e.preventDefault(); fromName(0); (document.activeElement as HTMLElement)?.blur(); }}>
             <input value={nameIn} onInput={(e) => setNameIn((e.target as HTMLInputElement).value)} placeholder="Escribí un nombre" maxLength={24} autocomplete="off" />
             <button class="btn hot" type="submit">Generar</button>
@@ -496,7 +506,8 @@ function App() {
               {([['tonal', 'Armónico'], ['puro', 'Puro']] as const).map(([k, l]) => <button class={(p.harmony ?? 'tonal') === k ? 'on' : ''} onClick={() => up((d) => { d.harmony = k; applyHarmony(d); })}>{l}</button>)}
             </div>}
           </div>
-          <div class="hint">Cada letra es una tonalidad y el loop sale de la que mejor le queda al nombre. Las notas en otro color se corrieron medio tono para encajar. "Otra versión" prueba otra progresión en el mismo género; "Al azar" elige una palabra.{adv ? ' Armónico busca la tonalidad; Puro usa las notas exactas de las letras, aunque suenen tensas.' : ''}</div>
+          </>}
+          {genMode === 'name' && <div class="hint">Cada letra es una tonalidad y el loop sale de la que mejor le queda al nombre. Las notas en otro color se corrieron medio tono para encajar. "Otra versión" prueba otra progresión en el mismo género; "Al azar" elige una palabra.{adv ? ' Armónico busca la tonalidad; Puro usa las notas exactas de las letras, aunque suenen tensas.' : ''}</div>}
         </Panel>
         <Panel id="macros" title="Macros" icon={Ic.sliders} cls="a-macros" right={<>{adv && <RecChip on={recA} toggle={toggleRecA} />}<button class="chip" onClick={() => up((d) => { d.macros = { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }; })}>Centrar</button></>}>
           <div class="macros">
@@ -960,13 +971,13 @@ const artKnobs = (labels: string[]) => <div class="art-knobs">{labels.map((l, k)
 const TUTS: Record<TutKey, TutStep[]> = {
   intro: [
     { title: 'Bienvenido a Loop', body: 'Acá armás loops de música electrónica de 4 compases: batería, bajo, arpegio, acordes, melodía y hasta tu voz. La app tiene cuatro secciones, abajo: Escena, Patrón, Mixer y Master.', art: artChips(['Escena', 'Patrón', 'Mixer', 'Master']) },
-    { title: 'Todo arranca con un nombre', body: 'Cada letra es una tonalidad: de la A a la L son mayores y de la M a la X, menores. Escribí un nombre en Escena, tocá Generar y la app arma un loop en la tonalidad que mejor le queda. El mismo nombre da siempre el mismo loop.', art: artName },
+    { title: 'Todo arranca con un nombre', body: 'Cada letra es una tonalidad: de la A a la L son mayores y de la M a la X, menores. Escribí un nombre en Escena, tocá Generar y la app arma un loop en la tonalidad que mejor le queda. El mismo nombre da siempre el mismo loop. Si preferís armarlo vos, en Generar elegí "Desde cero".', art: artName },
     { title: 'Cómo se mueven los controles', body: 'Para mover una perilla o un fader, mantené el dedo quieto un instante hasta que se marque y después arrastrá; si deslizás de una, solo se mueve la pantalla. Doble toque vuelve al valor inicial. Cada sección viene en paneles que se abren y cierran tocando el título, y el "?" de cada panel muestra su explicación. Arriba: la carpeta abre Mis loops, las flechas deshacen y rehacen, y "Simple / Avanzado" muestra u oculta las funciones más técnicas.', art: artBars([R, Y, G], [0.7, 0.4, 0.55, 0.3, 0.8]) },
   ],
   scene: [
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
     { title: 'Escenas', body: 'Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
-    { title: 'Nombre, versión y género', body: 'Generar arma el loop del nombre. Cada nombre nuevo arranca en Deep House. "Otra versión" prueba otra progresión en el mismo género. Los botones de género (Trance, Techno, House…) cambian batería, bajo, sonidos y armonía manteniendo tus notas. Armónico busca la tonalidad que mejor encaja; Puro usa las notas exactas de las letras.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
+    { title: 'Nombre, versión y género', body: 'Arriba elegís "Con un nombre" o "Desde cero": desde cero elegís vos la tonalidad, los 4 acordes y los sonidos de un género, y se crea un loop con la grilla vacía para armarlo a mano. Generar arma el loop del nombre. Cada nombre nuevo arranca en Deep House. "Otra versión" prueba otra progresión en el mismo género. Los botones de género (Trance, Techno, House…) cambian batería, bajo, sonidos y armonía manteniendo tus notas. Armónico busca la tonalidad que mejor encaja; Puro usa las notas exactas de las letras.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
     { title: 'Mis loops', body: 'Todo se guarda solo en el celu. La carpeta de arriba (con el nombre del loop) abre Mis loops: abrís cualquier loop anterior, lo duplicás, lo renombrás o lo borrás. Si generás otro nombre sin haber tocado nada, reemplaza al abierto; si lo editaste, queda guardado y el nuevo va aparte. "Guardar en un archivo" te lo llevás a otro celu, con tu voz incluida.', art: <div class="art-chips"><span class="on">Luciano · deep</span><span>Noche · techno</span><span>Fiesta · house</span></div> },
     { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí. Con "Automatizar macros" dibujás cómo cambian en los 4 compases, y con "Grabar movimientos" las grabás moviendo los faders mientras suena.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
     { title: 'Automatización rápida', body: 'Con un toque hacés que el loop se mueva a lo largo de los 4 compases. Subida: los filtros y la reverb van creciendo, como antes de un drop. Filtro que respira: abre y cierra en cada compás. Delay al final: eco en el último tiempo. Bombeo: los acordes y el arpegio laten con el pulso. Energía que crece y Espacio al final mueven las macros.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 70 C 60 68, 120 50, 192 10 L192 74 L8 74 Z" fill={Y} fill-opacity="0.18" /><path d="M8 70 C 60 68, 120 50, 192 10" fill="none" stroke={Y} stroke-width="2" /></svg> },
@@ -1117,6 +1128,40 @@ function Session({ p, rec, secs, take, toggleRec, clear }: { p: Project; rec: bo
       {!rec && !take && <div class="hint">Graba en vivo todo lo que sale por los parlantes, con cada cambio que hagas mientras suena, hasta 20 minutos. Al terminar la descargás en WAV o MP3. Si el loop está parado, arranca solo.</div>}
     </Panel>
   );
+}
+
+/* ---------- desde cero: tonalidad, acordes, género base y "Crear" ----------
+   Si el loop abierto ya es "desde cero", los cambios de tonalidad y acordes se aplican en vivo; "Crear" siempre arma uno nuevo. */
+function Scratch({ p, up, create }: { p: Project; up: (fn: (d: Project) => void) => void; create: (m: Manual, genre: string, drums: boolean) => void }) {
+  const [draft, setDraft] = useState<Manual>({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 });
+  const [genre, setGenre] = useState(p.genre), [drums, setDrums] = useState(false);
+  const live = !!p.manual, m = p.manual ?? draft;
+  const set = (fn: (x: Manual) => void) => { if (live) up((d) => { fn(d.manual!); applyHarmony(d); }); else { const x = { ...draft, degrees: [...draft.degrees] }; fn(x); setDraft(x); } };
+  const roman = ROMAN[m.mode], progs = PROGS[m.mode], cur = progs.find(([, d]) => d.join() === m.degrees.join());
+  const names = manualHarmony({ ...m, degrees: [0, 1, 2, 3, 4, 5, 6] }).chords.map((c) => c.name); // nombre de cada grado en esta tonalidad
+  return <>
+    {live && <div class="note" style={{ marginTop: 0, marginBottom: '8px' }}>Este loop está armado desde cero: lo que cambies acá suena al instante.</div>}
+    <div class="gen-row" style={{ marginTop: 0 }}>
+      <label class="sel-w"><span>Tónica</span><select class="sel" value={m.tonic} onChange={(e) => set((x) => { x.tonic = +(e.target as HTMLSelectElement).value; })}>{NOTE_ES.map((n, i) => <option value={i}>{n}</option>)}</select></label>
+      <div class="sel-w"><span>Modo</span><div class="seg"><button class={m.mode === 'min' ? 'on' : ''} onClick={() => set((x) => { if (x.mode !== 'min') { x.mode = 'min'; x.degrees = [...PROGS.min[0][1]]; } })}>Menor</button><button class={m.mode === 'maj' ? 'on' : ''} onClick={() => set((x) => { if (x.mode !== 'maj') { x.mode = 'maj'; x.degrees = [...PROGS.maj[0][1]]; } })}>Mayor</button></div></div>
+    </div>
+    <label class="sel-w" style={{ marginTop: '10px' }}><span>Progresión</span><select class="sel" value={cur ? cur[0] : ''} onChange={(e) => { const pr = progs.find(([n]) => n === (e.target as HTMLSelectElement).value); if (pr) set((x) => { x.degrees = [...pr[1]]; }); }}>
+      {!cur && <option value="">A mano</option>}
+      {progs.map(([n, d]) => <option value={n}>{n} ({d.map((k) => names[k]).join(' ')})</option>)}
+    </select></label>
+    <div class="sub">Acorde de cada compás</div>
+    <div class="bars4">{m.degrees.map((d, i) => <label class="sel-w"><span>{i + 1}</span><select class="sel" value={d} onChange={(e) => set((x) => { x.degrees[i] = +(e.target as HTMLSelectElement).value; })}>{roman.map((r, k) => <option value={k}>{r} · {names[k]}</option>)}</select></label>)}</div>
+    {live && <div class="keyline"><span>Suena: <b>{p.chords.map((c) => c.name).join(' · ')}</b></span></div>}
+    <div class="sub">Color de los acordes</div>
+    <div class="seg">{([[0, 'Tríadas'], [7, 'Séptimas'], [9, 'Novenas']] as [number, string][]).map(([v, l]) => <button class={m.ext === v ? 'on' : ''} onClick={() => set((x) => { x.ext = v; })}>{l}</button>)}</div>
+    <div class="sub">Para el loop nuevo</div>
+    <div class="gen-row" style={{ marginTop: 0 }}>
+      <label class="sel-w"><span>Sonidos de</span><select class="sel" value={genre} onChange={(e) => setGenre((e.target as HTMLSelectElement).value)}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
+      <button class={'ib' + (drums ? ' on' : '')} onClick={() => setDrums(!drums)} aria-pressed={drums}>{Ic.kick}<small>{drums ? 'Con batería' : 'Sin batería'}</small></button>
+    </div>
+    <button class="btn hot" style={{ width: '100%', marginTop: '12px' }} onClick={() => create(m, genre, drums)}>{live ? 'Crear otro loop desde cero' : 'Crear loop desde cero'}</button>
+    <div class="hint">Elegís la tonalidad (la nota y si es menor, más oscura, o mayor, más alegre) y un acorde por compás, de una lista de progresiones típicas o uno por uno. "Sonidos de" elige los sintes, el kit y la mezcla de un género. Se crea un loop con la grilla vacía (o solo con la batería del género) y lo armás en Patrón: tocás los casilleros para los golpes, el bajo, los acordes y el arpegio, y la melodía va en el piano roll. El bajo, el arpegio y los acordes siguen solos los acordes que elegiste.</div>
+  </>;
 }
 
 /* ---------- tempo: mantener + o − lo hace correr; tocar el número marca el tempo con toques (tap) ---------- */
