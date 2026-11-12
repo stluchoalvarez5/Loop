@@ -4,7 +4,7 @@ URL = "http://localhost:4173/"
 with sync_playwright() as p:
     b = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
     pg = b.new_page(viewport={"width": 390, "height": 844})
-    pg.add_init_script("['pat', 'mix', 'master'].forEach((k) => localStorage.setItem('loop.seen.' + k, '1'))")
+    pg.add_init_script("['pat', 'mix', 'master'].forEach((k) => localStorage.setItem('loop.seen.' + k, '1')); localStorage.setItem('loop.adv', '1'); localStorage.setItem('loop.open.out', '1')")
     errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
