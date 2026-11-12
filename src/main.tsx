@@ -17,7 +17,7 @@ import { migrate, listProjects, loadProject, saveProject, deleteProject, renameP
 import { registerSW } from 'virtual:pwa-register';
 import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
-  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, manualHarmony, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -256,11 +256,11 @@ function Sheet({ title, icon, onClose, children }: { title: string; icon?: any; 
   </div>;
 }
 /* vista de detalle del instrumento (abajo, como en Ableton): pestañas Sonido, Notas, Movimiento y Más */
-type DTab = 'snd' | 'notes' | 'move' | 'more';
-function Detail({ p, t, upT, up, adv, playing, onClose, onDelete }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; adv: boolean; playing: boolean; onClose: () => void; onDelete: () => void }) {
-  const [tab, setTab] = useState<DTab>('snd'), [help, setHelp] = useState(false);
+type DTab = 'snd' | 'notes' | 'eq' | 'move' | 'more';
+function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; adv: boolean; playing: boolean; onClose: () => void; onDelete: () => void; init?: DTab }) {
+  const [tab, setTab] = useState<DTab>(init), [help, setHelp] = useState(false);
   const hasNotes = t.type === 'melody' || t.type === 'bass' || t.type === 'arp' || t.type === 'chords';
-  const tabs: [DTab, string, any][] = [['snd', 'Sonido', Ic.wave], ...(hasNotes ? [['notes', 'Notas', Ic.notes] as [DTab, string, any]] : []), ...(adv && t.type !== 'vocal' ? [['move', 'Movimiento', Ic.curve] as [DTab, string, any]] : []), ['more', 'Más', Ic.more]];
+  const tabs: [DTab, string, any][] = [['snd', 'Sonido', Ic.wave], ...(hasNotes ? [['notes', 'Notas', Ic.notes] as [DTab, string, any]] : []), ['eq', 'EQ', Ic.eq], ...(adv && t.type !== 'vocal' ? [['move', 'Movimiento', Ic.curve] as [DTab, string, any]] : []), ['more', 'Más', Ic.more]];
   const cur = tabs.some((x) => x[0] === tab) ? tab : 'snd';
   const canVary = t.type !== 'vocal' && !(t.roll && t.type !== 'melody');
   return (
@@ -276,6 +276,7 @@ function Detail({ p, t, upT, up, adv, playing, onClose, onDelete }: { p: Project
       <div class="db">
         {cur === 'snd' && (t.type === 'vocal' ? <VocalEditor p={p} t={t} upT={upT} power={null} onDelete={onDelete} bare /> : <TrackEditor p={p} t={t} upT={upT} up={up} part="snd" adv={adv} />)}
         {cur === 'notes' && <TrackEditor p={p} t={t} upT={upT} up={up} part="notes" adv={adv} />}
+        {cur === 'eq' && <EqEditor t={t} upT={upT} />}
         {cur === 'move' && <AutoEditor key={t.id} t={t} upT={upT} playing={playing} bare />}
         {cur === 'more' && <>
           <TrackTools p={p} t={t} upT={upT} />
@@ -304,7 +305,7 @@ const hz = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : Math.round(
 
 /* ---------- app ---------- */
 function App() {
-  const [p, setP] = useState<Project>(() => load() ?? projectFromName('Loop'));
+  const [p, setP] = useState<Project>(() => load() ?? blankProject({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 }, 'deep', 122, true));
   const [recA, setRecA] = useState(false); // grabar movimientos
   // modo Simple (por defecto) o Avanzado: el avanzado muestra automatización, sinte pro, MIDI, grupos, EQ e insertos
   const [adv, setAdvS] = useState(() => { try { return localStorage.getItem('loop.adv') === '1'; } catch { return false; } });
@@ -342,8 +343,6 @@ function App() {
     clearInterval(recTimer.current); const t = await engine.stopSession(); setRec(false);
     if (t && t.frames > 0) { setTake(t); flash((limit ? 'Llegaste a los 20 minutos. ' : '') + 'Sesión grabada: la descargás en Master.', 4000); }
   };
-  const [nameIn, setNameIn] = useState(p.name === 'Loop' ? '' : p.name);
-  const [variant, setVariant] = useState(0);
   const phRef = useRef<HTMLStyleElement>(null), meterRef = useRef<HTMLElement>(null), barRef = useRef<HTMLElement>(null), lufsRef = useRef<HTMLElement>(null);
   const [stats, setStats] = useState({ lufs: -70, auto: 0, gr: 0 });
   const vuRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -369,7 +368,7 @@ function App() {
   };
   useEffect(() => { onSaveFail = () => flash('No queda lugar en el celu para guardar: borrá algún loop en Mis loops.', 5000); engine.update(p); save(p); loadVoxes(p); }, []);
   // abrir otro proyecto: suena al instante (si estaba sonando, sigue) y se cargan sus voces
-  const openProject = (np: Project) => { flushSave(); hist.current = { past: [], future: [], t: 0 }; queuedRef.current = null; setQueued(null); setP(np); setNameIn(np.name === 'Loop' ? '' : np.name); setVariant(0); engine.update(np); save(np); loadVoxes(np); if (!np.tracks.some((t) => t.id === sel)) setSel(np.tracks[0]?.id ?? ''); };
+  const openProject = (np: Project) => { flushSave(); hist.current = { past: [], future: [], t: 0 }; queuedRef.current = null; setQueued(null); setP(np); engine.update(np); save(np); loadVoxes(np); if (!np.tracks.some((t) => t.id === sel)) setSel(np.tracks[0]?.id ?? ''); };
   const toggleRecA = () => { const on = !REC.on; REC.on = on; setRecA(on); if (on) { if (!engine.playing) toggle(); flash('Grabando movimientos: lo que muevas en el Mixer o en las Macros queda en la automatización.', 3500); } };
   useEffect(() => {
     let lastStat = 0;
@@ -421,21 +420,14 @@ function App() {
     const f = () => { engine.unlock(); ['pointerdown', 'touchend', 'keydown'].forEach((e) => window.removeEventListener(e, f, true)); };
     ['pointerdown', 'touchend', 'keydown'].forEach((e) => window.addEventListener(e, f, true));
   }, []);
-  const fromName = async (v = 0, word?: string) => {
-    // si no tocaste nada, el loop nuevo ocupa el mismo lugar (el nombre lo vuelve a armar igual); si lo editaste, el nuevo va a un lugar aparte
-    const np = projectFromName(word ?? (nameIn || 'Loop'), v, v ? p.genre : 'deep'); np.id = p.edited ? newId() : p.id; np.edited = false;
-    if (p.edited) flash('"' + titleOf(p) + '" quedó guardado en Mis loops');
-    remember(p, true); flushSave(); setVariant(v); setP(np); engine.update(np); save(np);
-    if (!engine.playing) { await engine.play(np); setPlaying(true); checkAudio(); }
-  };
+
   // desde cero: loop vacío con la tonalidad y los acordes elegidos (no pisa un loop editado, igual que generar)
   const fromScratch = (m: Manual, genre: string, drums: boolean) => {
     const np = blankProject(m, genre, p.bpm, drums); np.id = p.edited ? newId() : p.id; np.edited = true;
     if (p.edited) flash('"' + titleOf(p) + '" quedó guardado en Mis loops');
-    remember(p, true); flushSave(); setNameIn(''); setP(np); engine.update(np); save(np);
+    remember(p, true); flushSave(); setP(np); engine.update(np); save(np);
     setTimeout(() => { goTab('pat'); flash(drums ? 'Loop nuevo con la batería del género: sumale bajo, acordes y melodía.' : 'Loop vacío: tocá los casilleros para armar tu ritmo.', 3500); }, 0);
   };
-  const [genMode, setGenMode] = useState<'name' | 'zero'>(() => (p.manual ? 'zero' : 'name'));
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
   const [toast, setToast] = useState('');
   const flash = (m: string, ms = 1800) => { setToast(m); setTimeout(() => setToast(''), ms); };
@@ -446,12 +438,11 @@ function App() {
   const letters = useMemo(() => { const c = clean(p.name || 'Loop'); return [...c].map((ch) => [ch, letterNote(ch)]); }, [p.name]);
   const arpNotes = useMemo(() => { const o: Record<string, (s: number) => number> = {}; p.tracks.forEach((t) => { if (t.type === 'arp') o[t.id] = arpPreview(p, t); }); return o; }, [p]);
 
-  const [detail, setDetail] = useState(false), [loopsOpen, setLoopsOpen] = useState(false);
-  const pick = (id: string) => { if (id === sel && detail) setDetail(false); else { setSel(id); setDetail(true); } };
+  const [detail, setDetail] = useState(false), [loopsOpen, setLoopsOpen] = useState(false), [dTab, setDTab] = useState<DTab>('snd');
+  const pick = (id: string, tb: DTab = 'snd') => { if (id === sel && detail && tb === dTab) setDetail(false); else { setSel(id); setDTab(tb); setDetail(true); } };
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDetail(false); setLoopsOpen(false); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
-  const dice = () => { const cats = Object.keys(WORDS); let w = '', c = ''; do { c = cats[Math.floor(Math.random() * cats.length)]; w = WORDS[c][Math.floor(Math.random() * WORDS[c].length)]; } while (w === p.name); setNameIn(w); fromName(0, w); flash(w + ' · ' + c.toLowerCase()); };
   const delTrack = () => { if (!tr) return; const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); if (tr.type === 'vocal') deleteVox(tr.id).catch(() => {}); setSel(left[0].id); setDetail(false); flash(tr.name + ' eliminada'); };
-  const showDetail = detail && tab === 'pat' && !!tr;
+  const showDetail = detail && (tab === 'pat' || tab === 'mix') && !!tr;
 
   return (
     <div class={'app' + (adv ? ' adv' : ' simple') + (showDetail ? ' has-detail' : '')}>
@@ -482,32 +473,11 @@ function App() {
 
       {tab === 'scene' && <div class="page scene">
         <div class="a-stage">
-          <Stage engine={engine} mode={vis} bpm={p.bpm} playing={playing} onTap={toggle} hud={{ name: p.name || 'Loop', key: p.key ?? '', genre: GENRES[p.genre]?.name ?? '' }} />
+          <Stage engine={engine} mode={vis} bpm={p.bpm} playing={playing} onTap={toggle} hud={{ name: titleOf(p), key: p.key ?? '', genre: GENRES[p.genre]?.name ?? '' }} />
           <div class="seg2 vis-seg">{([['wave', 'Onda'], ['spectrum', 'Espectro'], ['circle', 'Círculo']] as const).map(([k, l]) => <button class={vis === k ? 'on' : ''} onClick={() => setVis(k)}>{l}</button>)}</div>
         </div>
-        <Panel id="name" title="Generar" icon={Ic.spark} cls="a-name">
-          <div class="seg" style={{ marginBottom: '10px' }}><button class={genMode === 'name' ? 'on' : ''} onClick={() => setGenMode('name')}>Con un nombre</button><button class={genMode === 'zero' ? 'on' : ''} onClick={() => setGenMode('zero')}>Desde cero</button></div>
-          {genMode === 'zero' ? <Scratch p={p} up={up} create={fromScratch} /> : <>
-          <form class="name-in" onSubmit={(e) => { e.preventDefault(); fromName(0); (document.activeElement as HTMLElement)?.blur(); }}>
-            <input value={nameIn} onInput={(e) => setNameIn((e.target as HTMLInputElement).value)} placeholder="Escribí un nombre" maxLength={24} autocomplete="off" />
-            <button class="btn hot" type="submit">Generar</button>
-          </form>
-          <div class="gen-row">
-            <label class="sel-w"><span>Género</span><select class="sel" value={p.genre} onChange={(e) => up((d) => applyGenre(d, (e.target as HTMLSelectElement).value))}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
-            <button class="ib" onClick={() => fromName(variant + 1)} aria-label="Otra versión">{Ic.refresh}<small>Otra versión</small></button>
-            <button class="ib" onClick={dice} aria-label="Palabra aleatoria">{Ic.dice}<small>Al azar</small></button>
-          </div>
-          <div class="recipe">
-            {(p.letterNotes ?? letters.map(([ch, note]) => ({ ch, note, moved: false }))).map((x) => <span class={'ln' + (x.moved ? ' mv' : '')} title={x.moved ? 'Corrida para entrar en la tonalidad' : ''}><b>{x.ch}</b> {x.note}</span>)}
-          </div>
-          <div class="keyline">
-            <span>Tonalidad: <b>{p.key ?? '–'}</b>{p.progression ? <> · {p.progression}</> : null}</span>
-            {adv && <div class="seg2">
-              {([['tonal', 'Armónico'], ['puro', 'Puro']] as const).map(([k, l]) => <button class={(p.harmony ?? 'tonal') === k ? 'on' : ''} onClick={() => up((d) => { d.harmony = k; applyHarmony(d); })}>{l}</button>)}
-            </div>}
-          </div>
-          </>}
-          {genMode === 'name' && <div class="hint">Cada letra es una tonalidad y el loop sale de la que mejor le queda al nombre. Las notas en otro color se corrieron medio tono para encajar. "Otra versión" prueba otra progresión en el mismo género; "Al azar" elige una palabra.{adv ? ' Armónico busca la tonalidad; Puro usa las notas exactas de las letras, aunque suenen tensas.' : ''}</div>}
+        <Panel id="name" title="Armar" icon={Ic.spark} cls="a-name">
+          <Scratch p={p} up={up} create={fromScratch} />
         </Panel>
         <Panel id="macros" title="Macros" icon={Ic.sliders} cls="a-macros" right={<>{adv && <RecChip on={recA} toggle={toggleRecA} />}<button class="chip" onClick={() => up((d) => { d.macros = { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }; })}>Centrar</button></>}>
           <div class="macros">
@@ -578,7 +548,7 @@ function App() {
           <div class="hint">Tocá el nombre de un instrumento para abrir su editor abajo (sonido, notas y más). El botón de color de la izquierda lo enciende o apaga. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga; los casilleros tenues son golpes suaves. Arriba a la derecha: redoble al final de cada vuelta y vaciar la batería.</div>
         </Panel>
       </div>}
-      {showDetail && tr && <Detail key={tr.id} p={p} t={tr} upT={upT} up={up} adv={adv} playing={playing} onClose={() => setDetail(false)} onDelete={delTrack} />}
+      {showDetail && tr && <Detail key={tr.id + dTab} init={dTab} p={p} t={tr} upT={upT} up={up} adv={adv} playing={playing} onClose={() => setDetail(false)} onDelete={delTrack} />}
       {toast && <div class="toast">{toast}</div>}
       {noAudio && <div class="toast">Este navegador no puede reproducir el audio de la app. En iPhone hace falta iOS 14.5 o más nuevo: actualizá el sistema o probá con otro navegador.</div>}
 
@@ -589,7 +559,7 @@ function App() {
             const f = t.fx ?? {}, nfx = [t.rev > 0.01, t.dly > 0.01, (f.drive ?? 0) > 0.01, (f.chorus ?? 0) > 0.01, !!f.hp, !!f.lp, !!f.crush, !!f.phaser].filter(Boolean).length + (t.auto ? Object.keys(t.auto).length : 0);
             return (
             <div class={'strip' + (gMuted(p, t) ? ' gmute' : '') + (open ? ' open' : '')} style={{ '--c': t.color } as any}>
-              <div class="nm"><span class="ti">{trackIcon(t)}</span>{t.name}{vol.mark && <i class="ka">A</i>}</div>
+              <button class="nm" onClick={() => pick(t.id, 'eq')} aria-label={'Abrir ' + t.name}><span class="ti">{trackIcon(t)}</span>{t.name}{vol.mark && <i class="ka">A</i>}</button>
               {adv && <div class="gt">{t.group ? p.groups?.find((g) => g.id === t.group)?.name : ' '}</div>}
               <Fader h={land ? 96 : 150} label={'Volumen ' + t.name} value={vol.value} def={0.8} color={t.color} onChange={vol.onChange} />
               <div class="ms">
@@ -597,6 +567,7 @@ function App() {
                 <button class={'s' + (t.solo ? ' on' : '')} {...tap(() => upT(t.id, (x) => { x.solo = !x.solo; }))} aria-label={'Solo ' + t.name}>S</button>
               </div>
               <div class="mini"><Knob label="Pan" {...K('pan')} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.02 ? 'C' : (v < 0 ? 'L' : 'R') + Math.round(Math.abs(v) * 100))} /></div>
+              <button class={'fxbtn eqb' + (t.eq?.some((b) => Math.abs(b.g) > 0.05) ? ' on' : '')} onClick={() => pick(t.id, 'eq')} aria-label={'Ecualizador de ' + t.name}>EQ</button>
               {adv && <button class="fxbtn" aria-expanded={open} onClick={() => setFxOpen({ ...fxOpen, [t.id]: !open })}>{open ? 'Cerrar' : 'Efectos'}{!open && nfx > 0 && <i>{nfx}</i>}</button>}
               {open && <>
               <div class="kn4">
@@ -680,7 +651,7 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
       ? <><PianoRoll p={p} t={t} upT={upT} />
         <div class="chips" style={{ marginTop: '8px' }}><button class="chip" onClick={() => upT(t.id, (x) => { x.roll = false; })}>Volver a lo generado</button></div>
         <div class="hint">Esta pista suena con las notas del piano roll. "Volver a lo generado" usa otra vez el modo y el patrón de Sonido (tus notas quedan guardadas).</div></>
-      : <><div class="empty-note">Esta pista toca lo que arma el género y el nombre.</div>
+      : <><div class="empty-note">Esta pista sigue sola los acordes, con el patrón de la pestaña Sonido.</div>
         <button class="btn hot" onClick={() => upT(t.id, (x) => { if (!x.notes?.length || !x.rollEdited) x.notes = rollFromTrack(p, t); x.roll = true; })}>Editar notas en piano roll</button>
         <div class="hint">Pasa lo que toca esta pista al piano roll para que cambies, agregues o saques notas a mano.</div></>)}
   </>;
@@ -954,7 +925,7 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
       {t.type === 'melody' && <button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.notes = generateMelody(p, String(Date.now())); x.autoMelody = true; })}>Nueva melodía</button>}
       {t.type !== 'melody' && <button class="chip" onClick={() => upT(t.id, (x) => { x.notes = rollFromTrack(p, { ...x, roll: false }); x.rollEdited = false; })}>Traer de nuevo lo generado</button>}
     </div>
-    <div class="hint">Tocá un casillero para poner una nota (suena al agregarla) y tocala de nuevo para sacarla. Podés poner varias notas en el mismo paso para armar acordes. Sin "Usar todas las notas" ves las notas de la tonalidad de tu nombre; con esa opción, el piano entero (con Octava − y + llegás a cualquier altura).</div>
+    <div class="hint">Tocá un casillero para poner una nota (suena al agregarla) y tocala de nuevo para sacarla. Podés poner varias notas en el mismo paso para armar acordes. Sin "Usar todas las notas" ves las notas de la tonalidad del loop; con esa opción, el piano entero (con Octava − y + llegás a cualquier altura).</div>
   </>;
 }
 
@@ -971,14 +942,14 @@ const artKnobs = (labels: string[]) => <div class="art-knobs">{labels.map((l, k)
 const TUTS: Record<TutKey, TutStep[]> = {
   intro: [
     { title: 'Bienvenido a Loop', body: 'Acá armás loops de música electrónica de 4 compases: batería, bajo, arpegio, acordes, melodía y hasta tu voz. La app tiene cuatro secciones, abajo: Escena, Patrón, Mixer y Master.', art: artChips(['Escena', 'Patrón', 'Mixer', 'Master']) },
-    { title: 'Todo arranca con un nombre', body: 'Cada letra es una tonalidad: de la A a la L son mayores y de la M a la X, menores. Escribí un nombre en Escena, tocá Generar y la app arma un loop en la tonalidad que mejor le queda. El mismo nombre da siempre el mismo loop. Si preferís armarlo vos, en Generar elegí "Desde cero".', art: artName },
+    { title: 'Armá tu loop', body: 'En Escena, el panel Armar: elegís la tonalidad (la nota y si es menor, más oscura, o mayor, más alegre) y un acorde para cada uno de los 4 compases, con progresiones típicas listas. Para empezar uno nuevo elegís de qué género salen los sonidos y si arranca con batería o vacío. Después lo armás en Patrón tocando los casilleros.', art: artName },
     { title: 'Cómo se mueven los controles', body: 'Para mover una perilla o un fader, mantené el dedo quieto un instante hasta que se marque y después arrastrá; si deslizás de una, solo se mueve la pantalla. Doble toque vuelve al valor inicial. Cada sección viene en paneles que se abren y cierran tocando el título, y el "?" de cada panel muestra su explicación. Arriba: la carpeta abre Mis loops, las flechas deshacen y rehacen, y "Simple / Avanzado" muestra u oculta las funciones más técnicas.', art: artBars([R, Y, G], [0.7, 0.4, 0.55, 0.3, 0.8]) },
   ],
   scene: [
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
     { title: 'Escenas', body: 'Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
-    { title: 'Nombre, versión y género', body: 'Arriba elegís "Con un nombre" o "Desde cero": desde cero elegís vos la tonalidad, los 4 acordes y los sonidos de un género, y se crea un loop con la grilla vacía para armarlo a mano. Generar arma el loop del nombre. Cada nombre nuevo arranca en Deep House. "Otra versión" prueba otra progresión en el mismo género. Los botones de género (Trance, Techno, House…) cambian batería, bajo, sonidos y armonía manteniendo tus notas. Armónico busca la tonalidad que mejor encaja; Puro usa las notas exactas de las letras.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
-    { title: 'Mis loops', body: 'Todo se guarda solo en el celu. La carpeta de arriba (con el nombre del loop) abre Mis loops: abrís cualquier loop anterior, lo duplicás, lo renombrás o lo borrás. Si generás otro nombre sin haber tocado nada, reemplaza al abierto; si lo editaste, queda guardado y el nuevo va aparte. "Guardar en un archivo" te lo llevás a otro celu, con tu voz incluida.', art: <div class="art-chips"><span class="on">Luciano · deep</span><span>Noche · techno</span><span>Fiesta · house</span></div> },
+    { title: 'Tonalidad, acordes y loop nuevo', body: 'Lo que cambiás en Armar (tonalidad, acordes y color: tríadas, séptimas o novenas) suena al instante en el loop abierto, y el bajo, el arpegio y los acordes lo siguen solos. "Crear loop nuevo" arma otro con los sonidos, el kit y la mezcla del género que elijas; si el anterior estaba editado, queda guardado en Mis loops.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
+    { title: 'Mis loops', body: 'Todo se guarda solo en el celu. La carpeta de arriba (con el nombre del loop) abre Mis loops: abrís cualquier loop anterior, lo duplicás, lo renombrás o lo borrás. Si creás un loop nuevo sin haber tocado el abierto, lo reemplaza; si lo editaste, queda guardado y el nuevo va aparte. "Guardar en un archivo" te lo llevás a otro celu, con tu voz incluida.', art: <div class="art-chips"><span class="on">Luciano · deep</span><span>Noche · techno</span><span>Fiesta · house</span></div> },
     { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí. Con "Automatizar macros" dibujás cómo cambian en los 4 compases, y con "Grabar movimientos" las grabás moviendo los faders mientras suena.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
     { title: 'Automatización rápida', body: 'Con un toque hacés que el loop se mueva a lo largo de los 4 compases. Subida: los filtros y la reverb van creciendo, como antes de un drop. Filtro que respira: abre y cierra en cada compás. Delay al final: eco en el último tiempo. Bombeo: los acordes y el arpegio laten con el pulso. Energía que crece y Espacio al final mueven las macros.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 70 C 60 68, 120 50, 192 10 L192 74 L8 74 Z" fill={Y} fill-opacity="0.18" /><path d="M8 70 C 60 68, 120 50, 192 10" fill="none" stroke={Y} stroke-width="2" /></svg> },
     { title: 'Batería', body: 'Elegí el kit: el 909 y el 808 clásicos, uno por género, Synthwave 80s, Electro o Lo-Fi. Cambia el sonido del bombo, el clap, los hats y el redoblante sin tocar el patrón.', art: artChips(['909', '808', 'Techno', 'Lo-Fi'], 1) },
@@ -989,7 +960,8 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Editar una pista', body: 'Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Variación, copiar y pegar', body: 'El dado arriba del editor de cada instrumento le da otro patrón (de los que usa el género, o cambiando algunos golpes y notas). En la pestaña Más, "Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. Arriba de la grilla, las barritas agregan un redoble y el tacho vacía la batería.', art: artChips(['Variación', 'Copiar patrón', 'Pegar'], 0) },
     { title: 'Sinte pro', body: 'En modo Avanzado, en la pestaña Sonido del bajo, el arpegio, los acordes o la melodía, "Editar a fondo" abre un sinte completo, estilo Serum: dos osciladores con tablas de onda (Forma recorre la tabla), unísono con detune y ancho estéreo, sub y ruido, filtro de varios tipos, dos envolventes, dos LFO al ritmo del loop y una matriz para conectar todo. Hay sonidos pro listos y podés guardar los tuyos en Mis sonidos.', art: artKnobs(['Forma', 'Detune', 'Corte', 'LFO']) },
-    { title: 'Piano roll', body: 'La melodía son 4 compases que salen de tu nombre, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
+    { title: 'Ecualizador de cada instrumento', body: 'En el editor de cada instrumento, la pestaña EQ tiene un ecualizador de 4 bandas: arrastrás los puntos de la curva con el dedo (a los costados la frecuencia, arriba o abajo cuánto sube o baja) o usás las perillas y los ajustes rápidos (Menos barro, Más brillo, Radio…). En el Mixer lo abrís con el botón EQ de cada columna.', art: artKnobs(['Graves', 'Medio', 'Agudos', 'Ancho']) },
+    { title: 'Piano roll', body: 'La melodía son 4 compases que dibujás en el piano roll, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
     { title: 'Automatización', body: 'En modo Avanzado, la pestaña Movimiento de cada instrumento es su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
   ],
@@ -1130,17 +1102,82 @@ function Session({ p, rec, secs, take, toggleRec, clear }: { p: Project; rec: bo
   );
 }
 
+/* ---------- EQ de cada instrumento: 4 bandas con la curva a la vista (se arrastran los puntos) ---------- */
+const EQ_SR = 48000, EQ_RANGE = [[20, 1000], [40, 8000], [200, 16000], [1500, 20000]], EQ_COL = ['#e5655b', '#ffc24d', '#8ad27a', '#5fb0f0'];
+const EQ_NAMES = ['Graves', 'Medio 1', 'Medio 2', 'Agudos'];
+/* mismos coeficientes que el Biquad del motor, para dibujar exactamente lo que suena */
+function bqCoef(type: string, f: number, q: number, g: number) {
+  const A = Math.pow(10, g / 40), w = 2 * Math.PI * Math.min(f, EQ_SR * 0.45) / EQ_SR, cs = Math.cos(w), al = Math.sin(w) / (2 * q);
+  let b0, b1, b2, a0, a1, a2;
+  if (type === 'peak') { b0 = 1 + al * A; b1 = -2 * cs; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cs; a2 = 1 - al / A; }
+  else if (type === 'ls') { const sq = 2 * Math.sqrt(A) * al; b0 = A * ((A + 1) - (A - 1) * cs + sq); b1 = 2 * A * ((A - 1) - (A + 1) * cs); b2 = A * ((A + 1) - (A - 1) * cs - sq); a0 = (A + 1) + (A - 1) * cs + sq; a1 = -2 * ((A - 1) + (A + 1) * cs); a2 = (A + 1) + (A - 1) * cs - sq; }
+  else { const sq = 2 * Math.sqrt(A) * al; b0 = A * ((A + 1) + (A - 1) * cs + sq); b1 = -2 * A * ((A - 1) + (A + 1) * cs); b2 = A * ((A + 1) + (A - 1) * cs - sq); a0 = (A + 1) - (A - 1) * cs + sq; a1 = 2 * ((A - 1) - (A + 1) * cs); a2 = (A + 1) - (A - 1) * cs - sq; }
+  return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0];
+}
+function bqDb(c: number[], f: number) {
+  const w = 2 * Math.PI * f / EQ_SR, c1 = Math.cos(w), s1 = Math.sin(w), c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);
+  const nr = c[0] + c[1] * c1 + c[2] * c2, ni = -(c[1] * s1 + c[2] * s2), dr = 1 + c[3] * c1 + c[4] * c2, di = -(c[3] * s1 + c[4] * s2);
+  return 10 * Math.log10((nr * nr + ni * ni) / (dr * dr + di * di));
+}
+const eqType = (k: number) => (k === 0 ? 'ls' : k === 3 ? 'hs' : 'peak');
+const EQ_PRESETS: [string, (b: EqBand[]) => void][] = [
+  ['Plano', (b) => b.forEach((x) => { x.g = 0; })],
+  ['Menos barro', (b) => { b[1] = { f: 320, g: -4, q: 1.2 }; }],
+  ['Más cuerpo', (b) => { b[0] = { f: 120, g: 3, q: 0.7 }; }],
+  ['Menos graves', (b) => { b[0] = { f: 150, g: -8, q: 0.7 }; }],
+  ['Presencia', (b) => { b[2] = { f: 3200, g: 3, q: 0.9 }; }],
+  ['Más brillo', (b) => { b[3] = { f: 8000, g: 4, q: 0.7 }; }],
+  ['Más oscuro', (b) => { b[3] = { f: 5000, g: -6, q: 0.7 }; }],
+  ['Radio', (b) => { b[0] = { f: 400, g: -12, q: 0.7 }; b[2] = { f: 1600, g: 5, q: 1.2 }; b[3] = { f: 3500, g: -12, q: 0.7 }; }],
+];
+function EqEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const bands = t.eq ?? EQ_DEF, [sel, setSel] = useState(1), ref = useRef<SVGSVGElement>(null), drag = useRef(-1), raf = useRef(0), pend = useRef<EqBand | null>(null);
+  const W = 320, H = 150, GMAX = 18;
+  const fx = (f: number) => (Math.log(f / 20) / Math.log(1000)) * W, gy = (g: number) => H / 2 - (g / GMAX) * (H / 2 - 8);
+  const curve = useMemo(() => { const cs = bands.map((b, k) => (Math.abs(b.g) > 0.05 ? bqCoef(eqType(k), b.f, k === 0 || k === 3 ? 0.707 : b.q, b.g) : null)); let d = ''; for (let i = 0; i <= 120; i++) { const f = 20 * Math.pow(1000, i / 120); let db = 0; cs.forEach((c) => { if (c) db += bqDb(c, f); }); d += (i ? 'L' : 'M') + ((i / 120) * W).toFixed(1) + ' ' + gy(Math.max(-GMAX, Math.min(GMAX, db))).toFixed(1); } return d; }, [bands]);
+  const setBand = (k: number, b: Partial<EqBand>) => upT(t.id, (x) => { const e = (x.eq ?? EQ_DEF).map((y) => ({ ...y })); e[k] = { ...e[k], ...b }; x.eq = e; });
+  const at = (e: PointerEvent) => { const r = ref.current!.getBoundingClientRect(); const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H; return { f: 20 * Math.pow(1000, Math.max(0, Math.min(1, x / W))), g: Math.max(-GMAX, Math.min(GMAX, ((H / 2 - y) / (H / 2 - 8)) * GMAX)), x, y }; };
+  const move = (e: PointerEvent) => {
+    const k = drag.current; if (k < 0) return; const { f, g } = at(e), [lo, hi] = EQ_RANGE[k];
+    pend.current = { ...bands[k], f: Math.round(Math.max(lo, Math.min(hi, f))), g: Math.abs(g) < 0.4 ? 0 : +g.toFixed(1) };
+    cancelAnimationFrame(raf.current); raf.current = requestAnimationFrame(() => { if (pend.current) setBand(k, pend.current); });
+  };
+  const b = bands[sel], fmtF = (f: number) => (f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 0 : 1) + 'k' : Math.round(f) + '') + ' Hz';
+  return <>
+    <svg ref={ref} class="eqg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Curva del ecualizador"
+      onPointerDown={(e) => { const r = at(e as any); let best = 0, bd = 1e9; bands.forEach((x, k) => { const d = Math.hypot(fx(x.f) - r.x, gy(x.g) - r.y); if (d < bd) { bd = d; best = k; } }); drag.current = best; setSel(best); (e.currentTarget as any).setPointerCapture(e.pointerId); move(e as any); }}
+      onPointerMove={(e) => move(e as any)} onPointerUp={() => { drag.current = -1; }} onPointerCancel={() => { drag.current = -1; }}>
+      {[100, 1000, 10000].map((f) => <line x1={fx(f)} x2={fx(f)} y1="0" y2={H} class="eq-grid" />)}
+      {[-12, -6, 6, 12].map((g) => <line x1="0" x2={W} y1={gy(g)} y2={gy(g)} class="eq-grid" />)}
+      <line x1="0" x2={W} y1={gy(0)} y2={gy(0)} class="eq-zero" />
+      {[['100', 100], ['1k', 1000], ['10k', 10000]].map(([l, f]) => <text x={fx(f as number) + 3} y={H - 4} class="eq-lab">{l}</text>)}
+      <path d={curve + ` L${W} ${H} L0 ${H} Z`} fill={t.color} fill-opacity="0.14" />
+      <path d={curve} fill="none" stroke={t.color} stroke-width="2" vector-effect="non-scaling-stroke" />
+      {bands.map((x, k) => <circle cx={fx(x.f)} cy={gy(x.g)} r={sel === k ? 9 : 7} fill={EQ_COL[k]} fill-opacity={Math.abs(x.g) > 0.05 ? 1 : 0.45} stroke={sel === k ? '#fff' : '#111'} stroke-width="2" vector-effect="non-scaling-stroke" />)}
+    </svg>
+    <div class="seg" style={{ marginTop: '8px' }}>{EQ_NAMES.map((n, k) => <button class={sel === k ? 'on' : ''} style={sel === k ? { background: EQ_COL[k] } : undefined} onClick={() => setSel(k)}>{n}</button>)}</div>
+    <div class="knobs" style={{ marginTop: '6px' }}>
+      <Knob label="Frecuencia" value={b.f} min={EQ_RANGE[sel][0]} max={EQ_RANGE[sel][1]} log def={EQ_DEF[sel].f} color={EQ_COL[sel]} fmt={fmtF} onChange={(v) => setBand(sel, { f: Math.round(v) })} />
+      <Knob label="Ganancia" value={b.g} min={-18} max={18} def={0} color={EQ_COL[sel]} fmt={(v) => (Math.abs(v) < 0.05 ? '0 dB' : (v > 0 ? '+' : '') + v.toFixed(1) + ' dB')} onChange={(v) => setBand(sel, { g: Math.abs(v) < 0.4 ? 0 : +v.toFixed(1) })} />
+      {(sel === 1 || sel === 2) && <Knob label="Ancho" value={b.q} min={0.3} max={6} log def={1} color={EQ_COL[sel]} fmt={(v) => (v < 0.8 ? 'ancho' : v > 3 ? 'finito' : 'Q ' + v.toFixed(1))} onChange={(v) => setBand(sel, { q: +v.toFixed(2) })} />}
+    </div>
+    <div class="sub">Ajustes rápidos</div>
+    <div class="chips">{EQ_PRESETS.map(([n, fn]) => <button class="chip" onClick={() => upT(t.id, (x) => { const e = (x.eq ?? EQ_DEF).map((y) => ({ ...y })); fn(e); x.eq = e.some((y) => Math.abs(y.g) > 0.05) ? e : undefined; })}>{n}</button>)}</div>
+    <div class="hint">Arrastrá un punto con el dedo: a los costados cambia la frecuencia y para arriba o abajo sube o baja ese rango. Graves y Agudos suben o bajan todo lo que está por debajo o por encima; los dos medios son campanas, y Ancho dice si tocan una franja angosta o amplia. Doble toque en una perilla la vuelve a cero. Truco: bajar suele sonar mejor que subir (sacale barro a los sintes cerca de 300 Hz y graves a todo lo que no sea bombo y bajo).</div>
+  </>;
+}
+
 /* ---------- desde cero: tonalidad, acordes, género base y "Crear" ----------
    Si el loop abierto ya es "desde cero", los cambios de tonalidad y acordes se aplican en vivo; "Crear" siempre arma uno nuevo. */
 function Scratch({ p, up, create }: { p: Project; up: (fn: (d: Project) => void) => void; create: (m: Manual, genre: string, drums: boolean) => void }) {
   const [draft, setDraft] = useState<Manual>({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 });
   const [genre, setGenre] = useState(p.genre), [drums, setDrums] = useState(false);
-  const live = !!p.manual, m = p.manual ?? draft;
-  const set = (fn: (x: Manual) => void) => { if (live) up((d) => { fn(d.manual!); applyHarmony(d); }); else { const x = { ...draft, degrees: [...draft.degrees] }; fn(x); setDraft(x); } };
+  void draft; void setDraft;
+  const m = manualFrom(p);
+  const set = (fn: (x: Manual) => void) => up((d) => { d.manual = { ...manualFrom(d), degrees: [...manualFrom(d).degrees] }; fn(d.manual); applyHarmony(d); });
   const roman = ROMAN[m.mode], progs = PROGS[m.mode], cur = progs.find(([, d]) => d.join() === m.degrees.join());
   const names = manualHarmony({ ...m, degrees: [0, 1, 2, 3, 4, 5, 6] }).chords.map((c) => c.name); // nombre de cada grado en esta tonalidad
   return <>
-    {live && <div class="note" style={{ marginTop: 0, marginBottom: '8px' }}>Este loop está armado desde cero: lo que cambies acá suena al instante.</div>}
     <div class="gen-row" style={{ marginTop: 0 }}>
       <label class="sel-w"><span>Tónica</span><select class="sel" value={m.tonic} onChange={(e) => set((x) => { x.tonic = +(e.target as HTMLSelectElement).value; })}>{NOTE_ES.map((n, i) => <option value={i}>{n}</option>)}</select></label>
       <div class="sel-w"><span>Modo</span><div class="seg"><button class={m.mode === 'min' ? 'on' : ''} onClick={() => set((x) => { if (x.mode !== 'min') { x.mode = 'min'; x.degrees = [...PROGS.min[0][1]]; } })}>Menor</button><button class={m.mode === 'maj' ? 'on' : ''} onClick={() => set((x) => { if (x.mode !== 'maj') { x.mode = 'maj'; x.degrees = [...PROGS.maj[0][1]]; } })}>Mayor</button></div></div>
@@ -1151,16 +1188,16 @@ function Scratch({ p, up, create }: { p: Project; up: (fn: (d: Project) => void)
     </select></label>
     <div class="sub">Acorde de cada compás</div>
     <div class="bars4">{m.degrees.map((d, i) => <label class="sel-w"><span>{i + 1}</span><select class="sel" value={d} onChange={(e) => set((x) => { x.degrees[i] = +(e.target as HTMLSelectElement).value; })}>{roman.map((r, k) => <option value={k}>{r} · {names[k]}</option>)}</select></label>)}</div>
-    {live && <div class="keyline"><span>Suena: <b>{p.chords.map((c) => c.name).join(' · ')}</b></span></div>}
+    <div class="keyline"><span>Suena: <b>{p.chords.map((c) => c.name).join(' · ')}</b></span></div>
     <div class="sub">Color de los acordes</div>
     <div class="seg">{([[0, 'Tríadas'], [7, 'Séptimas'], [9, 'Novenas']] as [number, string][]).map(([v, l]) => <button class={m.ext === v ? 'on' : ''} onClick={() => set((x) => { x.ext = v; })}>{l}</button>)}</div>
-    <div class="sub">Para el loop nuevo</div>
+    <div class="sub">Loop nuevo</div>
     <div class="gen-row" style={{ marginTop: 0 }}>
       <label class="sel-w"><span>Sonidos de</span><select class="sel" value={genre} onChange={(e) => setGenre((e.target as HTMLSelectElement).value)}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
       <button class={'ib' + (drums ? ' on' : '')} onClick={() => setDrums(!drums)} aria-pressed={drums}>{Ic.kick}<small>{drums ? 'Con batería' : 'Sin batería'}</small></button>
     </div>
-    <button class="btn hot" style={{ width: '100%', marginTop: '12px' }} onClick={() => create(m, genre, drums)}>{live ? 'Crear otro loop desde cero' : 'Crear loop desde cero'}</button>
-    <div class="hint">Elegís la tonalidad (la nota y si es menor, más oscura, o mayor, más alegre) y un acorde por compás, de una lista de progresiones típicas o uno por uno. "Sonidos de" elige los sintes, el kit y la mezcla de un género. Se crea un loop con la grilla vacía (o solo con la batería del género) y lo armás en Patrón: tocás los casilleros para los golpes, el bajo, los acordes y el arpegio, y la melodía va en el piano roll. El bajo, el arpegio y los acordes siguen solos los acordes que elegiste.</div>
+    <button class="btn hot" style={{ width: '100%', marginTop: '12px' }} onClick={() => create(m, genre, drums)}>Crear loop nuevo</button>
+    <div class="hint">La tonalidad (la nota, y si es menor, más oscura, o mayor, más alegre) y el acorde de cada compás se aplican al loop abierto al instante. El bajo, el arpegio y los acordes siguen solos esos acordes. Para empezar otro: elegí de qué género salen los sonidos (sintes, kit y mezcla), si arranca con la batería del género o vacío, y tocá "Crear loop nuevo"; se arma en Patrón tocando los casilleros, y la melodía va en el piano roll.</div>
   </>;
 }
 
@@ -1436,7 +1473,7 @@ function Projects({ p, open, flash }: { p: Project; open: (np: Project) => void;
         <button class="chip" disabled={busy} onClick={toFile}>Guardar en un archivo</button>
         <label class={'chip up' + (busy ? ' dis' : '')}>Abrir archivo<input ref={fileRef} type="file" accept=".json,.loop,application/json" disabled={busy} onChange={(e) => fromFile((e.target as HTMLInputElement).files?.[0])} /></label>
       </div>
-      <div class="hint">Todo se guarda solo en este celu. Si generás un nombre nuevo sin haber tocado nada, reemplaza al loop abierto (el nombre lo vuelve a armar igual); si lo editaste, queda guardado acá y el nuevo va aparte. "Guardar en un archivo" lo lleva a otro celu o a la compu, con tu voz incluida.</div>
+      <div class="hint">Todo se guarda solo en este celu. Si creás un loop nuevo sin haber tocado el abierto, lo reemplaza; si lo editaste, queda guardado acá y el nuevo va aparte. "Guardar en un archivo" lo lleva a otro celu o a la compu, con tu voz incluida.</div>
     </div>
   );
 }

@@ -386,6 +386,12 @@ class LoopEngine extends AudioWorkletProcessor {
         if (I.crush) { const c = I.crush; I.cq = Math.pow(2, 15 - c * 11); I.cds = 1 + Math.floor(c * c * 15); }
         // phaser: 4 pasa todo por canal (los estados se reservan una vez)
         if (I.phaser && !I.ap) I.ap = new Float64Array(8);
+        // EQ de la pista: 4 bandas (grave en estante, dos campanas y agudo en estante); solo se procesan las que tienen ganancia
+        const eq = t.eq || null; I.eqOn = false;
+        if (eq) {
+          if (!I.eqB) { I.eqB = [0, 1, 2, 3].map(() => [new Biquad(), new Biquad()]); I.eqA = new Uint8Array(4); }
+          for (let k = 0; k < 4; k++) { const b = eq[k], on = !!(b && Math.abs(b.g) > 0.05); I.eqA[k] = on ? 1 : 0; if (on) { const ty = k === 0 ? 'ls' : k === 3 ? 'hs' : 'peak', q = k === 0 || k === 3 ? 0.707 : (b.q || 1); I.eqB[k][0].set(ty, b.f, q, b.g, this.sr); I.eqB[k][1].set(ty, b.f, q, b.g, this.sr); I.eqOn = true; } }
+        }
         if (I.hp) { I.hpL.set('hp', I.hp, 0.707, 0, this.sr); I.hpR.set('hp', I.hp, 0.707, 0, this.sr); }
         if (I.lp) { I.lpL.set('lp', I.lp, 0.707, 0, this.sr); I.lpR.set('lp', I.lp, 0.707, 0, this.sr); }
         if (I.chorus && !I.cb) { I.cb = [new Float32Array(2048), new Float32Array(2048)]; }
@@ -494,7 +500,7 @@ class LoopEngine extends AudioWorkletProcessor {
         if (t.macDrive && mEn > 0) dv = Math.min(1, dv + mEn * 0.6);
         if (dv !== I.drive) { I.drive = dv; I.dk = 1 + dv * 10; I.dg = (1 + dv) / I.dk; }
       }
-      if (I && (I.drive || I.hp || I.lp || I.chorus || I.crush || I.phaser)) {
+      if (I && (I.drive || I.hp || I.lp || I.chorus || I.crush || I.phaser || I.eqOn)) {
         const cb = I.cb, cr = I.chorus, dinc = 0.55 / sr, cq = I.cq, cds = I.cds, ph = I.phaser, ap = I.ap;
         const pinc = ph ? this.bpm / 60 / 8 / sr : 0, pfb = ph * 0.55; // phaser: una vuelta cada 2 compases
         for (let i = 0; i < N; i++) {
@@ -506,6 +512,7 @@ class LoopEngine extends AudioWorkletProcessor {
           }
           if (I.hp) { l = I.hpL.run(l); r = I.hpR.run(r); }
           if (I.lp) { l = I.lpL.run(l); r = I.lpR.run(r); }
+          if (I.eqOn) { const EB = I.eqB, EA = I.eqA; for (let k = 0; k < 4; k++) if (EA[k]) { l = EB[k][0].run(l); r = EB[k][1].run(r); } }
           if (ph && ap) {
             I.pph += pinc; if (I.pph >= 1) I.pph -= 1;
             // barrido exponencial 250 Hz .. 3,5 kHz; el canal derecho va un cuarto de vuelta corrido

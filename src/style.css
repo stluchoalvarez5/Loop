@@ -584,3 +584,10 @@ html,body{font-family:'Inter',system-ui,sans-serif;font-size:14px}
 }
 .arr{display:flex;flex-wrap:wrap;gap:4px}
 .bars4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.bars4 .sel{padding-right:22px;background-position:right 4px center}
+/* EQ por instrumento */
+.eqg{width:100%;height:170px;display:block;user-select:none;-webkit-user-select:none;margin-top:10px;background:var(--bg2);border:1px solid var(--line);border-radius:3px;touch-action:none;cursor:crosshair}
+.eq-grid{stroke:#2a2a2a;stroke-width:1;vector-effect:non-scaling-stroke}
+.eq-zero{stroke:#4a4a4a;stroke-width:1;vector-effect:non-scaling-stroke}
+.eq-lab{fill:#6a6a6a;font-size:9px;font-family:'JetBrains Mono',monospace}
+.strip .nm{background:none;border:0;color:inherit;cursor:pointer;padding:2px 0}
+.fxbtn.eqb.on{background:var(--c);border-color:var(--c);color:#111;font-weight:600}

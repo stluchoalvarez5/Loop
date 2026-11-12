@@ -106,6 +106,7 @@ export type Track = {
   chordLen?: number; // largo de cada golpe de acorde en pasos (stab y gate)
   bassLine?: number[]; // bajo: semitonos sobre la fundamental en cada paso (0, 12 = octava, 7 = quinta…)
   bassLen?: number; // bajo: largo de cada nota en pasos
+  eq?: EqBand[]; // EQ de la pista: 4 bandas [grave (estante), medio 1, medio 2, agudo (estante)]
   fx?: { drive?: number; hp?: number; lp?: number; chorus?: number; crush?: number; phaser?: number }; // inserto: saturación, bitcrusher, pasa altos, pasa bajos, phaser, chorus
   groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
   rollEdited?: boolean; // ya se tocaron a mano las notas del piano roll
@@ -176,6 +177,8 @@ const pick0 = <T,>(r: () => number, a: T[]) => a[Math.floor(r() * a.length)];
 const FILL_SOUNDS = ['snare', 'snare808', 'snareSoft', 'clap', 'rim', 'rim2'];
 
 export type MacroKey = 'energy' | 'dark' | 'space' | 'groove';
+export type EqBand = { f: number; g: number; q: number }; // frecuencia (Hz), ganancia (dB) y ancho (Q, solo en las campanas)
+export const EQ_DEF: EqBand[] = [{ f: 90, g: 0, q: 0.7 }, { f: 450, g: 0, q: 1 }, { f: 2500, g: 0, q: 1 }, { f: 9000, g: 0, q: 0.7 }];
 export type Group = { id: string; name: string; mute?: boolean; solo?: boolean };
 export type Project = {
   name: string; genre: string; bpm: number; swing: number; kit: string;
@@ -325,6 +328,14 @@ export function manualHarmony(m: Manual) {
   // notas de referencia (arpegio "Nombre" y melodías nuevas): fundamental y tercera de cada acorde
   const seq = m.degrees.flatMap((d) => [60 + scale[d], 60 + scale[(d + 2) % 7]]);
   return { letters: '', seq, chords, scale, tonic: m.tonic, key: NOTE_ES[m.tonic] + (m.mode === 'maj' ? ' mayor' : ' menor'), progression: m.degrees.map((d) => roman[d]).join(' – '), letterNotes: [] as { ch: string; note: string; moved: boolean }[] };
+}
+/* pasa un loop hecho con un nombre a armonía manual (misma tonalidad y mismos acordes, hasta donde entran en la escala) */
+export function manualFrom(p: Project): Manual {
+  if (p.manual) return p.manual;
+  const mode: 'maj' | 'min' = /mayor/.test(p.key ?? '') ? 'maj' : 'min', tonic = p.tonic ?? 9, scale = (mode === 'maj' ? MAJ : MIN).map((i) => (tonic + i) % 12);
+  const degrees = p.chords.slice(0, 4).map((c) => Math.max(0, scale.indexOf(((c.midi[0] % 12) + 12) % 12)));
+  while (degrees.length < 4) degrees.push(0);
+  return { tonic, mode, degrees, ext: p.chords.some((c) => /7|9/.test(c.name)) ? 7 : 0 };
 }
 /* loop vacío: sonidos, kit y mezcla del género, la armonía elegida y la grilla limpia (con o sin la batería del género) */
 export function blankProject(m: Manual, genre: string, bpm: number, drums: boolean): Project {
@@ -686,6 +697,7 @@ export function compile(p: Project) {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
+      eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined,
       mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' ? 0 : 0.05,
       cutAmt: t.type === 'drum' || t.type === 'vocal' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum', spAdd: t.type !== 'drum' && t.type !== 'bass',
