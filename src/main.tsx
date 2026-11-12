@@ -19,7 +19,7 @@ import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
   type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
+  expand64, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
@@ -224,6 +224,7 @@ const Ic = {
   notes: sv(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9h4M10 13h5M6 16h3" /></>),
   more: sv(<><circle cx="6" cy="12" r="1.3" fill="currentColor" /><circle cx="12" cy="12" r="1.3" fill="currentColor" /><circle cx="18" cy="12" r="1.3" fill="currentColor" /></>),
 };
+const diff4 = (a?: any[]) => !!a && a.length === 64 && a.some((v, i) => v !== a[i % 16]); // la pista tiene compases distintos
 const trackIcon = (t: Track) => t.type === 'vocal' ? Ic.mic : t.type === 'bass' ? Ic.bass : t.type === 'arp' ? Ic.arp : t.type === 'chords' ? Ic.chords : t.type === 'melody' ? Ic.melody
   : t.sound === 'kick' ? Ic.kick : ['hat', 'open', 'ride', 'crash'].includes(t.sound) ? Ic.hat : ['clap', 'snare', 'snare808', 'snareSoft', 'rim', 'rim2'].includes(t.sound) ? Ic.snare : Ic.perc;
 
@@ -376,7 +377,8 @@ function App() {
       const i = s % 16 + 1; engine.beat.step = s; setPlaying(true); // por si arrancó desde la grabación de voz
       const k = pRef.current.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !t.mute);
       if (k && k.steps[s % 16]) engine.beat.t = performance.now();
-      if (phRef.current) phRef.current.textContent = `.pads>.pad:nth-child(${i}){outline:2px solid #fff;outline-offset:-2px}.leds span:nth-child(${i}){background:var(--mint);box-shadow:0 0 8px var(--mint)}`;
+      const seen = !vbRef.current || Math.floor(s / 16) + 1 === vbRef.current;
+      if (phRef.current) phRef.current.textContent = (seen ? `.pads>.pad:nth-child(${i}){outline:2px solid #fff;outline-offset:-2px}` : '') + `.leds span:nth-child(${i}){background:var(--mint);box-shadow:0 0 8px var(--mint)}.barsel button:nth-child(${Math.floor(s / 16) + 2}){box-shadow:inset 0 -3px 0 var(--mint)}`;
       if (barRef.current) barRef.current.textContent = String(Math.floor(s / 16) + 1);
       if (s === 0 && queuedRef.current) { queuedRef.current = null; setQueued(null); }
       // cadena: en el último compás se pone en cola la escena siguiente
@@ -433,11 +435,31 @@ function App() {
   const flash = (m: string, ms = 1800) => { setToast(m); setTimeout(() => setToast(''), ms); };
   flashG = flash;
   const [fxAll, setFxAll] = useState(false), [fxOpen, setFxOpen] = useState<Record<string, boolean>>({}); // mixer compacto: efectos plegados
+  // editar un paso: en "Todos" cambia ese paso en los 4 compases; en un compás, solo ahí (la pista pasa a tener 4 compases distintos)
+  const k64 = (i: number) => (vb - 1) * 16 + i;
+  const val = <T,>(a: T[], i: number) => a[(vb ? k64(i) : i) % a.length];
+  const cycStep = (x: Track, i: number) => {
+    if (vb) { x.steps = expand64(x.steps); if (x.type === 'bass' && x.bassLine) x.bassLine = expand64(x.bassLine); x.steps[k64(i)] = (x.steps[k64(i)] + 1) % 3; return; }
+    const nv = ((x.steps[i] ?? 0) + 1) % 3; if (x.steps.length === 64) for (let b = 0; b < 4; b++) x.steps[b * 16 + i] = nv; else x.steps[i] = nv;
+  };
+  const flipGate = (x: Track, i: number) => {
+    const g = x.arp!.gate;
+    if (vb) { x.arp!.gate = expand64(g); x.arp!.gate[k64(i)] = !x.arp!.gate[k64(i)]; return; }
+    const nv = !g[i]; if (g.length === 64) for (let b = 0; b < 4; b++) g[b * 16 + i] = nv; else g[i] = nv;
+  };
+  /* copiar el compás que se ve a los otros tres, o vaciarlo (en todas las pistas con pasos) */
+  const barOp = (op: 'copy' | 'clear') => up((d) => d.tracks.forEach((t) => {
+    const b0 = (vb - 1) * 16, fix = (a: any[], z: any) => { const e = expand64(a); for (let k = 0; k < 16; k++) { if (op === 'clear') e[b0 + k] = z; else for (let b = 0; b < 4; b++) e[b * 16 + k] = e[b0 + k]; } return e; };
+    if (t.type === 'drum' || t.type === 'bass' || (t.type === 'chords' && (t.chordMode ?? 'pad') !== 'pad')) { if (!t.roll) t.steps = fix(t.steps, 0); if (t.type === 'bass' && t.bassLine && op === 'copy') t.bassLine = fix(t.bassLine, 0); }
+    if (t.type === 'arp' && t.arp && !t.roll) t.arp.gate = fix(t.arp.gate, false);
+  }));
   const stepEdit = (t: Track, fn: (x: Track) => void) => { try { navigator.vibrate?.(8); } catch { /* sin vibración */ } const wasMuted = t.mute; upT(t.id, (x) => { fn(x); if (x.mute) x.mute = false; }); if (wasMuted) flash(t.name + ' encendida'); };
   const upT = (id: string, fn: (t: Track) => void) => up((d) => fn(d.tracks.find((t) => t.id === id)!));
   const letters = useMemo(() => { const c = clean(p.name || 'Loop'); return [...c].map((ch) => [ch, letterNote(ch)]); }, [p.name]);
   const arpNotes = useMemo(() => { const o: Record<string, (s: number) => number> = {}; p.tracks.forEach((t) => { if (t.type === 'arp') o[t.id] = arpPreview(p, t); }); return o; }, [p]);
 
+  const [vb, setVbS] = useState(0), vbRef = useRef(0); vbRef.current = vb; // compás que se edita en la grilla: 0 = todos (el mismo en los 4)
+  const setVb = (v: number) => setVbS(v);
   const [detail, setDetail] = useState(false), [loopsOpen, setLoopsOpen] = useState(false), [dTab, setDTab] = useState<DTab>('snd');
   const pick = (id: string, tb: DTab = 'snd') => { if (id === sel && detail && tb === dTab) setDetail(false); else { setSel(id); setDTab(tb); setDetail(true); } };
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDetail(false); setLoopsOpen(false); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
@@ -507,11 +529,13 @@ function App() {
           <button class="ib sm" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type === 'drum') t.steps = Array(16).fill(0); }))} aria-label="Vaciar batería">{Ic.trash}</button>
         </>}>
           {adv && <Groups p={p} up={up} />}
+          <div class="barsel-w"><span class="sb-l">Compás</span><div class="seg barsel">{['Todos', '1', '2', '3', '4'].map((l, k) => <button class={vb === k ? 'on' : ''} onClick={() => setVb(k)} aria-label={k ? 'Editar el compás ' + k : 'Editar los 4 compases juntos'}>{l}</button>)}</div></div>
+          {vb > 0 && <div class="chips" style={{ margin: '-2px 0 8px' }}><button class="chip ic" onClick={() => { barOp('copy'); flash('Compás ' + vb + ' copiado a los 4'); }}>{Ic.copy}Copiar a los 4 compases</button><button class="chip ic" onClick={() => { barOp('clear'); flash('Compás ' + vb + ' vacío'); }}>{Ic.trash}Vaciar compás {vb}</button></div>}
           <div class="grid">
             {p.tracks.map((t, ti) => <>
               <button class={'pw' + (t.mute ? '' : ' on')} style={{ '--c': t.color } as any} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} {...tap(() => upT(t.id, (x) => { x.mute = !x.mute; }))} />
               <button class={'tname' + (sel === t.id && showDetail ? ' sel' : '') + (t.mute || gMuted(p, t) ? ' mute' : '')} style={{ '--c': t.color } as any} onClick={() => pick(t.id)} aria-label={'Abrir ' + t.name}>
-                <span class="ti">{trackIcon(t)}</span><span class="tn">{t.name}</span>{t.auto && Object.keys(t.auto).length > 0 && <span class="au" title="Tiene automatización">A</span>}<i class="vu" ref={(el) => { vuRefs.current[t.id] = el; }} />
+                <span class="ti">{trackIcon(t)}</span><span class="tn">{t.name}</span>{(diff4(t.steps) || diff4(t.arp?.gate) || diff4(t.bassLine)) && <span class="b4" title="Tiene compases distintos">4</span>}{t.auto && Object.keys(t.auto).length > 0 && <span class="au" title="Tiene automatización">A</span>}<i class="vu" ref={(el) => { vuRefs.current[t.id] = el; }} />
               </button>
               {order ? <div class="ord">
                 <button class="btn" disabled={ti === 0} aria-label={'Subir ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k > 0) [d.tracks[k - 1], d.tracks[k]] = [d.tracks[k], d.tracks[k - 1]]; }))}>▲ Subir</button>
@@ -523,23 +547,24 @@ function App() {
               </button> : <div class="pads">
                 {Array.from({ length: 16 }, (_, i) => {
                   const open = () => { setSel(t.id); setDetail(true); };
+                  const inBar = (n: { s: number }) => n.s % 16 === i && (!vb || Math.floor(n.s / 16) === vb - 1);
                   if (t.roll && t.type !== 'melody') {
-                    const hit = (t.notes ?? []).filter((n) => n.s % 16 === i);
+                    const hit = (t.notes ?? []).filter(inBar);
                     return <button class={'pad' + (hit.length ? ' v1' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`} onClick={open}>{hit[0] && <span class="nn">{noteName(hit[0].n)}</span>}</button>;
                   }
                   if (t.type === 'arp') {
-                    const on = t.arp!.gate[i], plays = arpPlays(t, i), nf = arpNotes[t.id];
+                    const si = vb ? k64(i) : i, on = val(t.arp!.gate, i), plays = arpPlays(t, si), nf = arpNotes[t.id];
                     return <button class={'pad' + (!on ? ' off' : plays ? ' v1' : ' skip')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
-                      {...tap(() => stepEdit(t, (x) => { x.arp!.gate[i] = !x.arp!.gate[i]; }))}>{on && plays && nf && <span class="nn">{noteName(nf(i))}</span>}</button>;
+                      {...tap(() => stepEdit(t, (x) => flipGate(x, i)))}>{on && plays && nf && <span class="nn">{noteName(nf(si))}</span>}</button>;
                   }
                   if (t.type === 'melody') {
-                    const hit = (t.notes ?? []).filter((n) => n.s % 16 === i);
+                    const hit = (t.notes ?? []).filter(inBar);
                     return <button class={'pad' + (hit.length ? ' v1' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`} onClick={open}>{hit[0] && <span class="nn">{noteName(hit[0].n)}</span>}</button>;
                   }
                   if (t.type === 'chords' && (t.chordMode ?? 'pad') === 'pad') return <button class={'pad' + (i % 16 === 0 ? ' v2' : ' v1')} style={{ '--c': t.color, opacity: i ? 0.35 : 1 } as any} aria-label="Acorde sostenido" onClick={open} />;
-                  const v = t.steps[i];
+                  const v = val(t.steps, i);
                   return <button class={'pad' + (v === 1 ? ' v1' : v === 2 ? ' v2' : v === 3 ? ' v1 gh' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
-                    {...tap(() => stepEdit(t, (x) => { x.steps[i] = (x.steps[i] + 1) % 3; }))} />;
+                    {...tap(() => stepEdit(t, (x) => cycStep(x, i)))} />;
                 })}
               </div>}
             </>)}
@@ -958,7 +983,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Batería', body: 'Elegí el kit: el 909 y el 808 clásicos, uno por género, Synthwave 80s, Electro o Lo-Fi. Cambia el sonido del bombo, el clap, los hats y el redoblante sin tocar el patrón.', art: artChips(['909', '808', 'Techno', 'Lo-Fi'], 1) },
   ],
   pat: [
-    { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos.', art: artGrid },
+    { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos. Arriba de la grilla elegís el compás: en "Todos" lo que tocás se repite en los 4 compases; en 1, 2, 3 o 4 cambiás solo ese compás (por ejemplo, un golpe distinto al final). "Copiar a los 4 compases" y "Vaciar compás" aplican al compás elegido, y las pistas con compases distintos muestran un 4 al lado del nombre.', art: artGrid },
     { title: 'Grupos y orden', body: 'En modo Avanzado, arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando el nombre de un grupo abrís su panel para renombrarlo, sumar o sacar instrumentos o borrarlo. El botón de las flechas ordena los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
     { title: 'Editar una pista', body: 'Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Variación, copiar y pegar', body: 'El dado arriba del editor de cada instrumento le da otro patrón (de los que usa el género, o cambiando algunos golpes y notas). En la pestaña Más, "Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. Arriba de la grilla, las barritas agregan un redoble y el tacho vacía la batería.', art: artChips(['Variación', 'Copiar patrón', 'Pegar'], 0) },

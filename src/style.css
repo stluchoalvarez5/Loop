@@ -591,3 +591,8 @@ html,body{font-family:'Inter',system-ui,sans-serif;font-size:14px}
 .eq-lab{fill:#6a6a6a;font-size:9px;font-family:'JetBrains Mono',monospace}
 .strip .nm{background:none;border:0;color:inherit;cursor:pointer;padding:2px 0}
 .fxbtn.eqb.on{background:var(--c);border-color:var(--c);color:#111;font-weight:600}
+/* selector de compás de la grilla */
+.barsel-w{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+.barsel{flex:1}
+.barsel button{padding:7px 4px;font-family:'JetBrains Mono',monospace;font-size:12.5px}
+.tname .b4{font-family:'JetBrains Mono',monospace;font-size:9px;line-height:12px;color:var(--c);border:1px solid var(--c);border-radius:2px;padding:0 3px;flex:none}

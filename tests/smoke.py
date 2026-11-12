@@ -18,7 +18,7 @@ with sync_playwright() as p:
     pg.click("nav button:has-text('Patrón')")
     # silenciar kick, golpe, hat y bajo
     for nm in ["Kick", "Bajo", "Hat"]:
-        pg.click(f".tname:has-text('{nm}')")
+        pg.locator(f".tname:has-text('{nm}')").dispatch_event('click')
     pg.keyboard.press("Escape")  # cierra el editor de abajo
     pg.click("nav button:has-text('Mixer')")
     for i in [0, 1, 2, 5]:
