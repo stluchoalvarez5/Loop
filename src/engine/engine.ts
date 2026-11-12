@@ -73,8 +73,26 @@ export class Engine {
     if (!this.node) { this.pending = p; return; }
     this.node.port.postMessage({ type: 'project', project: compile(p) });
   }
+  /* iPhone: el audio tiene que destrabarse dentro del mismo toque (sin esperar nada antes) y, para que suene
+     aunque el celu esté en modo silencio, la sesión de audio tiene que ser de "reproducción" y no "ambiente". */
+  private silent: HTMLAudioElement | null = null;
+  unlock() {
+    if (!this.ctx) this.init();
+    const ctx = this.ctx!;
+    try { (navigator as any).audioSession && ((navigator as any).audioSession.type = 'playback'); } catch { /* Safari viejo */ }
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    if (!this.silent) {
+      // un audio HTML en silencio y en bucle hace que iOS trate la página como reproductor (ignora la tecla de silencio)
+      const sr = 8000, n = sr / 2, b = new ArrayBuffer(44 + n * 2), v = new DataView(b), w = (o: number, s: string) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+      const a = new Audio(URL.createObjectURL(new Blob([b], { type: 'audio/wav' }))); a.loop = true; a.setAttribute('playsinline', ''); this.silent = a;
+    }
+    this.silent.play().catch(() => {});
+  }
+  get state() { return this.ctx?.state ?? 'none'; }
   async play(p: Project, from = 0) {
-    await this.init(); await this.ctx!.resume(); this.update(p);
+    this.unlock(); await this.init(); await this.ctx!.resume(); this.update(p);
     this.node!.port.postMessage({ type: 'play', from }); this.playing = true;
   }
   /* graba exactamente 4 compases alineados al loop: si está parado, arranca con un compás de cuenta (el 4) y graba desde el 1;

@@ -38,6 +38,8 @@ npx vite preview --port 4173 & python3 tests/smoke.py   # prueba de humo con Pla
 
 ## Reglas para que suene bien y fluido
 
+0. **iPhone**: el audio se destraba con `engine.unlock()`, que tiene que correr dentro del mismo toque (sin `await` antes): reanuda el `AudioContext`, pone `navigator.audioSession.type = 'playback'` y reproduce en bucle un WAV en silencio con un `<audio>`, para que suene aunque el celu esté en modo silencio. App lo llama en el primer toque de cualquier parte y `play()` también. Hace falta iOS 14.5 o más (AudioWorklet); si no está, se avisa en pantalla. Playwright no puede bajar WebKit acá: lo de iPhone hay que probarlo en un iPhone real.
+
 1. Nada de programar notas con `setTimeout`, `setInterval` ni nodos de Web Audio por nota: todo sonido nuevo se implementa como voz dentro del worklet.
 2. En el `process()` del worklet no se crean objetos por muestra ni se reserva memoria por bloque (salvo los buffers reutilizables de `this.buf`).
 3. El hilo principal solo manda mensajes chicos (`project`, `play`, `stop`, `sample`). Cualquier cambio en la interfaz llama a `engine.update(p)`, que recompila y manda el proyecto entero, y el motor lo aplica al instante.

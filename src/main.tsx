@@ -113,6 +113,7 @@ function App() {
   const goTab = (t: 'scene' | 'pat' | 'mix' | 'master') => { setTab(t); if (!guide && !ls.get('loop.seen.' + t)) setGuide(t); };
   const [sel, setSel] = useState('arp');
   const [playing, setPlaying] = useState(false);
+  const [noAudio, setNoAudio] = useState(false);
   const [nameIn, setNameIn] = useState(p.name === 'Loop' ? '' : p.name);
   const [variant, setVariant] = useState(0);
   const phRef = useRef<HTMLStyleElement>(null), meterRef = useRef<HTMLElement>(null), barRef = useRef<HTMLElement>(null), lufsRef = useRef<HTMLElement>(null);
@@ -147,15 +148,23 @@ function App() {
 
   const toggle = async () => {
     if (engine.playing) { engine.stop(); setPlaying(false); if (phRef.current) phRef.current.textContent = ''; return; }
-    await engine.play(p); setPlaying(true);
+    await engine.play(p); setPlaying(true); checkAudio();
   };
+  // si a los 1,5 s el audio sigue trabado (pasa en algunos iPhone), avisamos qué revisar
+  const checkAudio = () => setTimeout(() => { if (engine.playing && engine.state !== 'running') flash('No se escucha? Tocá play de nuevo, subí el volumen y revisá que el celu no esté en silencio.', 6000); }, 1500);
+  // el primer toque en cualquier parte destraba el audio (iPhone)
+  useEffect(() => {
+    if (!('AudioWorkletNode' in window)) { setNoAudio(true); return; }
+    const f = () => { engine.unlock(); ['pointerdown', 'touchend', 'keydown'].forEach((e) => window.removeEventListener(e, f, true)); };
+    ['pointerdown', 'touchend', 'keydown'].forEach((e) => window.addEventListener(e, f, true));
+  }, []);
   const fromName = async (v = 0) => {
     const np = projectFromName(nameIn || 'Loop', v); setVariant(v); setP(np); engine.update(np); save(np);
-    if (!engine.playing) { await engine.play(np); setPlaying(true); }
+    if (!engine.playing) { await engine.play(np); setPlaying(true); checkAudio(); }
   };
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
   const [toast, setToast] = useState('');
-  const flash = (m: string) => { setToast(m); setTimeout(() => setToast(''), 1800); };
+  const flash = (m: string, ms = 1800) => { setToast(m); setTimeout(() => setToast(''), ms); };
   const stepEdit = (t: Track, fn: (x: Track) => void) => { try { navigator.vibrate?.(8); } catch { /* sin vibración */ } const wasMuted = t.mute; upT(t.id, (x) => { fn(x); if (x.mute) x.mute = false; }); if (wasMuted) flash(t.name + ' encendida'); };
   const upT = (id: string, fn: (t: Track) => void) => up((d) => fn(d.tracks.find((t) => t.id === id)!));
   const letters = useMemo(() => { const c = clean(p.name || 'Loop'); return [...c].map((ch) => [ch, letterNote(ch)]); }, [p.name]);
@@ -268,6 +277,7 @@ function App() {
         {tr && <div class="a-ed"><TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); if (tr.type === 'vocal') deleteVox(tr.id).catch(() => {}); setSel(left[0].id); flash(tr.name + ' eliminada'); }} /></div>}
       </div>}
       {toast && <div class="toast">{toast}</div>}
+      {noAudio && <div class="toast">Este navegador no puede reproducir el audio de la app. En iPhone hace falta iOS 14.5 o más nuevo: actualizá el sistema o probá con otro navegador.</div>}
 
       {tab === 'mix' && <div class="card">
         <div class="ct"><h3>Mixer</h3></div>
@@ -407,7 +417,7 @@ function VocalEditor({ p, t, upT, power, onDelete }: { p: Project; t: Track; upT
   const lvl = (lv: number) => { if (lvlRef.current) lvlRef.current.style.width = Math.min(100, lv * 140) + '%'; };
   // grabación en tiempo: exactamente 4 compases, alineada al loop
   const recLoop = async () => {
-    setErr(''); setSt('loop'); setInfo('Preparando el micrófono…');
+    engine.unlock(); setErr(''); setSt('loop'); setInfo('Preparando el micrófono…');
     try {
       const d = await engine.recordLoop(p, (m, lv) => { setInfo(m); lvl(lv); }, cancel.current);
       if (!d) { setSt('idle'); setInfo(''); return; }
@@ -418,7 +428,7 @@ function VocalEditor({ p, t, upT, power, onDelete }: { p: Project; t: Track; upT
   const recFree = async () => {
     setErr('');
     try {
-      await engine.init(); setSt('free'); const t0 = performance.now();
+      engine.unlock(); await engine.init(); setSt('free'); const t0 = performance.now();
       stopRef.current = await startRecording(engine.ctx!, lvl);
       timer.current = setInterval(() => { const s = (performance.now() - t0) / 1000; setInfo('Grabando · ' + s.toFixed(1) + ' de ' + loopSec.toFixed(1) + ' s'); if (s >= loopSec) stopFree(); }, 100);
     } catch { setSt('idle'); setErr('No se pudo usar el micrófono. Revisá el permiso del navegador.'); }
