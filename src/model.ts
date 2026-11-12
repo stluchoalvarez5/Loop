@@ -7,6 +7,33 @@ export type Synth = {
   envAmt: number; fdecay: number; attack: number; decay: number; sustain: number; release: number; gain: number;
   octave?: number; sub?: number; fmRatio?: number; fmIndex?: number; fmDecay?: number; poles4?: boolean;
 };
+/* automatización: qué se puede mover a lo largo de los 4 compases y en qué rango */
+export type AutoKey = 'lp' | 'vol' | 'rev' | 'dly' | 'drive' | 'pan' | 'hp';
+export const AUTO_PARAMS: { k: AutoKey; label: string; lo: number; hi: number; fmt: (v: number) => string }[] = [
+  { k: 'lp', label: 'Filtro', lo: 0.3, hi: 1, fmt: (v) => { const f = 200 * Math.pow(100, v); return v >= 0.995 ? 'abierto' : f >= 1000 ? (f / 1000).toFixed(1) + 'k' : Math.round(f) + ' Hz'; } },
+  { k: 'vol', label: 'Volumen', lo: 0.15, hi: 1, fmt: (v) => Math.round(v * 100) + '%' },
+  { k: 'rev', label: 'Reverb', lo: 0, hi: 0.8, fmt: (v) => Math.round(v * 100) + '%' },
+  { k: 'dly', label: 'Delay', lo: 0, hi: 0.8, fmt: (v) => Math.round(v * 100) + '%' },
+  { k: 'drive', label: 'Saturación', lo: 0, hi: 0.8, fmt: (v) => Math.round(v * 100) + '%' },
+  { k: 'pan', label: 'Pan', lo: 0.1, hi: 0.9, fmt: (v) => (Math.abs(v - 0.5) < 0.03 ? 'centro' : v < 0.5 ? 'izq ' + Math.round((0.5 - v) * 200) : 'der ' + Math.round((v - 0.5) * 200)) },
+  { k: 'hp', label: 'Corta graves', lo: 0, hi: 0.65, fmt: (v) => (v < 0.01 ? 'no' : Math.round(20 * Math.pow(100, v)) + ' Hz') },
+];
+export const AUTO_SHAPES = [
+  { k: 'up', label: 'Sube' }, { k: 'down', label: 'Baja' }, { k: 'tri', label: 'Sube y baja' },
+  { k: 'wave', label: 'Onda por compás' }, { k: 'pump', label: 'Bombeo' }, { k: 'last', label: 'Último tiempo' },
+] as const;
+export function autoShape(shape: string, lo: number, hi: number): number[] {
+  return Array.from({ length: 64 }, (_, i) => {
+    const x = i / 63; let u = 0;
+    if (shape === 'up') u = Math.pow(x, 1.6);
+    else if (shape === 'down') u = Math.pow(1 - x, 1.6);
+    else if (shape === 'tri') u = 1 - Math.abs(x * 2 - 1);
+    else if (shape === 'wave') u = 0.5 - 0.5 * Math.cos((Math.PI * 2 * i) / 16);
+    else if (shape === 'pump') u = (i % 4) / 3;
+    else if (shape === 'last') u = i >= 60 ? 1 : 0;
+    return +(lo + (hi - lo) * u).toFixed(3);
+  });
+}
 export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal';
 export type Note = { s: number; n: number; l: number };
 export type Track = {
@@ -23,6 +50,7 @@ export type Track = {
   bassLen?: number; // bajo: largo de cada nota en pasos
   fx?: { drive?: number; hp?: number; lp?: number; chorus?: number }; // inserto: saturación, pasa altos, pasa bajos, chorus
   groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
+  auto?: Partial<Record<AutoKey, number[]>>; // automatización: 64 valores 0..1 (uno por paso de los 4 compases)
   vox?: { from: number; rev: boolean; has: boolean; pos?: number }; // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
@@ -444,6 +472,7 @@ export function compile(p: Project) {
     return {
       id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: t.mute, solo: t.solo,
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
+      auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' ? 0 : 0.05,
     };

@@ -7,6 +7,7 @@ const STEPS = 64;
 const MAXV = 12;
 
 /* ---------- utilidades DSP ---------- */
+function autoAt(a, k0, k1, fr) { return a[k0] + (a[k1] - a[k0]) * fr; }
 function readFrac(buf, w, d) { let x = w - d; while (x < 0) x += 2048; const xi = x | 0, fr = x - xi; return buf[xi] + (buf[(xi + 1) & 2047] - buf[xi]) * fr; }
 const SS7 = [-1, -0.5717, -0.1775, 0, 0.181, 0.5651, 0.9768]; // reparto del detune del supersaw clásico (7 voces)
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -201,7 +202,7 @@ class LoopEngine extends AudioWorkletProcessor {
       const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing;
       this.tracks = m.project.tracks.map((t) => {
         const o = old.find((x) => x.id === t.id);
-        const nt = { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null };
+        const nt = { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
         // inserto por pista: saturación, filtros pasa altos / pasa bajos y chorus (los buffers se reservan acá, nunca en process)
         const fx = t.fx || {};
         if (!nt.ins) nt.ins = { hpL: new Biquad(), hpR: new Biquad(), lpL: new Biquad(), lpR: new Biquad(), cb: null, ci: 0, cph: 0 };
@@ -284,6 +285,21 @@ class LoopEngine extends AudioWorkletProcessor {
         v.delay = 0; v.render(B.tL, B.tR, a, N);
       }
       const I = t.ins;
+      // automatización: valor de cada parámetro en este momento de los 4 compases (interpolado entre pasos)
+      let aVol = 1, aRev = t.rev, aDly = t.dly, aPan = t.pan;
+      const A = t.auto;
+      if (A && this.playing && this.compiled) {
+        const sl = this.stepLen(), ps = Math.max(0, this.pos / sl), k0 = Math.floor(ps) % STEPS, k1 = (k0 + 1) % STEPS, fr = ps - Math.floor(ps);
+        if (A.vol) aVol = autoAt(A.vol, k0, k1, fr);
+        if (A.rev) aRev = autoAt(A.rev, k0, k1, fr);
+        if (A.dly) aDly = autoAt(A.dly, k0, k1, fr);
+        if (A.pan) aPan = autoAt(A.pan, k0, k1, fr) * 2 - 1;
+        if (I) {
+          if (A.lp) { const f = 200 * Math.pow(100, autoAt(A.lp, k0, k1, fr)); if (Math.abs(f - (I.lp || 20000)) > I.lp * 0.004) { I.lp = f; I.lpL.set('lp', f, 0.707, 0, sr); I.lpR.set('lp', f, 0.707, 0, sr); } }
+          if (A.hp) { const v = autoAt(A.hp, k0, k1, fr), f = 20 * Math.pow(100, v); if (v < 0.01) I.hp = 0; else if (Math.abs(f - (I.hp || 0)) > f * 0.004) { I.hp = f; I.hpL.set('hp', f, 0.707, 0, sr); I.hpR.set('hp', f, 0.707, 0, sr); } }
+          if (A.drive) { I.drive = autoAt(A.drive, k0, k1, fr); I.dk = 1 + I.drive * 10; I.dg = (1 + I.drive) / I.dk; }
+        }
+      }
       if (I && (I.drive || I.hp || I.lp || I.chorus)) {
         const cb = I.cb, cr = I.chorus, dinc = 0.55 / sr;
         for (let i = 0; i < N; i++) {
@@ -302,12 +318,14 @@ class LoopEngine extends AudioWorkletProcessor {
         }
       }
       const audible = !t.mute && (!anySolo || t.solo);
-      const g = audible ? t.gain : 0, gl = g * Math.cos((t.pan + 1) * Math.PI / 4) * 1.414, gr = g * Math.sin((t.pan + 1) * Math.PI / 4) * 1.414;
+      const g = audible ? t.gain * aVol : 0, gl = g * Math.cos((aPan + 1) * Math.PI / 4) * 1.414, gr = g * Math.sin((aPan + 1) * Math.PI / 4) * 1.414;
+      // rampa dentro del bloque para que la automatización de volumen y paneo no haga "escalones"
+      const gl0 = t.pgl ?? gl, gr0 = t.pgr ?? gr, inv = 1 / N; t.pgl = gl; t.pgr = gr;
       let pk = 0;
       for (let i = 0; i < N; i++) {
-        const dk = 1 - (t.duck || 0) * kickDuck[i];
-        const l = B.tL[i] * gl * dk, r = B.tR[i] * gr * dk;
-        B.L[i] += l; B.R[i] += r; B.rL[i] += (l + r) * 0.5 * t.rev; B.dL[i] += (l + r) * 0.5 * t.dly;
+        const dk = 1 - (t.duck || 0) * kickDuck[i], q = i * inv;
+        const l = B.tL[i] * (gl0 + (gl - gl0) * q) * dk, r = B.tR[i] * (gr0 + (gr - gr0) * q) * dk;
+        B.L[i] += l; B.R[i] += r; B.rL[i] += (l + r) * 0.5 * aRev; B.dL[i] += (l + r) * 0.5 * aDly;
         const a = Math.abs(l) + Math.abs(r); if (a > pk) pk = a;
       }
       t.meter = Math.max(pk * 0.5, t.meter * 0.92);

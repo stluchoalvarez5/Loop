@@ -11,7 +11,7 @@ import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
 import { renderAudio, wav, mp3, abletonZip, baseName } from './engine/export';
 import {
-  MACROS,
+  MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -233,6 +233,11 @@ function App() {
           </div>
           <div class="hint">Energía: más brillo, saturación y hats. Oscuridad: cierra los filtros. Espacio: más reverb y delay. Groove: más swing y arrastre. Al medio queda como lo armó el género.</div>
         </div>
+        <div class="card a-auto">
+          <div class="ct"><h3>Automatización rápida</h3></div>
+          <div class="chips">{QUICK_AUTO.map(([n, fn]) => <button class="chip" onClick={() => { up((d) => fn(d)); flash(n === 'Borrar todo' ? 'Automatización borrada' : n + ' aplicada'); }}>{n}</button>)}</div>
+          <div class="hint">Mueven varios instrumentos a lo largo de los 4 compases. Para dibujar la tuya, andá a Patrón, tocá una pista y bajá hasta Automatización.</div>
+        </div>
         <div class="card a-kits">
           <div class="ct"><h3>Batería</h3></div>
           <div class="chips">{Object.keys(KITS).map((k) => <button class={'chip' + (p.kit === k ? ' on' : '')} onClick={() => up((d) => { d.kit = k; })}>{KITS[k].label.replace('Kit ', '')}</button>)}</div>
@@ -246,7 +251,7 @@ function App() {
             {p.tracks.map((t) => <>
               <button class={'pw' + (t.mute ? '' : ' on')} style={{ '--c': t.color } as any} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} />
               <button class={'tname' + (sel === t.id ? ' sel' : '') + (t.mute ? ' mute' : '')} style={{ '--c': t.color } as any} onClick={() => setSel(t.id)}>
-                <span class="dot" />{t.name}<i class="vu" ref={(el) => { vuRefs.current[t.id] = el; }} />
+                <span class="dot" />{t.name}{t.auto && Object.keys(t.auto).length > 0 && <span class="au" title="Tiene automatización">A</span>}<i class="vu" ref={(el) => { vuRefs.current[t.id] = el; }} />
               </button>
               {t.type === 'vocal' ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => setSel(t.id)}>
                 {[0, 1, 2, 3].map((b) => <i style={{ left: b * 25 + '%' }} />)}
@@ -274,7 +279,7 @@ function App() {
           <div class="hint">El botón de la izquierda enciende o apaga cada instrumento. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves que pone el género.</div>
         </div>
 
-        {tr && <div class="a-ed"><TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); if (tr.type === 'vocal') deleteVox(tr.id).catch(() => {}); setSel(left[0].id); flash(tr.name + ' eliminada'); }} /></div>}
+        {tr && <div class="a-ed"><TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); if (tr.type === 'vocal') deleteVox(tr.id).catch(() => {}); setSel(left[0].id); flash(tr.name + ' eliminada'); }} /><AutoEditor key={tr.id} t={tr} upT={upT} playing={playing} /></div>}
       </div>}
       {toast && <div class="toast">{toast}</div>}
       {noAudio && <div class="toast">Este navegador no puede reproducir el audio de la app. En iPhone hace falta iOS 14.5 o más nuevo: actualizá el sistema o probá con otro navegador.</div>}
@@ -404,6 +409,59 @@ const VOX_FX: [string, string, Partial<Track>, Track['fx']][] = [
   ['Robot', 'Chorus y delay', { rev: 0.2, dly: 0.35 }, { hp: 150, chorus: 0.8 }],
   ['Sucia', 'Distorsión', { rev: 0.15, dly: 0.2 }, { hp: 180, drive: 0.75 }],
 ];
+/* ---------- automatización ---------- */
+const MEL_T = (d: Project) => d.tracks.filter((t) => t.type !== 'drum');
+const setAuto = (t: Track, k: AutoKey, v: number[]) => { t.auto = { ...t.auto, [k]: v }; };
+const QUICK_AUTO: [string, (d: Project) => void][] = [
+  ['Subida', (d) => MEL_T(d).forEach((t) => { setAuto(t, 'lp', autoShape('up', t.type === 'bass' ? 0.5 : 0.32, 1)); if (t.type !== 'bass') setAuto(t, 'rev', autoShape('up', Math.min(t.rev, 0.15), 0.65)); })],
+  ['Filtro que respira', (d) => MEL_T(d).forEach((t) => setAuto(t, 'lp', autoShape('wave', t.type === 'bass' ? 0.55 : 0.4, 1)))],
+  ['Delay al final', (d) => MEL_T(d).filter((t) => t.type !== 'bass').forEach((t) => setAuto(t, 'dly', autoShape('last', t.dly, 0.85)))],
+  ['Bombeo', (d) => MEL_T(d).filter((t) => t.type === 'chords' || t.type === 'arp').forEach((t) => setAuto(t, 'vol', autoShape('pump', 0.25, 1)))],
+  ['Borrar todo', (d) => d.tracks.forEach((t) => { t.auto = undefined; })],
+];
+function AutoEditor({ t, upT, playing }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void; playing: boolean }) {
+  const [k, setK] = useState<AutoKey>('lp'), [touch, setTouch] = useState<string>('');
+  const P = AUTO_PARAMS.find((x) => x.k === k)!, data = t.auto?.[k];
+  const laneRef = useRef<HTMLDivElement>(null), headRef = useRef<HTMLElement>(null), draft = useRef<number[] | null>(null), last = useRef(-1), raf = useRef(0);
+  // valor de partida si todavía no hay automatización: lo que la pista tiene hoy
+  const base = () => { const f = t.fx ?? {}; const v = k === 'lp' ? (f.lp ? Math.log(f.lp / 200) / Math.log(100) : 1) : k === 'hp' ? (f.hp ? Math.log(f.hp / 20) / Math.log(100) : 0) : k === 'vol' ? 1 : k === 'rev' ? t.rev : k === 'dly' ? t.dly : k === 'drive' ? f.drive ?? 0 : (t.pan + 1) / 2; return Math.max(0, Math.min(1, v)); };
+  const commit = () => { const d = draft.current; if (!d) return; cancelAnimationFrame(raf.current); raf.current = requestAnimationFrame(() => upT(t.id, (x) => setAuto(x, k, [...d]))); };
+  const at = (e: PointerEvent) => { const r = laneRef.current!.getBoundingClientRect(); return { i: Math.max(0, Math.min(63, Math.floor(((e.clientX - r.left) / r.width) * 64))), v: Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height)) }; };
+  const paint = (e: PointerEvent) => {
+    const { i, v } = at(e), d = draft.current!; const a = last.current < 0 ? i : last.current;
+    for (let j = Math.min(a, i); j <= Math.max(a, i); j++) d[j] = +v.toFixed(3); // rellena el hueco si el dedo va rápido
+    last.current = i; setTouch(P.fmt(v)); commit();
+  };
+  useEffect(() => {
+    if (!playing) { if (headRef.current) headRef.current.style.opacity = '0'; return; }
+    let id = 0; const loop = () => { if (headRef.current) { headRef.current.style.opacity = '1'; headRef.current.style.left = ((engine.beat.step % 64) / 64) * 100 + '%'; } id = requestAnimationFrame(loop); };
+    id = requestAnimationFrame(loop); return () => cancelAnimationFrame(id);
+  }, [playing]);
+  const has = (key: AutoKey) => !!t.auto?.[key];
+  return (
+    <div class="card a-autoed" style={{ '--c': t.color } as any}>
+      <div class="ct"><h3>Automatización · {t.name}</h3></div>
+      <div class="chips">{AUTO_PARAMS.map((x) => <button class={'chip' + (k === x.k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => setK(x.k)}>{x.label}{has(x.k) ? ' •' : ''}</button>)}</div>
+      <div class={'lane' + (data ? '' : ' empty')} ref={laneRef}
+        onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); draft.current = data ? [...data] : Array(64).fill(+base().toFixed(3)); last.current = -1; paint(e as any); }}
+        onPointerMove={(e) => { if (draft.current) paint(e as any); }}
+        onPointerUp={() => { draft.current = null; last.current = -1; setTouch(''); }} onPointerCancel={() => { draft.current = null; setTouch(''); }}>
+        {[0, 1, 2, 3].map((b) => <span class="bar" style={{ left: b * 25 + '%' }}>{b + 1}</span>)}
+        {data ? <svg viewBox="0 0 64 100" preserveAspectRatio="none" aria-hidden="true">
+          <path d={'M0 100 ' + data.map((v, i) => `L${i} ${100 - v * 100} L${i + 1} ${100 - v * 100}`).join(' ') + ' L64 100 Z'} fill={t.color} fill-opacity="0.18" />
+          <path d={data.map((v, i) => `${i ? 'L' : 'M'}${i} ${100 - v * 100} L${i + 1} ${100 - v * 100}`).join(' ')} fill="none" stroke={t.color} stroke-width="1.5" vector-effect="non-scaling-stroke" />
+        </svg> : <div class="lane-hint">Dibujá con el dedo o elegí una forma</div>}
+        <i class="head" ref={headRef as any} />
+        {touch && <b class="lane-val">{P.label}: {touch}</b>}
+      </div>
+      <div class="chips" style={{ marginTop: '10px' }}>
+        {AUTO_SHAPES.map((sh) => <button class="chip" onClick={() => upT(t.id, (x) => setAuto(x, k, autoShape(sh.k, P.lo, P.hi)))}>{sh.label}</button>)}
+        {data && <button class="chip" onClick={() => upT(t.id, (x) => { const a = { ...x.auto }; delete a[k]; x.auto = Object.keys(a).length ? a : undefined; })}>Borrar</button>}
+      </div>
+      <div class="hint">{P.label} a lo largo de los 4 compases. {k === 'pan' ? 'Arriba es derecha, abajo es izquierda.' : 'Arriba es más, abajo es menos.'} Mientras haya automatización, manda sobre la perilla de ese parámetro.</div>
+    </div>
+  );
+}
 function VocalEditor({ p, t, upT, power, onDelete }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; power: any; onDelete: () => void }) {
   const [st, setSt] = useState<'idle' | 'loop' | 'free' | 'busy'>('idle'), [err, setErr] = useState(''), [wave, setWave] = useState<number[]>([]), [info, setInfo] = useState('');
   const stopRef = useRef<null | (() => Promise<AudioBuffer>)>(null), cancel = useRef<{ stop?: () => void }>({}), lvlRef = useRef<HTMLElement>(null), timer = useRef<any>(0);
@@ -552,12 +610,14 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
     { title: 'Nombre, versión y género', body: 'Generar arma el loop del nombre. "Otra versión" prueba otra progresión y otro género. Los botones de género (Trance, Techno, House…) cambian batería, bajo, sonidos y armonía manteniendo tus notas. Armónico busca la tonalidad que mejor encaja; Puro usa las notas exactas de las letras.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
     { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
+    { title: 'Automatización rápida', body: 'Con un toque hacés que el loop se mueva a lo largo de los 4 compases. Subida: los filtros y la reverb van creciendo, como antes de un drop. Filtro que respira: abre y cierra en cada compás. Delay al final: eco en el último tiempo. Bombeo: los acordes y el arpegio laten con el pulso.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 70 C 60 68, 120 50, 192 10 L192 74 L8 74 Z" fill={Y} fill-opacity="0.18" /><path d="M8 70 C 60 68, 120 50, 192 10" fill="none" stroke={Y} stroke-width="2" /></svg> },
     { title: 'Batería', body: 'Elegí el kit: el 909 y el 808 clásicos, uno por género, Synthwave 80s, Electro o Lo-Fi. Cambia el sonido del bombo, el clap, los hats y el redoblante sin tocar el patrón.', art: artChips(['909', '808', 'Techno', 'Lo-Fi'], 1) },
   ],
   pat: [
     { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista.', art: artGrid },
     { title: 'Editar una pista', body: 'Tocá el nombre de una pista para abrir su editor abajo: elegís el sonido, el orden de las notas del arpegio, la forma de tocar los acordes y el sonido fino con perillas. Las pistas de batería eligen kit y golpe.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Melodía en piano roll', body: 'La melodía son 4 compases que salen de tu nombre. En su editor tocás un casillero para poner una nota y de nuevo para sacarla. Si la editás a mano, ya no se rehace sola al cambiar la armonía; "Nueva melodía" arma otra.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
+    { title: 'Automatización', body: 'Abajo del editor de cada pista está su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
   ],
   mix: [
