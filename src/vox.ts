@@ -45,5 +45,14 @@ export async function startRecording(ctx: BaseAudioContext, onLevel: (v: number)
   });
 }
 
+/* grabación en tiempo: se respeta el largo exacto (4 compases) y solo se normaliza y se suaviza el final */
+export function finishLoopVox(d: Float32Array, sr: number): Vox {
+  let pk = 0; for (let i = 0; i < d.length; i++) pk = Math.max(pk, Math.abs(d[i]));
+  const g = pk > 0.001 ? 0.9 / pk : 1, f = Math.round(sr * 0.01);
+  for (let i = 0; i < d.length; i++) d[i] *= g;
+  for (let i = 0; i < f; i++) { d[i] *= i / f; d[d.length - 1 - i] *= i / f; }
+  return { sr, data: d };
+}
+
 /* contorno de la onda para dibujarla (picos por columna) */
 export function peaks(d: Float32Array, cols = 120) { const o: number[] = [], k = Math.max(1, Math.floor(d.length / cols)); for (let c = 0; c < cols; c++) { let m = 0; for (let i = c * k; i < Math.min(d.length, (c + 1) * k); i++) m = Math.max(m, Math.abs(d[i])); o.push(m); } return o; }

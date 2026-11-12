@@ -8,7 +8,7 @@ import '@fontsource/jetbrains-mono/600.css';
 import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
-import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks } from './vox';
+import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
 import { renderAudio, wav, mp3, abletonZip, baseName } from './engine/export';
 import {
   MACROS,
@@ -121,7 +121,7 @@ function App() {
   useEffect(() => {
     let lastStat = 0;
     engine.onStep = (s) => {
-      const i = s % 16 + 1; engine.beat.step = s;
+      const i = s % 16 + 1; engine.beat.step = s; setPlaying(true); // por si arrancó desde la grabación de voz
       const k = pRef.current.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !t.mute);
       if (k && k.steps[s % 16]) engine.beat.t = performance.now();
       if (phRef.current) phRef.current.textContent = `.pads>.pad:nth-child(${i}){outline:2px solid #fff;outline-offset:-2px}.leds span:nth-child(${i}){background:var(--mint);box-shadow:0 0 8px var(--mint)}`;
@@ -231,7 +231,10 @@ function App() {
               <button class={'tname' + (sel === t.id ? ' sel' : '') + (t.mute ? ' mute' : '')} style={{ '--c': t.color } as any} onClick={() => setSel(t.id)}>
                 <span class="dot" />{t.name}<i class="vu" ref={(el) => { vuRefs.current[t.id] = el; }} />
               </button>
-              <div class="pads">
+              {t.type === 'vocal' ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => setSel(t.id)}>
+                {[0, 1, 2, 3].map((b) => <i style={{ left: b * 25 + '%' }} />)}
+                {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
+              </button> : <div class="pads">
                 {Array.from({ length: 16 }, (_, i) => {
                   if (t.type === 'arp') {
                     const on = t.arp!.gate[i], plays = arpPlays(t, i), nf = arpNotes[t.id];
@@ -247,7 +250,7 @@ function App() {
                   return <button class={'pad' + (v === 1 ? ' v1' : v === 2 ? ' v2' : v === 3 ? ' v1 gh' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
                     onClick={() => stepEdit(t, (x) => { x.steps[i] = (x.steps[i] + 1) % 3; })} />;
                 })}
-              </div>
+              </div>}
             </>)}
           </div>
           <AddTrack onAdd={(type, sound) => { let id = ''; up((d) => { if (d.tracks.length >= 16) return; const nt = newTrack(d, type, sound); id = nt.id; d.tracks.push(nt); }); setTimeout(() => id && setSel(id), 0); }} full={p.tracks.length >= 16} />
@@ -320,7 +323,7 @@ function AddTrack({ onAdd, full }: { onAdd: (t: TrackType, s?: string) => void; 
 }
 function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; onDelete: () => void }) {
   const power = <button class={'pw' + (t.mute ? '' : ' on')} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} />;
-  if (t.type === 'vocal') return <VocalEditor t={t} upT={upT} power={power} onDelete={onDelete} />;
+  if (t.type === 'vocal') return <VocalEditor p={p} t={t} upT={upT} power={power} onDelete={onDelete} />;
   if (t.type === 'drum') {
     return (
       <div class="card" style={{ '--c': t.color } as any}>
@@ -382,60 +385,81 @@ const VOX_FX: [string, string, Partial<Track>, Track['fx']][] = [
   ['Robot', 'Chorus y delay', { rev: 0.2, dly: 0.35 }, { hp: 150, chorus: 0.8 }],
   ['Sucia', 'Distorsión', { rev: 0.15, dly: 0.2 }, { hp: 180, drive: 0.75 }],
 ];
-function VocalEditor({ t, upT, power, onDelete }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void; power: any; onDelete: () => void }) {
-  const [st, setSt] = useState<'idle' | 'rec' | 'busy'>('idle'), [err, setErr] = useState(''), [wave, setWave] = useState<number[]>([]), [secs, setSecs] = useState(0);
-  const stopRef = useRef<null | (() => Promise<AudioBuffer>)>(null), lvlRef = useRef<HTMLElement>(null), timer = useRef<any>(0);
-  const refresh = () => { const d = engine.sampleData['vox:' + t.id]; setWave(d ? peaks(d) : []); };
+function VocalEditor({ p, t, upT, power, onDelete }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; power: any; onDelete: () => void }) {
+  const [st, setSt] = useState<'idle' | 'loop' | 'free' | 'busy'>('idle'), [err, setErr] = useState(''), [wave, setWave] = useState<number[]>([]), [info, setInfo] = useState('');
+  const stopRef = useRef<null | (() => Promise<AudioBuffer>)>(null), cancel = useRef<{ stop?: () => void }>({}), lvlRef = useRef<HTMLElement>(null), timer = useRef<any>(0);
+  const loopSec = (64 * 60) / p.bpm / 4;
+  const refresh = () => { const d = engine.sampleData['vox:' + t.id]; setWave(d ? peaks(d, 160) : []); };
   useEffect(refresh, [t.id, t.vox?.has]);
-  const store = async (buf: AudioBuffer) => {
-    const v = cleanVox(buf); engine.setVox(t.id, v.data, v.sr); await saveVox(t.id, v).catch(() => {});
-    upT(t.id, (x) => { x.vox = { ...(x.vox ?? { from: 0, rev: false, has: false }), has: true, from: 0 }; x.mute = false; }); refresh(); setSt('idle');
+  const keep = async (v: { sr: number; data: Float32Array }) => {
+    engine.setVox(t.id, v.data, v.sr); await saveVox(t.id, v).catch(() => {});
+    upT(t.id, (x) => { x.vox = { ...(x.vox ?? { from: 0, rev: false, has: false }), has: true, from: 0, pos: 0 }; x.mute = false; }); refresh(); setSt('idle'); setInfo('');
   };
-  const start = async () => {
+  const lvl = (lv: number) => { if (lvlRef.current) lvlRef.current.style.width = Math.min(100, lv * 140) + '%'; };
+  // grabación en tiempo: exactamente 4 compases, alineada al loop
+  const recLoop = async () => {
+    setErr(''); setSt('loop'); setInfo('Preparando el micrófono…');
+    try {
+      const d = await engine.recordLoop(p, (m, lv) => { setInfo(m); lvl(lv); }, cancel.current);
+      if (!d) { setSt('idle'); setInfo(''); return; }
+      setSt('busy'); await keep(finishLoopVox(d, engine.sr));
+    } catch { setSt('idle'); setInfo(''); setErr('No se pudo usar el micrófono. Revisá el permiso del navegador.'); }
+  };
+  // grabación libre: hasta 4 compases, se recortan los silencios
+  const recFree = async () => {
     setErr('');
     try {
-      await engine.init(); setSt('rec'); setSecs(0);
-      const t0 = performance.now();
-      stopRef.current = await startRecording(engine.ctx!, (lv) => { if (lvlRef.current) lvlRef.current.style.width = Math.min(100, lv * 140) + '%'; });
-      timer.current = setInterval(() => { const s = (performance.now() - t0) / 1000; setSecs(s); if (s >= 8) stop(); }, 100);
+      await engine.init(); setSt('free'); const t0 = performance.now();
+      stopRef.current = await startRecording(engine.ctx!, lvl);
+      timer.current = setInterval(() => { const s = (performance.now() - t0) / 1000; setInfo('Grabando · ' + s.toFixed(1) + ' de ' + loopSec.toFixed(1) + ' s'); if (s >= loopSec) stopFree(); }, 100);
     } catch { setSt('idle'); setErr('No se pudo usar el micrófono. Revisá el permiso del navegador.'); }
   };
-  const stop = async () => {
+  const stopFree = async () => {
     clearInterval(timer.current); const f = stopRef.current; stopRef.current = null; if (!f) return; setSt('busy');
-    try { await store(await f()); } catch { setSt('idle'); setErr('No se pudo procesar la grabación.'); }
+    try { await keep(cleanVox(await f(), loopSec)); } catch { setSt('idle'); setErr('No se pudo procesar la grabación.'); }
   };
   const upload = async (file?: File) => {
     if (!file) return; setErr(''); setSt('busy');
-    try { await engine.init(); await store(await engine.ctx!.decodeAudioData(await file.arrayBuffer())); } catch { setSt('idle'); setErr('No se pudo leer ese archivo de audio.'); }
+    try { await engine.init(); await keep(cleanVox(await engine.ctx!.decodeAudioData(await file.arrayBuffer()), loopSec)); } catch { setSt('idle'); setErr('No se pudo leer ese archivo de audio.'); }
   };
-  const fx = t.fx ?? {}, from = t.vox?.from ?? 0;
+  const fx = t.fx ?? {}, from = t.vox?.from ?? 0, pos = t.vox?.pos ?? 0;
   const setFx = (k: keyof NonNullable<Track['fx']>, v: number) => upT(t.id, (x) => { x.fx = { ...x.fx, [k]: v }; });
+  // largo del clip en pasos (para dibujarlo en la línea de 4 compases)
+  const d = engine.sampleData['vox:' + t.id], clipSteps = d ? (d.length * (1 - from) / Math.pow(2, t.pitch / 12) / engine.sr) / (60 / p.bpm / 4) : 0;
+  const w = Math.min(64 - pos, clipSteps * (t.decay >= 0.99 ? 1 : 0.15 + t.decay * 0.8));
+  const seek = (e: MouseEvent) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); const s2 = Math.max(0, Math.min(62, Math.round(((e.clientX - r.left) / r.width) * 32) * 2)); upT(t.id, (x) => { x.vox = { ...x.vox!, pos: s2 }; }); };
+  const busy = st !== 'idle';
   return (
     <div class="card" style={{ '--c': t.color } as any}>
       <div class="ct"><h3>{t.name}</h3>{power}</div>
       <div class="vox-rec">
-        {st !== 'rec'
-          ? <button class="btn rec" disabled={st === 'busy'} onClick={start}><span class="dotrec" />{t.vox?.has ? 'Grabar de nuevo' : 'Grabar'}</button>
-          : <button class="btn rec on" onClick={stop}><span class="sq" />Parar · {secs.toFixed(1)} s</button>}
-        <label class="btn up">Subir audio<input type="file" accept="audio/*" onChange={(e) => upload((e.target as HTMLInputElement).files?.[0])} /></label>
+        {st === 'loop' || st === 'free'
+          ? <button class="btn rec on" onClick={() => (st === 'loop' ? cancel.current.stop?.() : stopFree())}><span class="sq" />{st === 'loop' ? 'Cancelar' : 'Parar'}</button>
+          : <button class="btn rec" disabled={busy} onClick={recLoop}><span class="dotrec" />Grabar 4 compases</button>}
+        <button class="btn" disabled={busy} onClick={recFree}>Grabar libre</button>
+        <label class={'btn up' + (busy ? ' dis' : '')}>Subir audio<input type="file" accept="audio/*" disabled={busy} onChange={(e) => upload((e.target as HTMLInputElement).files?.[0])} /></label>
       </div>
-      {st === 'rec' && <div class="vox-lvl"><i ref={lvlRef as any} /></div>}
+      {info && <div class="vox-info">{info}</div>}
+      {(st === 'loop' || st === 'free') && <div class="vox-lvl"><i ref={lvlRef as any} /></div>}
       {st === 'busy' && <div class="exp-status"><span class="spin" />Procesando…</div>}
       {err && <div class="hint" style={{ color: 'var(--red)' }}>{err}</div>}
-      {wave.length > 0 && <div class="vox-wave">
-        <svg viewBox={`0 0 ${wave.length} 40`} preserveAspectRatio="none" aria-hidden="true">
-          {wave.map((v, i) => <rect x={i + 0.15} width="0.7" y={20 - v * 19} height={Math.max(0.6, v * 38)} fill={i / wave.length < from ? '#3a3a3a' : t.color} />)}
-          <rect x={from * wave.length} width="0.6" y="0" height="40" fill="#ececec" />
-        </svg>
-      </div>}
-      <div class="hint">{t.vox?.has ? 'En la grilla elegís en qué pasos suena (una grabación por golpe). Grabá hasta 8 segundos; los silencios del principio y del final se recortan solos.' : 'Grabá una palabra o una frase (hasta 8 segundos) o subí un audio. Después elegís en la grilla en qué pasos suena.'}</div>
+      <div class="vox-tl" onClick={t.vox?.has ? seek : undefined} role="presentation">
+        {[0, 1, 2, 3].map((b) => <span class="bar" style={{ left: b * 25 + '%' }}>{b + 1}</span>)}
+        {wave.length > 0 && <div class="clip" style={{ left: (pos / 64) * 100 + '%', width: (w / 64) * 100 + '%' }}>
+          <svg viewBox={`0 0 ${wave.length} 40`} preserveAspectRatio="none" aria-hidden="true">
+            {wave.map((v, i) => i / wave.length >= from && <rect x={((i / wave.length - from) / (1 - from)) * wave.length} width={wave.length / (wave.length * (1 - from)) * 0.8} y={20 - v * 19} height={Math.max(0.6, v * 38)} fill={t.color} />)}
+          </svg>
+        </div>}
+      </div>
+      <div class="hint">{t.vox?.has ? 'La voz suena una vez cada 4 compases, desde donde está el clip. Tocá la línea para moverlo.' : `"Grabar 4 compases" graba en tiempo con el loop (${loopSec.toFixed(1)} s): si está parado, te da un compás de cuenta. Con auriculares sale mejor. "Grabar libre" y "Subir audio" recortan los silencios y lo ponen al principio.`}</div>
       {t.vox?.has && <>
         <div class="sub">Efecto rápido</div>
-        <div class="chips">{VOX_FX.map(([n, d, mix, ins]) => <button class="chip" title={d} onClick={() => upT(t.id, (x) => { Object.assign(x, mix); x.fx = { ...ins }; })}>{n}</button>)}
+        <div class="chips">{VOX_FX.map(([n, dsc, mix, ins]) => <button class="chip" title={dsc} onClick={() => upT(t.id, (x) => { Object.assign(x, mix); x.fx = { ...ins }; })}>{n}</button>)}
           <button class={'chip' + (t.vox?.rev ? ' on' : '')} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, rev: !x.vox!.rev }; })}>Al revés</button></div>
-        <div class="sub">Recorte y tono</div>
+        <div class="sub">Posición, recorte y tono</div>
         <div class="knobs">
-          <Knob label="Inicio" value={from} min={0} max={0.9} def={0} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.vox = { ...x.vox!, from: v }; })} />
+          <Knob label="Arranca en" value={pos} min={0} max={62} step={2} def={0} color={t.color} fmt={(v) => 'c' + (Math.floor(v / 16) + 1) + '.' + (Math.floor((v % 16) / 4) + 1)} onChange={(v) => upT(t.id, (x) => { x.vox = { ...x.vox!, pos: v }; })} />
+          <Knob label="Recorte inicio" value={from} min={0} max={0.9} def={0} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.vox = { ...x.vox!, from: v }; })} />
           <Knob label="Largo" value={t.decay} min={0.05} max={1} def={1} color={t.color} fmt={(v) => (v >= 0.99 ? 'todo' : pct(v))} onChange={(v) => upT(t.id, (x) => { x.decay = v; })} />
           <Knob label="Afinación" value={t.pitch} min={-12} max={12} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
           <Knob label="Volumen" value={t.vol} min={0} max={1} def={0.8} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.vol = v; })} />

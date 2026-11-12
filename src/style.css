@@ -233,3 +233,13 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .vox-lvl i{display:block;height:100%;width:0;background:var(--red);transition:width .05s}
 .vox-wave{height:64px;margin-top:10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:4px}
 .vox-wave svg{width:100%;height:100%;display:block}
+
+.vox-info{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--txt);margin-top:10px}
+.btn.up.dis{opacity:.5;pointer-events:none}
+.vox-tl{position:relative;height:70px;margin-top:10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer}
+.vox-tl .bar{position:absolute;top:0;bottom:0;border-left:1px solid #2a2a2a;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dim);padding:3px 5px}
+.vox-tl .clip{position:absolute;top:16px;bottom:4px;background:color-mix(in srgb,var(--c) 14%,transparent);border-left:2px solid var(--c);border-radius:4px}
+.vox-tl .clip svg{width:100%;height:100%;display:block}
+.pads.vrow{position:relative;height:34px;border-radius:7px;background:#1a1a1a;display:block;text-align:left;overflow:hidden}
+.pads.vrow i{position:absolute;top:0;bottom:0;border-left:1px solid #2a2a2a}
+.pads.vrow b{position:absolute;top:0;bottom:0;right:0;display:flex;align-items:center;padding-left:8px;font-weight:500;font-size:11.5px;color:var(--bg);background:var(--c);border-radius:6px}

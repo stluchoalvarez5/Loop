@@ -19,6 +19,7 @@ export class Engine {
   aR: AnalyserNode | null = null;
   beat = { t: 0, step: -1 }; // último golpe de bombo (performance.now) para que los visuales latan
   onStep: (s: number) => void = () => {};
+  stepTaps = new Set<(s: number, frame: number) => void>();
   onMeter: (m: Meter) => void = () => {};
   private pending: Project | null = null;
 
@@ -34,7 +35,7 @@ export class Engine {
       const split = ctx.createChannelSplitter(2); node.connect(split);
       const mk = () => { const a = ctx.createAnalyser(); a.fftSize = 2048; a.smoothingTimeConstant = 0.78; return a; };
       this.aL = mk(); this.aR = mk(); split.connect(this.aL, 0); split.connect(this.aR, 1);
-      node.port.onmessage = (e) => { const m = e.data; if (m.type === 'step') this.onStep(m.step); else if (m.type === 'meter') this.onMeter(m); };
+      node.port.onmessage = (e) => { const m = e.data; if (m.type === 'step') { this.onStep(m.step); this.stepTaps.forEach((f) => f(m.step, m.frame)); } else if (m.type === 'meter') this.onMeter(m); };
       this.node = node;
       await this.loadSamples();
       Object.keys(this.sampleData).filter((k) => k.startsWith('vox:')).forEach((k) => this.send(k, this.sampleData[k])); // voces cargadas antes de arrancar el audio
@@ -72,9 +73,39 @@ export class Engine {
     if (!this.node) { this.pending = p; return; }
     this.node.port.postMessage({ type: 'project', project: compile(p) });
   }
-  async play(p: Project) {
+  async play(p: Project, from = 0) {
     await this.init(); await this.ctx!.resume(); this.update(p);
-    this.node!.port.postMessage({ type: 'play' }); this.playing = true;
+    this.node!.port.postMessage({ type: 'play', from }); this.playing = true;
+  }
+  /* graba exactamente 4 compases alineados al loop: si está parado, arranca con un compás de cuenta (el 4) y graba desde el 1;
+     si está sonando, espera al próximo compás 1. Compensa la latencia de salida y de entrada. */
+  async recordLoop(p: Project, onInfo: (msg: string, level: number) => void, cancel: { stop?: () => void }) {
+    await this.init(); const ctx = this.ctx!; await ctx.resume();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 1 } });
+    const src = ctx.createMediaStreamSource(stream), rec = new AudioWorkletNode(ctx, 'loop-rec', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+    const mute = ctx.createGain(); mute.gain.value = 0; src.connect(rec); rec.connect(mute); mute.connect(ctx.destination);
+    const sr = ctx.sampleRate, loopN = Math.round(64 * sr * 60 / p.bpm / 4);
+    const inLat = (stream.getAudioTracks()[0]?.getSettings() as any)?.latency ?? 0.01;
+    const shift = Math.round(((ctx as any).outputLatency ?? 0) * sr + ctx.baseLatency * sr + inLat * sr);
+    const out = new Float32Array(loopN); let start = -1, level = 0, bar = 0;
+    return await new Promise<Float32Array | null>((resolve) => {
+      const done = (ok: boolean) => { this.stepTaps.delete(tap); rec.port.postMessage({ type: 'stop' }); src.disconnect(); rec.disconnect(); stream.getTracks().forEach((t) => t.stop()); resolve(ok ? out : null); };
+      cancel.stop = () => done(false);
+      const tap = (s: number, frame: number) => {
+        if (start < 0 && s === 0) start = frame + shift;
+        if (start < 0) onInfo('Arranca en ' + (4 - Math.floor(s / 16)), level); else { bar = Math.floor(s / 16) + 1; onInfo('Grabando · compás ' + bar + ' de 4', level); }
+      };
+      this.stepTaps.add(tap);
+      rec.port.onmessage = (e) => {
+        const { frame, data } = e.data as { frame: number; data: Float32Array };
+        let m = 0; for (let i = 0; i < data.length; i++) m = Math.max(m, Math.abs(data[i])); level = level * 0.8 + m * 0.2;
+        if (start < 0) return;
+        for (let i = 0; i < data.length; i++) { const k = frame + i - start; if (k >= 0 && k < loopN) out[k] = data[i]; }
+        if (frame + data.length >= start + loopN) done(true);
+      };
+      rec.port.postMessage({ type: 'start' });
+      if (!this.playing) this.play(p, 48); // un compás de cuenta antes del 1
+    });
   }
   stop() { this.node?.port.postMessage({ type: 'stop' }); this.playing = false; }
   preview(id: string, note: number) { this.node?.port.postMessage({ type: 'preview', id, note }); }

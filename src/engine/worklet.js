@@ -218,7 +218,7 @@ class LoopEngine extends AudioWorkletProcessor {
       this.setEq(m.project.master.eq);
       return;
     }
-    if (m.type === 'play') { this.playing = true; this.pos = 0; this.next = 0; this.nextT = 0; this.step = -1; return; }
+    if (m.type === 'play') { const f = m.from | 0, sl = this.stepLen(); this.playing = true; this.pos = f * sl; this.next = f; this.nextT = f * sl; this.step = -1; return; }
     if (m.type === 'stop') { this.playing = false; this.tracks.forEach((t) => t.voices.forEach((v) => { if (v.stage !== undefined) v.stage = 2; else v.g *= 0.2; })); return; }
     if (m.type === 'preview') { const t = this.tracks.find((x) => x.id === m.id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); }
   }
@@ -258,7 +258,7 @@ class LoopEngine extends AudioWorkletProcessor {
         while (this.pos >= this.nextT) {
           const st = this.next; this.step = st;
           for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % 16] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off); }
-          if (!this.quiet) this.port.postMessage({ type: 'step', step: st }); this.stepAt = i;
+          if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
           if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; }
           this.nextT = this.next * sl + swOff(this.next);
@@ -355,3 +355,14 @@ class LoopEngine extends AudioWorkletProcessor {
   }
 }
 registerProcessor('loop-engine', LoopEngine);
+
+/* grabador del micrófono: manda los bloques con su número de muestra (currentFrame), así la voz queda alineada al loop */
+class LoopRec extends AudioWorkletProcessor {
+  constructor() { super(); this.on = false; this.port.onmessage = (e) => { this.on = e.data.type === 'start'; }; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (this.on && ch) { const d = ch.slice(); this.port.postMessage({ frame: currentFrame, data: d }, [d.buffer]); }
+    return true;
+  }
+}
+registerProcessor('loop-rec', LoopRec);
