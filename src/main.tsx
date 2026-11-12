@@ -89,6 +89,7 @@ const Icon = {
   stop: <svg viewBox="0 0 24 24" fill="currentColor"><rect x="5.5" y="5.5" width="13" height="13" rx="2.5" /></svg>,
   grid: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>,
   mix: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v18M12 3v18M18 3v18" /><rect x="3.5" y="13" width="5" height="3" rx="1" fill="currentColor" /><rect x="9.5" y="6" width="5" height="3" rx="1" fill="currentColor" /><rect x="15.5" y="10" width="5" height="3" rx="1" fill="currentColor" /></svg>,
+  help: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7" /><path d="M12 17h.01" /></svg>,
   scene: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="10" r="5" /><path d="M2 16h20M5 20h14M12 16l-6 6M12 16l6 6" /></svg>,
   master: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h3l3-7 4 14 3-9 2 2h3" /></svg>,
 };
@@ -101,8 +102,15 @@ function App() {
   const [tab, setTab] = useState<'scene' | 'pat' | 'mix' | 'master'>('scene');
   const [vis, setVis] = useState<StageMode>('wave');
   const land = useLandscape();
-  const [tut, setTut] = useState(() => { try { return !localStorage.getItem('loop.noTutorial'); } catch { return true; } });
-  const closeTut = (never: boolean) => { if (never) { try { localStorage.setItem('loop.noTutorial', '1'); } catch { /* */ } } setTut(false); };
+  // guías: la intro aparece al abrir (salvo "No mostrar al abrir"); la de cada sección, la primera vez que entrás. El botón Guía las vuelve a abrir.
+  const ls = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return '1'; } }, set: (k: string) => { try { localStorage.setItem(k, '1'); } catch { /* */ } } };
+  const [guide, setGuide] = useState<TutKey | null>(() => (ls.get('loop.noTutorial') ? (ls.get('loop.seen.scene') ? null : 'scene') : 'intro'));
+  const closeGuide = (never: boolean) => {
+    const g = guide; if (!g) return;
+    if (g === 'intro') { if (never) ls.set('loop.noTutorial'); setGuide(ls.get('loop.seen.' + tab) ? null : tab); return; }
+    ls.set('loop.seen.' + g); setGuide(null);
+  };
+  const goTab = (t: 'scene' | 'pat' | 'mix' | 'master') => { setTab(t); if (!guide && !ls.get('loop.seen.' + t)) setGuide(t); };
   const [sel, setSel] = useState('arp');
   const [playing, setPlaying] = useState(false);
   const [nameIn, setNameIn] = useState(p.name === 'Loop' ? '' : p.name);
@@ -293,12 +301,13 @@ function App() {
 
       {tab === 'master' && <div class="page master"><Master p={p} up={up} stats={stats} /></div>}
 
-      {tut && <Tutorial onClose={closeTut} />}
+      {guide && <Tutorial key={guide} kind={guide} onClose={closeGuide} />}
       <nav class="nav">
-        <button class={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>{Icon.scene}Escena</button>
-        <button class={tab === 'pat' ? 'on' : ''} onClick={() => setTab('pat')}>{Icon.grid}Patrón</button>
-        <button class={tab === 'mix' ? 'on' : ''} onClick={() => setTab('mix')}>{Icon.mix}Mixer</button>
-        <button class={tab === 'master' ? 'on' : ''} onClick={() => setTab('master')}>{Icon.master}Master</button>
+        <button class={tab === 'scene' ? 'on' : ''} onClick={() => goTab('scene')}>{Icon.scene}Escena</button>
+        <button class={tab === 'pat' ? 'on' : ''} onClick={() => goTab('pat')}>{Icon.grid}Patrón</button>
+        <button class={tab === 'mix' ? 'on' : ''} onClick={() => goTab('mix')}>{Icon.mix}Mixer</button>
+        <button class={tab === 'master' ? 'on' : ''} onClick={() => goTab('master')}>{Icon.master}Master</button>
+        <button class="nav-help" onClick={() => setGuide(tab)} aria-label="Guía de esta sección">{Icon.help}Guía</button>
       </nav>
     </div>
   );
@@ -513,30 +522,61 @@ function PianoRoll({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: 
   </>;
 }
 
-/* ---------- tutorial de 3 pasos (aparece al abrir, salvo que marques "No mostrar al abrir") ---------- */
-const TUT = [
-  { title: 'Escribí un nombre', body: 'Cada letra es una tonalidad: de la A a la L son mayores y de la M a la X, menores. Tocá Generar (en la pestaña Escena) y la app arma un loop en la tonalidad de ese nombre, con visuales que siguen la música. Con "Otra versión" probás otra progresión, y con los géneros cambiás el estilo.',
-    art: <div class="art-name"><div class="an-in">Luciano</div><div class="an-row">{[['L', 'SI'], ['U', 'SOL#m'], ['C', 'RE'], ['I', 'SOL#']].map(([a, b]) => <span><b>{a}</b>{b}</span>)}</div><div class="an-key">FA# menor · F#m · Bm · Dmaj7 · C#m7</div></div> },
-  { title: 'Armá el patrón', body: 'Tocá los casilleros para poner golpes: un toque prende, dos acentúan y tres apagan. El interruptor de la izquierda enciende o apaga cada instrumento. Tocá el nombre de una pista para cambiarle el sonido, y con "+ Agregar pista" sumás más, incluida una melodía en piano roll.',
-    art: <div class="art-grid">{['#ff5a36', '#ffb020', '#f2e94e', '#3fa7ff'].map((c, r) => <div class="ag-row"><i class="ag-pw" style={{ background: c }} />{Array.from({ length: 8 }, (_, i) => <i class={'ag-pad' + ([[0, 4], [2, 6], [1, 3, 5, 7], [1, 3, 6]][r].includes(i) ? ' on' : '')} style={{ '--c': c } as any} />)}</div>)}</div> },
-  { title: 'Mezclá y dale brillo', body: 'En Mixer y Master ajustás volúmenes, efectos y ecualización. Para mover una perilla o un fader, mantené el dedo quieto un instante hasta que se ilumine y después arrastrá; si deslizás, solo se mueve la pantalla. El volumen general se mantiene parejo solo.',
-    art: <div class="art-mix">{[0.75, 0.45, 0.6, 0.3, 0.85].map((v, i) => <div class="am-f"><i style={{ bottom: v * 70 + 'px', background: ['#ff5a36', '#ffb020', '#3fa7ff', '#8b6cff', '#2fd8b4'][i] }} /></div>)}<div class="am-hand">mantené<br />y arrastrá</div></div> },
-];
-function Tutorial({ onClose }: { onClose: (never: boolean) => void }) {
-  const [i, setI] = useState(0), [never, setNever] = useState(false), st = TUT[i], last = i === TUT.length - 1;
+/* ---------- guías: intro al abrir y una por sección ---------- */
+type TutKey = 'intro' | 'scene' | 'pat' | 'mix' | 'master';
+type TutStep = { title: string; body: string; art: any };
+const Y = '#e9c46a', G = '#7cc48f', R = '#e5655b';
+const artWave = <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 40 C 28 8, 40 8, 52 40 S 76 72, 96 40 S 124 10, 140 40 S 170 70, 192 40" fill="none" stroke="#ececec" stroke-width="2" />{Array.from({ length: 16 }, (_, k) => <rect x={8 + k * 11.5} y="70" width="9" height="3" rx="1" fill={k === 5 ? Y : '#2a2a2a'} />)}</svg>;
+const artName = <div class="art-name"><div class="an-in">Luciano</div><div class="an-row">{[['L', 'SI'], ['U', 'SOL#m'], ['C', 'RE'], ['I', 'SOL#']].map(([a, b]) => <span><b>{a}</b>{b}</span>)}</div><div class="an-key">SOL# menor · G#m · E · B · F#</div></div>;
+const artChips = (l: string[], on = 0) => <div class="art-chips">{l.map((x, k) => <span class={k === on ? 'on' : ''}>{x}</span>)}</div>;
+const artBars = (cols: string[], vals: number[], labels?: string[]) => <div class="art-mix">{vals.map((v, k) => <div class="am-col"><div class="am-f"><i style={{ bottom: v * 70 + 'px', background: cols[k % cols.length] }} /></div>{labels && <small>{labels[k]}</small>}</div>)}</div>;
+const artGrid = <div class="art-grid">{[R, '#e98a5f', Y, G].map((c, r) => <div class="ag-row"><i class="ag-pw" style={{ background: c }} />{Array.from({ length: 8 }, (_, k) => <i class={'ag-pad' + ([[0, 4], [2, 6], [1, 3, 5, 7], [1, 3, 6]][r].includes(k) ? ' on' : '')} style={{ '--c': c } as any} />)}</div>)}</div>;
+const artKnobs = (labels: string[]) => <div class="art-knobs">{labels.map((l, k) => { const a0 = 0.75 * Math.PI, a1 = a0 + [0.35, 0.8, 0.55, 0.7][k % 4] * 1.5 * Math.PI, pt = (a: number) => `${(20 + 15 * Math.cos(a)).toFixed(1)} ${(20 + 15 * Math.sin(a)).toFixed(1)}`; return <div><svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="15" fill="none" stroke="#2a2a2a" stroke-width="4" /><path d={`M ${pt(a0)} A 15 15 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${pt(a1)}`} fill="none" stroke={[R, Y, G][k % 3]} stroke-width="4" stroke-linecap="round" /></svg><small>{l}</small></div>; })}</div>;
+const TUTS: Record<TutKey, TutStep[]> = {
+  intro: [
+    { title: 'Bienvenido a Loop', body: 'Acá armás loops de música electrónica de 4 compases: batería, bajo, arpegio, acordes, melodía y hasta tu voz. La app tiene cuatro secciones, abajo: Escena, Patrón, Mixer y Master.', art: artChips(['Escena', 'Patrón', 'Mixer', 'Master']) },
+    { title: 'Todo arranca con un nombre', body: 'Cada letra es una tonalidad: de la A a la L son mayores y de la M a la X, menores. Escribí un nombre en Escena, tocá Generar y la app arma un loop en la tonalidad que mejor le queda. El mismo nombre da siempre el mismo loop.', art: artName },
+    { title: 'Cómo se mueven los controles', body: 'Para mover una perilla o un fader, mantené el dedo quieto un instante hasta que se marque y después arrastrá; si deslizás de una, solo se mueve la pantalla. Doble toque vuelve al valor inicial. Cada sección tiene su propia guía: aparece la primera vez que entrás y la volvés a ver con el botón Guía.', art: artBars([R, Y, G], [0.7, 0.4, 0.55, 0.3, 0.8]) },
+  ],
+  scene: [
+    { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
+    { title: 'Nombre, versión y género', body: 'Generar arma el loop del nombre. "Otra versión" prueba otra progresión y otro género. Los botones de género (Trance, Techno, House…) cambian batería, bajo, sonidos y armonía manteniendo tus notas. Armónico busca la tonalidad que mejor encaja; Puro usa las notas exactas de las letras.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
+    { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
+    { title: 'Batería', body: 'Elegí el kit: el 909 y el 808 clásicos, uno por género, Synthwave 80s, Electro o Lo-Fi. Cambia el sonido del bombo, el clap, los hats y el redoblante sin tocar el patrón.', art: artChips(['909', '808', 'Techno', 'Lo-Fi'], 1) },
+  ],
+  pat: [
+    { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista.', art: artGrid },
+    { title: 'Editar una pista', body: 'Tocá el nombre de una pista para abrir su editor abajo: elegís el sonido, el orden de las notas del arpegio, la forma de tocar los acordes y el sonido fino con perillas. Las pistas de batería eligen kit y golpe.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
+    { title: 'Melodía en piano roll', body: 'La melodía son 4 compases que salen de tu nombre. En su editor tocás un casillero para poner una nota y de nuevo para sacarla. Si la editás a mano, ya no se rehace sola al cambiar la armonía; "Nueva melodía" arma otra.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
+    { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
+  ],
+  mix: [
+    { title: 'Faders y botones', body: 'Cada columna es una pista: el fader es su volumen, M la silencia y S la deja sonando sola. Deslizá de costado para ver todas.', art: artBars([R, Y, G, '#e98a5f', '#8fc7a0'], [0.75, 0.5, 0.62, 0.35, 0.8]) },
+    { title: 'Pan, efectos y sidechain', body: 'Pan la manda a la izquierda o a la derecha. Reverb y Delay le suman ambiente y eco. Sidechain es cuánto se "agacha" la pista cuando pega el bombo: es lo que hace que el loop bombee.', art: artKnobs(['Pan', 'Reverb', 'Delay', 'Sidechain']) },
+    { title: 'El inserto de cada pista', body: 'Abajo de cada columna: Saturación (calienta o ensucia), Chorus (la abre y la engorda), Corta graves y Corta agudos (filtros). Cada género los trae armados; los podés ajustar a gusto.', art: artKnobs(['Saturación', 'Chorus', 'Graves', 'Agudos']) },
+  ],
+  master: [
+    { title: 'Exportar', body: 'Elegí cuántos compases y descargá en WAV (máxima calidad), MP3 (liviano) o el paquete para Ableton, con cada pista por separado, la mezcla y los MIDI. Después lo compartís desde el botón Compartir.', art: artChips(['WAV', 'MP3', 'Ableton'], 0) },
+    { title: 'Salida y volumen', body: 'El volumen se mantiene parejo solo: la ganancia automática lleva el loop al nivel elegido (en LUFS) y el limitador evita que sature. Los medidores te muestran cuánto está trabajando cada uno.', art: <div class="art-meter"><div><i style={{ width: '72%' }} /></div><small>-14 LUFS · limitador -1 dB</small></div> },
+    { title: 'Ecualizador y efectos', body: 'El EQ de 8 bandas sube o baja graves, medios y agudos de todo el loop. En Efectos ajustás el tamaño de la reverb y cuánto se repite el delay, para todas las pistas a la vez.', art: artBars([G, G, Y, Y, Y, R, R, R], [0.6, 0.55, 0.45, 0.4, 0.5, 0.55, 0.62, 0.5]) },
+  ],
+};
+const TUT_NAME: Record<TutKey, string> = { intro: 'Intro', scene: 'Escena', pat: 'Patrón', mix: 'Mixer', master: 'Master' };
+function Tutorial({ kind, onClose }: { kind: TutKey; onClose: (never: boolean) => void }) {
+  const steps = TUTS[kind], [i, setI] = useState(0), [never, setNever] = useState(false), st = steps[i], last = i === steps.length - 1;
   return (
-    <div class="tut" role="dialog" aria-modal="true" aria-label="Tutorial">
+    <div class="tut" role="dialog" aria-modal="true" aria-label={'Guía: ' + TUT_NAME[kind]}>
       <div class="tut-card">
-        <div class="tut-top"><span>Paso {i + 1} de {TUT.length}</span><button class="tut-skip" onClick={() => onClose(never)}>Omitir tutorial</button></div>
+        <div class="tut-top"><span>{TUT_NAME[kind]} · {i + 1} de {steps.length}</span><button class="tut-skip" onClick={() => onClose(never)}>{kind === 'intro' ? 'Omitir intro' : 'Omitir'}</button></div>
         <div class="tut-art">{st.art}</div>
         <h2>{st.title}</h2>
         <p>{st.body}</p>
-        <div class="tut-dots">{TUT.map((_, k) => <button class={k === i ? 'on' : ''} aria-label={'Ir al paso ' + (k + 1)} onClick={() => setI(k)} />)}</div>
+        <div class="tut-dots">{steps.map((_, k) => <button class={k === i ? 'on' : ''} aria-label={'Ir al paso ' + (k + 1)} onClick={() => setI(k)} />)}</div>
         <div class="tut-foot">
-          <label><input type="checkbox" checked={never} onChange={(e) => setNever((e.target as HTMLInputElement).checked)} /> No mostrar al abrir</label>
+          {kind === 'intro' ? <label><input type="checkbox" checked={never} onChange={(e) => setNever((e.target as HTMLInputElement).checked)} /> No mostrar al abrir</label> : <span />}
           <div class="tut-btns">
             {i > 0 && <button class="btn" onClick={() => setI(i - 1)}>Atrás</button>}
-            <button class="btn hot" onClick={() => (last ? onClose(never) : setI(i + 1))}>{last ? 'Empezar' : 'Siguiente'}</button>
+            <button class="btn hot" onClick={() => (last ? onClose(never) : setI(i + 1))}>{last ? (kind === 'intro' ? 'Empezar' : 'Entendido') : 'Siguiente'}</button>
           </div>
         </div>
       </div>

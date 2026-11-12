@@ -4,11 +4,12 @@ URL = "http://localhost:4173/"
 with sync_playwright() as p:
     b = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
     pg = b.new_page(viewport={"width": 390, "height": 844})
+    pg.add_init_script("['pat', 'mix', 'master'].forEach((k) => localStorage.setItem('loop.seen.' + k, '1'))")
     errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
     pg.goto(URL); pg.wait_for_timeout(800)
-    if pg.locator(".tut").count(): pg.click("text=Omitir tutorial")
+    while pg.locator(".tut").count(): pg.click(".tut-skip"); pg.wait_for_timeout(200)
     pg.fill("input", "Luciano"); pg.click("button[type=submit]")
     pg.wait_for_timeout(7000)
     full = pg.inner_text(".stat >> nth=0") if pg.locator(".stat").count() else None

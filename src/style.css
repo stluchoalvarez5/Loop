@@ -243,3 +243,25 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .pads.vrow{position:relative;height:34px;border-radius:7px;background:#1a1a1a;display:block;text-align:left;overflow:hidden}
 .pads.vrow i{position:absolute;top:0;bottom:0;border-left:1px solid #2a2a2a}
 .pads.vrow b{position:absolute;top:0;bottom:0;right:0;display:flex;align-items:center;padding-left:8px;font-weight:500;font-size:11.5px;color:var(--bg);background:var(--c);border-radius:6px}
+
+/* guías */
+.nav .nav-help{flex:0.7}
+.art-svg{width:200px;height:80px}
+.art-chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;padding:0 10px}
+.art-chips span{font-size:12.5px;padding:7px 11px;border-radius:10px;background:var(--card2);border:1px solid var(--line)}
+.art-chips span.on{border-color:var(--hot);color:var(--hot)}
+.am-col{display:flex;flex-direction:column;align-items:center;gap:6px}
+.am-col small,.art-knobs small,.art-meter small{font-size:10.5px;color:var(--mut)}
+.art-knobs{display:flex;gap:12px}
+.art-knobs div{display:flex;flex-direction:column;align-items:center;gap:4px}
+.art-knobs svg{width:40px;height:40px}
+.art-roll{display:flex;flex-direction:column;gap:3px}
+.art-roll div{display:flex;gap:3px}
+.art-roll i{width:14px;height:14px;border-radius:3px;background:#1d1d1d}
+.art-roll i.on{background:#f0d99a}
+.art-vox{display:flex;flex-direction:column;align-items:center;gap:10px;font-size:13px}
+.art-vox .dot{display:none}
+.art-vox svg{width:160px;height:30px}
+.art-meter{width:70%;display:flex;flex-direction:column;gap:8px;align-items:center}
+.art-meter div{width:100%;height:6px;border-radius:3px;background:#1f1f1f;overflow:hidden}
+.art-meter i{display:block;height:100%;background:linear-gradient(90deg,var(--mint),var(--sun) 75%,var(--red))}
