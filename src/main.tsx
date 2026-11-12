@@ -34,12 +34,16 @@ const loadVoxes = async (p: Project) => {
 };
 
 /* ---------- instalación y modo sin conexión ---------- */
+declare const __BUILD__: string;
 const pwa = { prompt: null as any, update: null as null | (() => void), listeners: new Set<() => void>() };
 const pwaPing = () => pwa.listeners.forEach((f) => f());
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pwa.prompt = e; pwaPing(); });
   window.addEventListener('appinstalled', () => { pwa.prompt = null; pwaPing(); });
-  // "prompt": una versión nueva no recarga sola (cortaría lo que está sonando); se avisa y se actualiza con un toque
+  // la versión nueva se instala sola en segundo plano (también desde versiones viejas de la app) pero no recarga:
+  // cortaría lo que está sonando. Cuando toma el control se avisa arriba y "Actualizar" recarga.
+  const hadCtrl = 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtrl) { pwa.update = () => location.reload(); pwaPing(); } });
   const upd = registerSW({ immediate: true, onNeedRefresh: () => { pwa.update = () => upd(true); pwaPing(); }, onOfflineReady: () => pwaPing() });
 }
 const usePwa = () => { const [, f] = useState(0); useEffect(() => { const g = () => f((x) => x + 1); pwa.listeners.add(g); return () => { pwa.listeners.delete(g); }; }, []); return pwa; };
@@ -1146,6 +1150,7 @@ function AppCard() {
       <div class="appst">
         <div><i class={standalone ? 'ok' : ''} />{standalone ? 'Instalada en este dispositivo' : 'Abierta en el navegador'}</div>
         <div><i class={offline ? 'ok' : ''} />{offline ? 'Funciona sin conexión' : 'Preparando el modo sin conexión…'}</div>
+        <div><i class="ok" />Versión del {new Date(__BUILD__).toLocaleString('es-AR', { day: 'numeric', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
         <div><i class={persist ? 'ok' : ''} />{persist ? 'Tus loops están protegidos' : 'El navegador podría borrar tus loops si se queda sin espacio'}{use ? ' · ' + use + ' usados' : ''}</div>
       </div>
       <div class="chips" style={{ marginTop: '10px' }}>

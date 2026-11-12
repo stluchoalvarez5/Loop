@@ -4,6 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   base: './',
+  define: { __BUILD__: JSON.stringify(new Date().toISOString()) },
   plugins: [
     preact(),
     VitePWA({
@@ -18,7 +19,7 @@ export default defineConfig({
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: { globPatterns: ['**/*.{js,css,html,png,svg,WAV,TXT,woff2,webmanifest}'], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, cleanupOutdatedCaches: true, navigateFallback: 'index.html' },
+      workbox: { skipWaiting: true, clientsClaim: true, globPatterns: ['**/*.{js,css,html,png,svg,WAV,TXT,woff2,webmanifest}'], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, cleanupOutdatedCaches: true, navigateFallback: 'index.html' },
     }),
   ],
 });
