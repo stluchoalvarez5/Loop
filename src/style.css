@@ -275,3 +275,12 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .lane-hint{position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;color:var(--dim);pointer-events:none}
 .lane-val{position:absolute;right:8px;top:6px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;background:rgba(10,10,10,.85);padding:2px 6px;border-radius:6px;pointer-events:none}
 .tname .au{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--bg);background:var(--c);border-radius:4px;padding:0 3px;margin-left:2px;flex:none}
+
+/* grabar sesión */
+.recbtn{width:40px;height:56px;border-radius:14px;border:1px solid var(--line);background:var(--card);display:grid;place-items:center;flex:none}
+.recbtn i{width:14px;height:14px;border-radius:50%;background:var(--red)}
+.recbtn.on{background:var(--red);border-color:var(--red)}
+.recbtn.on i{border-radius:3px;background:var(--bg);animation:recblink 1.2s ease-in-out infinite}
+@keyframes recblink{50%{opacity:.35}}
+.rec-t{color:var(--red)}.rec-t b{color:var(--red)!important}
+.btn.sess{width:100%;min-height:48px;display:flex;align-items:center;justify-content:center;gap:8px}

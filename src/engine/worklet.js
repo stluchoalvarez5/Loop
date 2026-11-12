@@ -375,11 +375,19 @@ class LoopEngine extends AudioWorkletProcessor {
 registerProcessor('loop-engine', LoopEngine);
 
 /* grabador del micrófono: manda los bloques con su número de muestra (currentFrame), así la voz queda alineada al loop */
+/* grabador: junta 16 bloques (2048 muestras) por mensaje, en estéreo; sirve para el micrófono y para grabar la sesión */
 class LoopRec extends AudioWorkletProcessor {
-  constructor() { super(); this.on = false; this.port.onmessage = (e) => { this.on = e.data.type === 'start'; }; }
+  constructor() { super(); this.on = false; this.n = 0; this.f0 = 0; this.L = new Float32Array(2048); this.R = new Float32Array(2048);
+    this.port.onmessage = (e) => { if (e.data.type === 'start') { this.on = true; this.n = 0; } else { this.flush(); this.on = false; } }; }
+  flush() { if (!this.n) return; const L = this.L.slice(0, this.n), R = this.R.slice(0, this.n); this.port.postMessage({ frame: this.f0, L, R }, [L.buffer, R.buffer]); this.n = 0; }
   process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (this.on && ch) { const d = ch.slice(); this.port.postMessage({ frame: currentFrame, data: d }, [d.buffer]); }
+    const a = inputs[0], l = a && a[0];
+    if (this.on && l) {
+      const r = a[1] || l;
+      if (this.n === 0) this.f0 = currentFrame;
+      this.L.set(l, this.n); this.R.set(r, this.n); this.n += l.length;
+      if (this.n + 128 > 2048) this.flush();
+    }
     return true;
   }
 }

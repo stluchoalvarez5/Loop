@@ -9,7 +9,7 @@ import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
-import { renderAudio, wav, mp3, abletonZip, baseName } from './engine/export';
+import { renderAudio, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
 import {
   rollFromTrack, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
@@ -114,6 +114,23 @@ function App() {
   const [sel, setSel] = useState('arp');
   const [playing, setPlaying] = useState(false);
   const [noAudio, setNoAudio] = useState(false);
+  // grabar la sesión: todo lo que suena, con lo que vayas tocando, hasta 20 minutos
+  const [rec, setRec] = useState(false), [recSecs, setRecSecs] = useState(0), [take, setTake] = useState<Take | null>(null);
+  const recTimer = useRef<any>(0);
+  const toggleRec = async () => {
+    if (!rec) {
+      try {
+        await engine.startSession(p); setRec(true); setPlaying(true); setRecSecs(0);
+        recTimer.current = setInterval(() => { const sec = engine.sessionFrames / engine.sr; setRecSecs(sec); if (sec >= 1200) stopRec(true); }, 500);
+      } catch (e) { console.error(e); flash('No se pudo empezar a grabar en este navegador.', 4000); }
+      return;
+    }
+    stopRec(false);
+  };
+  const stopRec = async (limit: boolean) => {
+    clearInterval(recTimer.current); const t = await engine.stopSession(); setRec(false);
+    if (t && t.frames > 0) { setTake(t); flash((limit ? 'Llegaste a los 20 minutos. ' : '') + 'Sesión grabada: la descargás en Master.', 4000); }
+  };
   const [nameIn, setNameIn] = useState(p.name === 'Loop' ? '' : p.name);
   const [variant, setVariant] = useState(0);
   const phRef = useRef<HTMLStyleElement>(null), meterRef = useRef<HTMLElement>(null), barRef = useRef<HTMLElement>(null), lufsRef = useRef<HTMLElement>(null);
@@ -183,8 +200,9 @@ function App() {
       <div class="transport">
         <div class="tr-row">
           <button class={'playbtn' + (playing ? ' on' : '')} onClick={toggle} aria-label={playing ? 'Parar' : 'Reproducir'}>{playing ? Icon.stop : Icon.play}</button>
+          <button class={'recbtn' + (rec ? ' on' : '')} onClick={toggleRec} aria-label={rec ? 'Terminar de grabar la sesión' : 'Grabar sesión'}><i /></button>
           <div class="lcd">
-            <div class="l1"><span>BAR <b ref={barRef as any}>1</b>/4</span><span><b>{p.chords[0]?.name}</b> · {p.chords.slice(1).map((c) => c.name).join(' · ')}</span><span><b ref={lufsRef as any}>–</b> LUFS</span></div>
+            <div class="l1">{rec ? <span class="rec-t">● <b>{fmtT(recSecs)}</b></span> : <span>BAR <b ref={barRef as any}>1</b>/4</span>}<span><b>{p.chords[0]?.name}</b> · {p.chords.slice(1).map((c) => c.name).join(' · ')}</span><span><b ref={lufsRef as any}>–</b> LUFS</span></div>
             <div class="leds">{Array.from({ length: 16 }, (_, i) => <span class={i % 4 === 0 ? 'q' : ''} />)}</div>
             <div class="meter"><i ref={meterRef as any} /></div>
           </div>
@@ -318,7 +336,7 @@ function App() {
         <div class="hint">Deslizá para recorrer el mixer. Para mover un control, mantené el dedo quieto un instante sobre él hasta que se ilumine y después arrastrá. Doble toque lo vuelve a su valor inicial. Sidechain: cuánto se "agacha" la pista cuando pega el kick. Abajo, el inserto de cada pista: saturación, chorus y filtros que cortan graves o agudos (cada género los trae armados).</div>
       </div>}
 
-      {tab === 'master' && <div class="page master"><Master p={p} up={up} stats={stats} /></div>}
+      {tab === 'master' && <div class="page master"><Session p={p} rec={rec} secs={recSecs} take={take} toggleRec={toggleRec} clear={() => setTake(null)} /><Master p={p} up={up} stats={stats} /></div>}
 
       {guide && <Tutorial key={guide} kind={guide} onClose={closeGuide} />}
       <nav class="nav">
@@ -644,6 +662,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'El inserto de cada pista', body: 'Abajo de cada columna: Saturación (calienta o ensucia), Chorus (la abre y la engorda), Corta graves y Corta agudos (filtros). Cada género los trae armados; los podés ajustar a gusto.', art: artKnobs(['Saturación', 'Chorus', 'Graves', 'Agudos']) },
   ],
   master: [
+    { title: 'Grabar sesión', body: 'El botón rojo (al lado del play, o acá en Master) graba en vivo todo lo que suena mientras tocás: perillas, pistas que prendés y apagás, cambios de género. Hasta 20 minutos. Cuando terminás, la descargás en WAV o MP3.', art: <div class="art-vox"><span class="dot" />● REC 2:41<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 6 + Math.abs(Math.sin(k * 0.9) * Math.cos(k * 0.3)) * 20; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
     { title: 'Exportar', body: 'Elegí cuántos compases y descargá en WAV (máxima calidad), MP3 (liviano) o el paquete para Ableton, con cada pista por separado, la mezcla y los MIDI. Después lo compartís desde el botón Compartir.', art: artChips(['WAV', 'MP3', 'Ableton'], 0) },
     { title: 'Salida y volumen', body: 'El volumen se mantiene parejo solo: la ganancia automática lleva el loop al nivel elegido (en LUFS) y el limitador evita que sature. Los medidores te muestran cuánto está trabajando cada uno.', art: <div class="art-meter"><div><i style={{ width: '72%' }} /></div><small>-14 LUFS · limitador -1 dB</small></div> },
     { title: 'Ecualizador y efectos', body: 'El EQ de 8 bandas sube o baja graves, medios y agudos de todo el loop. En Efectos ajustás el tamaño de la reverb y cuánto se repite el delay, para todas las pistas a la vez.', art: artBars([G, G, Y, Y, Y, R, R, R], [0.6, 0.55, 0.45, 0.4, 0.5, 0.55, 0.62, 0.5]) },
@@ -668,6 +687,46 @@ function Tutorial({ kind, onClose }: { kind: TutKey; onClose: (never: boolean) =
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------- grabar sesión ---------- */
+const fmtT = (s: number) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+function Session({ p, rec, secs, take, toggleRec, clear }: { p: Project; rec: boolean; secs: number; take: Take | null; toggleRec: () => void; clear: () => void }) {
+  const [busy, setBusy] = useState(''), [out, setOut] = useState<Out | null>(null);
+  useEffect(() => { if (out) { URL.revokeObjectURL(out.url); setOut(null); } }, [take]);
+  const make = async (kind: 'wav' | 'mp3') => {
+    if (!take || busy) return; if (out) { URL.revokeObjectURL(out.url); setOut(null); }
+    setBusy(kind === 'wav' ? 'Armando el WAV…' : 'Codificando MP3… 0%');
+    const blob = kind === 'wav' ? takeWav(take) : await takeMp3(take, (x) => setBusy('Codificando MP3… ' + Math.round(x * 100) + '%'));
+    const d = new Date(), stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '_' + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
+    const name = baseName(p) + '_sesion_' + stamp + '.' + kind, file = new File([blob], name, { type: blob.type });
+    setOut({ url: URL.createObjectURL(file), file, name, size: blob.size }); setBusy('');
+  };
+  const canShare = typeof navigator !== 'undefined' && (navigator as any).canShare && out && (navigator as any).canShare({ files: [out.file] });
+  const len = take ? take.frames / take.sr : 0;
+  return (
+    <div class="card">
+      <div class="ct"><h3>Grabar sesión</h3></div>
+      <button class={'btn rec sess' + (rec ? ' on' : '')} onClick={toggleRec}>{rec ? <><span class="sq" />Terminar · {fmtT(secs)}</> : <><span class="dotrec" />Grabar sesión</>}</button>
+      {rec && <div class="hint">Grabando todo lo que suena. Podés cambiar de sección, mover perillas, apagar pistas o cambiar de género: queda todo en la grabación. El botón rojo de arriba también la termina.</div>}
+      {take && !rec && <>
+        <div class="exp-out" style={{ marginTop: '10px' }}><div><b>Sesión de {fmtT(len)}</b><span>{(take.frames * 4 / 1048576).toFixed(0)} MB en WAV</span></div>
+          <div class="exp-btns">
+            <button class="btn hot" disabled={!!busy} onClick={() => make('wav')}>WAV</button>
+            <button class="btn hot" disabled={!!busy} onClick={() => make('mp3')}>MP3</button>
+            <button class="btn" disabled={!!busy} onClick={() => { if (out) URL.revokeObjectURL(out.url); setOut(null); clear(); }}>Descartar</button>
+          </div>
+        </div>
+        {busy && <div class="exp-status"><i class="spin" />{busy}</div>}
+        {out && <div class="exp-out"><div><b>{out.name}</b><span>{(out.size / 1048576).toFixed(1)} MB</span></div>
+          <div class="exp-btns">
+            <a class="btn hot" href={out.url} download={out.name}>Descargar</a>
+            {canShare && <button class="btn" onClick={() => (navigator as any).share({ files: [out.file], title: out.name }).catch(() => {})}>Compartir / Guardar en el celu</button>}
+          </div></div>}
+      </>}
+      {!rec && !take && <div class="hint">Graba en vivo todo lo que sale por los parlantes, con cada cambio que hagas mientras suena, hasta 20 minutos. Al terminar la descargás en WAV o MP3. Si el loop está parado, arranca solo.</div>}
     </div>
   );
 }

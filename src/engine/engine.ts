@@ -90,6 +90,25 @@ export class Engine {
     }
     this.silent.play().catch(() => {});
   }
+  /* grabar la sesión: todo lo que sale por el master (lo que escuchás), en vivo, como audio de 16 bits */
+  private sess: { rec: AudioWorkletNode; mute: GainNode; chunks: { l: Int16Array; r: Int16Array }[]; frames: number } | null = null;
+  get sessionFrames() { return this.sess?.frames ?? 0; }
+  async startSession(p: Project) {
+    this.unlock(); await this.init(); const ctx = this.ctx!;
+    const rec = new AudioWorkletNode(ctx, 'loop-rec', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 2, channelCountMode: 'explicit' });
+    const mute = ctx.createGain(); mute.gain.value = 0; this.node!.connect(rec); rec.connect(mute); mute.connect(ctx.destination);
+    const s = { rec, mute, chunks: [] as { l: Int16Array; r: Int16Array }[], frames: 0 }; this.sess = s;
+    const q = (a: Float32Array) => { const o = new Int16Array(a.length); for (let i = 0; i < a.length; i++) { const x = a[i] * 32767; o[i] = x > 32767 ? 32767 : x < -32768 ? -32768 : x; } return o; };
+    rec.port.onmessage = (e) => { const { L, R } = e.data as { L: Float32Array; R: Float32Array }; s.chunks.push({ l: q(L), r: q(R) }); s.frames += L.length; };
+    rec.port.postMessage({ type: 'start' });
+    if (!this.playing) await this.play(p);
+  }
+  async stopSession() {
+    const s = this.sess; if (!s) return null; this.sess = null;
+    s.rec.port.postMessage({ type: 'stop' }); await new Promise((r) => setTimeout(r, 120)); // deja llegar el último pedazo
+    try { this.node!.disconnect(s.rec); } catch { /* */ } s.rec.disconnect(); s.mute.disconnect();
+    return { sr: this.ctx!.sampleRate, chunks: s.chunks, frames: s.frames };
+  }
   get state() { return this.ctx?.state ?? 'none'; }
   async play(p: Project, from = 0) {
     this.unlock(); await this.init(); await this.ctx!.resume(); this.update(p);
@@ -115,7 +134,7 @@ export class Engine {
       };
       this.stepTaps.add(tap);
       rec.port.onmessage = (e) => {
-        const { frame, data } = e.data as { frame: number; data: Float32Array };
+        const { frame, L: data } = e.data as { frame: number; L: Float32Array };
         let m = 0; for (let i = 0; i < data.length; i++) m = Math.max(m, Math.abs(data[i])); level = level * 0.8 + m * 0.2;
         if (start < 0) return;
         for (let i = 0; i < data.length; i++) { const k = frame + i - start; if (k >= 0 && k < loopN) out[k] = data[i]; }
