@@ -284,3 +284,17 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 @keyframes recblink{50%{opacity:.35}}
 .rec-t{color:var(--red)}.rec-t b{color:var(--red)!important}
 .btn.sess{width:100%;min-height:48px;display:flex;align-items:center;justify-content:center;gap:8px}
+
+/* grupos y orden */
+.groups{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;align-items:center}
+.grp{display:flex;align-items:center;gap:4px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:3px 4px 3px 3px}
+.grp .gname{min-height:38px;padding:0 10px;border-radius:9px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px}
+.grp .gname small{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--mut)}
+.grp .m,.grp .s{width:38px;height:38px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);font-weight:700;font-size:13px;color:var(--mut)}
+.grp .m.on{background:#3a3216;color:var(--sun);border-color:var(--sun)}
+.grp .s.on{background:#18301f;color:var(--mint);border-color:var(--mint)}
+.ord{display:flex;gap:6px;align-items:center}
+.ord .btn{min-height:34px;padding:0 10px;font-size:12px}
+.ord .btn:disabled{opacity:.3}
+.gtag{font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+.strip.gmute{opacity:.45}

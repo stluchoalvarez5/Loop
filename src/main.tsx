@@ -11,7 +11,7 @@ import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
 import { renderAudio, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
 import {
-  rollFromTrack, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -19,7 +19,7 @@ import {
 const engine = new Engine();
 const clone = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
 const load = (): Project | null => {
-  try { const s = localStorage.getItem('loop.project'); if (!s) return null; const p: Project = JSON.parse(s); if (!GENRES[p.genre]) applyGenre(p, 'prog'); p.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal' && !SYNTHS[t.sound]) t.sound = t.type === 'bass' ? 'bassSaw' : t.type === 'chords' ? 'strings' : 'pluck'; }); return p; } catch { return null; }
+  try { const s = localStorage.getItem('loop.project'); if (!s) return null; const p: Project = JSON.parse(s); if (!GENRES[p.genre]) applyGenre(p, 'prog'); if (!p.groups) { p.groups = [{ id: 'drums', name: 'Batería' }]; p.tracks.forEach((t) => { if (t.type === 'drum') t.group = 'drums'; }); } p.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal' && !SYNTHS[t.sound]) t.sound = t.type === 'bass' ? 'bassSaw' : t.type === 'chords' ? 'strings' : 'pluck'; }); return p; } catch { return null; }
 };
 const save = (p: Project) => { try { localStorage.setItem('loop.project', JSON.stringify(p)); } catch { /* sin almacenamiento */ } };
 
@@ -101,6 +101,7 @@ function App() {
   const [p, setP] = useState<Project>(() => load() ?? projectFromName('Loop'));
   const [tab, setTab] = useState<'scene' | 'pat' | 'mix' | 'master'>('scene');
   const [vis, setVis] = useState<StageMode>('wave');
+  const [order, setOrder] = useState(false);
   const land = useLandscape();
   // guías: la intro aparece al abrir (salvo "No mostrar al abrir"); la de cada sección, la primera vez que entrás. El botón Guía las vuelve a abrir.
   const ls = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return '1'; } }, set: (k: string) => { try { localStorage.setItem(k, '1'); } catch { /* */ } } };
@@ -175,8 +176,8 @@ function App() {
     const f = () => { engine.unlock(); ['pointerdown', 'touchend', 'keydown'].forEach((e) => window.removeEventListener(e, f, true)); };
     ['pointerdown', 'touchend', 'keydown'].forEach((e) => window.addEventListener(e, f, true));
   }, []);
-  const fromName = async (v = 0) => {
-    const np = projectFromName(nameIn || 'Loop', v, v ? p.genre : 'deep'); setVariant(v); setP(np); engine.update(np); save(np);
+  const fromName = async (v = 0, word?: string) => {
+    const np = projectFromName(word ?? (nameIn || 'Loop'), v, v ? p.genre : 'deep'); setVariant(v); setP(np); engine.update(np); save(np);
     if (!engine.playing) { await engine.play(np); setPlaying(true); checkAudio(); }
   };
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
@@ -237,6 +238,7 @@ function App() {
           <div class="hint" style={{ marginTop: '6px' }}>{(p.harmony ?? 'tonal') === 'tonal' ? 'Armónico: se busca la tonalidad que mejor le queda al nombre y las notas que chocan (en otro color) se corren medio tono.' : 'Puro: se usan exactamente las notas de las letras, aunque suenen tensas.'}</div>
           <div class="chips" style={{ marginTop: '10px' }}>
             <button class="chip" onClick={() => fromName(variant + 1)}>Otra versión</button>
+            <button class="chip" onClick={() => { const cats = Object.keys(WORDS); let w = '', c = ''; do { c = cats[Math.floor(Math.random() * cats.length)]; w = WORDS[c][Math.floor(Math.random() * WORDS[c].length)]; } while (w === p.name); setNameIn(w); fromName(0, w); flash(w + ' · ' + c.toLowerCase()); }}>Palabra aleatoria</button>
             {Object.keys(GENRES).map((g) => <button class={'chip' + (p.genre === g ? ' on' : '')} onClick={() => up((d) => applyGenre(d, g))}>{GENRES[g].name}</button>)}
           </div>
         </div>
@@ -264,14 +266,19 @@ function App() {
 
       {tab === 'pat' && <div class="page pat">
         <div class="card a-grid">
-          <div class="ct"><h3>Patrón</h3><button class="chip" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type === 'drum') t.steps = Array(16).fill(0); }))}>Vaciar batería</button></div>
+          <div class="ct"><h3>Patrón</h3><button class={'chip' + (order ? ' on' : '')} onClick={() => setOrder(!order)}>{order ? 'Listo' : 'Ordenar'}</button><button class="chip" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type === 'drum') t.steps = Array(16).fill(0); }))}>Vaciar batería</button></div>
+          <Groups p={p} up={up} />
           <div class="grid">
-            {p.tracks.map((t) => <>
-              <button class={'pw' + (t.mute ? '' : ' on')} style={{ '--c': t.color } as any} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} />
-              <button class={'tname' + (sel === t.id ? ' sel' : '') + (t.mute ? ' mute' : '')} style={{ '--c': t.color } as any} onClick={() => setSel(t.id)}>
+            {p.tracks.map((t, ti) => <>
+              <button class={'pw' + (t.mute ? '' : ' on')} style={{ '--c': t.color } as any} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} {...tap(() => upT(t.id, (x) => { x.mute = !x.mute; }))} />
+              <button class={'tname' + (sel === t.id ? ' sel' : '') + (t.mute || gMuted(p, t) ? ' mute' : '')} style={{ '--c': t.color } as any} onClick={() => setSel(t.id)}>
                 <span class="dot" />{t.name}{t.auto && Object.keys(t.auto).length > 0 && <span class="au" title="Tiene automatización">A</span>}<i class="vu" ref={(el) => { vuRefs.current[t.id] = el; }} />
               </button>
-              {t.type === 'vocal' ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => setSel(t.id)}>
+              {order ? <div class="ord">
+                <button class="btn" disabled={ti === 0} aria-label={'Subir ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k > 0) [d.tracks[k - 1], d.tracks[k]] = [d.tracks[k], d.tracks[k - 1]]; }))}>▲ Subir</button>
+                <button class="btn" disabled={ti === p.tracks.length - 1} aria-label={'Bajar ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k >= 0 && k < d.tracks.length - 1) [d.tracks[k + 1], d.tracks[k]] = [d.tracks[k], d.tracks[k + 1]]; }))}>▼ Bajar</button>
+                {t.group && <span class="gtag">{p.groups?.find((g) => g.id === t.group)?.name}</span>}
+              </div> : t.type === 'vocal' ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => setSel(t.id)}>
                 {[0, 1, 2, 3].map((b) => <i style={{ left: b * 25 + '%' }} />)}
                 {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
               </button> : <div class="pads">
@@ -283,7 +290,7 @@ function App() {
                   if (t.type === 'arp') {
                     const on = t.arp!.gate[i], plays = arpPlays(t, i), nf = arpNotes[t.id];
                     return <button class={'pad' + (!on ? ' off' : plays ? ' v1' : ' skip')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
-                      onClick={() => stepEdit(t, (x) => { x.arp!.gate[i] = !x.arp!.gate[i]; })}>{on && plays && nf && <span class="nn">{noteName(nf(i))}</span>}</button>;
+                      {...tap(() => stepEdit(t, (x) => { x.arp!.gate[i] = !x.arp!.gate[i]; }))}>{on && plays && nf && <span class="nn">{noteName(nf(i))}</span>}</button>;
                   }
                   if (t.type === 'melody') {
                     const hit = (t.notes ?? []).filter((n) => n.s % 16 === i);
@@ -292,13 +299,13 @@ function App() {
                   if (t.type === 'chords' && (t.chordMode ?? 'pad') === 'pad') return <button class={'pad' + (i % 16 === 0 ? ' v2' : ' v1')} style={{ '--c': t.color, opacity: i ? 0.35 : 1 } as any} aria-label="Acorde sostenido" onClick={() => setSel(t.id)} />;
                   const v = t.steps[i];
                   return <button class={'pad' + (v === 1 ? ' v1' : v === 2 ? ' v2' : v === 3 ? ' v1 gh' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name} paso ${i + 1}`}
-                    onClick={() => stepEdit(t, (x) => { x.steps[i] = (x.steps[i] + 1) % 3; })} />;
+                    {...tap(() => stepEdit(t, (x) => { x.steps[i] = (x.steps[i] + 1) % 3; }))} />;
                 })}
               </div>}
             </>)}
           </div>
-          <AddTrack onAdd={(type, sound) => { let id = ''; up((d) => { if (d.tracks.length >= 16) return; const nt = newTrack(d, type, sound); id = nt.id; d.tracks.push(nt); }); setTimeout(() => id && setSel(id), 0); }} full={p.tracks.length >= 16} />
-          <div class="hint">El botón de la izquierda enciende o apaga cada instrumento. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves que pone el género.</div>
+          <AddTrack onAdd={(type, sound) => { let id = ''; up((d) => { if (d.tracks.length >= 16) return; const nt = newTrack(d, type, sound); id = nt.id; if (type === 'drum' && d.groups?.some((g) => g.id === 'drums')) nt.group = 'drums'; d.tracks.push(nt); }); setTimeout(() => id && setSel(id), 0); }} full={p.tracks.length >= 16} />
+          <div class="hint">El botón de la izquierda enciende o apaga cada instrumento (podés tocar varios a la vez). En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves que pone el género.</div>
         </div>
 
         {tr && <div class="a-ed"><TrackEditor p={p} t={tr} upT={upT} up={up} onDelete={() => { const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); if (tr.type === 'vocal') deleteVox(tr.id).catch(() => {}); setSel(left[0].id); flash(tr.name + ' eliminada'); }} /><AutoEditor key={tr.id} t={tr} upT={upT} playing={playing} /></div>}
@@ -308,14 +315,15 @@ function App() {
 
       {tab === 'mix' && <div class="card">
         <div class="ct"><h3>Mixer</h3></div>
+        <Groups p={p} up={up} />
         <div class="mixer">
           {p.tracks.map((t) => (
-            <div class="strip" style={{ '--c': t.color } as any}>
+            <div class={'strip' + (gMuted(p, t) ? ' gmute' : '')} style={{ '--c': t.color } as any}>
               <div class="nm">{t.name}</div>
               <Fader h={land ? 96 : 150} label={'Volumen ' + t.name} value={t.vol} def={0.8} color={t.color} onChange={(v) => upT(t.id, (x) => { x.vol = v; })} />
               <div class="ms">
-                <button class={'m' + (t.mute ? ' on' : '')} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} aria-label={'Mutear ' + t.name}>M</button>
-                <button class={'s' + (t.solo ? ' on' : '')} onClick={() => upT(t.id, (x) => { x.solo = !x.solo; })} aria-label={'Solo ' + t.name}>S</button>
+                <button class={'m' + (t.mute ? ' on' : '')} {...tap(() => upT(t.id, (x) => { x.mute = !x.mute; }))} aria-label={'Mutear ' + t.name}>M</button>
+                <button class={'s' + (t.solo ? ' on' : '')} {...tap(() => upT(t.id, (x) => { x.solo = !x.solo; }))} aria-label={'Solo ' + t.name}>S</button>
               </div>
               <div class="kn4">
               <div class="mini"><Knob label="Pan" value={t.pan} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.02 ? 'C' : (v < 0 ? 'L' : 'R') + Math.round(Math.abs(v) * 100))} onChange={(v) => upT(t.id, (x) => { x.pan = v; })} /></div>
@@ -368,7 +376,7 @@ function AddTrack({ onAdd, full }: { onAdd: (t: TrackType, s?: string) => void; 
   </div>;
 }
 function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; onDelete: () => void }) {
-  const power = <button class={'pw' + (t.mute ? '' : ' on')} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} onClick={() => upT(t.id, (x) => { x.mute = !x.mute; })} />;
+  const power = <button class={'pw' + (t.mute ? '' : ' on')} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} {...tap(() => upT(t.id, (x) => { x.mute = !x.mute; }))} />;
   if (t.type === 'vocal') return <VocalEditor p={p} t={t} upT={upT} power={power} onDelete={onDelete} />;
   if (t.type === 'drum') {
     return (
@@ -382,7 +390,8 @@ function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (
           <Knob label="Afinación" value={t.pitch} min={-12} max={12} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
           <Knob label="Largo" value={t.decay} min={0.05} max={1} def={1} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.decay = v; })} />
         </div>
-        <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
+        <GroupPick p={p} t={t} upT={upT} />
+      <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
       </div>
     );
   }
@@ -423,6 +432,7 @@ function TrackEditor({ p, t, upT, up, onDelete }: { p: Project; t: Track; upT: (
         : <><div class="sub">Piano roll</div>
           <div class="chips"><button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { if (!x.notes?.length || !x.rollEdited) x.notes = rollFromTrack(p, t); x.roll = true; })}>Editar notas en piano roll</button></div>
           <div class="hint">Pasa lo que toca esta pista al piano roll para que cambies, agregues o saques notas a mano.</div></>)}
+      <GroupPick p={p} t={t} upT={upT} />
       <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
     </div>
   );
@@ -580,6 +590,7 @@ function VocalEditor({ p, t, upT, power, onDelete }: { p: Project; t: Track; upT
           <Knob label="Corta agudos" value={fx.lp || 20000} min={200} max={20000} log def={20000} color={t.color} fmt={(v) => (v >= 19500 ? 'no' : hz(v))} onChange={(v) => setFx('lp', v >= 19500 ? 0 : v)} />
         </div>
       </>}
+      <GroupPick p={p} t={t} upT={upT} />
       <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
     </div>
   );
@@ -650,14 +661,15 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Batería', body: 'Elegí el kit: el 909 y el 808 clásicos, uno por género, Synthwave 80s, Electro o Lo-Fi. Cambia el sonido del bombo, el clap, los hats y el redoblante sin tocar el patrón.', art: artChips(['909', '808', 'Techno', 'Lo-Fi'], 1) },
   ],
   pat: [
-    { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista.', art: artGrid },
+    { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos.', art: artGrid },
+    { title: 'Grupos y orden', body: 'Arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando su nombre lo renombrás o lo borrás. Cada pista elige su grupo al final de su editor. "Ordenar" te deja subir y bajar los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
     { title: 'Editar una pista', body: 'Tocá el nombre de una pista para abrir su editor abajo: elegís el sonido, el orden de las notas del arpegio, la forma de tocar los acordes y el sonido fino con perillas. Las pistas de batería eligen kit y golpe.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Piano roll', body: 'La melodía son 4 compases que salen de tu nombre, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
     { title: 'Automatización', body: 'Abajo del editor de cada pista está su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
   ],
   mix: [
-    { title: 'Faders y botones', body: 'Cada columna es una pista: el fader es su volumen, M la silencia y S la deja sonando sola. Deslizá de costado para ver todas.', art: artBars([R, Y, G, '#e98a5f', '#8fc7a0'], [0.75, 0.5, 0.62, 0.35, 0.8]) },
+    { title: 'Faders y botones', body: 'Cada columna es una pista: el fader es su volumen, M la silencia y S la deja sonando sola. Podés apretar varios M o S al mismo tiempo, y arriba están los grupos para mutear varios instrumentos juntos. Deslizá de costado para ver todas.', art: artBars([R, Y, G, '#e98a5f', '#8fc7a0'], [0.75, 0.5, 0.62, 0.35, 0.8]) },
     { title: 'Pan, efectos y sidechain', body: 'Pan la manda a la izquierda o a la derecha. Reverb y Delay le suman ambiente y eco. Sidechain es cuánto se "agacha" la pista cuando pega el bombo: es lo que hace que el loop bombee.', art: artKnobs(['Pan', 'Reverb', 'Delay', 'Sidechain']) },
     { title: 'El inserto de cada pista', body: 'Abajo de cada columna: Saturación (calienta o ensucia), Chorus (la abre y la engorda), Corta graves y Corta agudos (filtros). Cada género los trae armados; los podés ajustar a gusto.', art: artKnobs(['Saturación', 'Chorus', 'Graves', 'Agudos']) },
   ],
@@ -689,6 +701,44 @@ function Tutorial({ kind, onClose }: { kind: TutKey; onClose: (never: boolean) =
       </div>
     </div>
   );
+}
+
+/* ---------- grupos de instrumentos ---------- */
+const gMuted = (p: Project, t: Track) => !!(t.group && p.groups?.find((g) => g.id === t.group)?.mute);
+function Groups({ p, up }: { p: Project; up: (fn: (d: Project) => void) => void }) {
+  const gs = p.groups ?? [];
+  const setG = (id: string, fn: (g: Group) => void) => up((d) => { const g = d.groups?.find((x) => x.id === id); if (g) fn(g); });
+  const rename = (g: Group) => { const n = prompt('Nombre del grupo (dejalo vacío para borrarlo)', g.name); if (n === null) return; if (!n.trim()) up((d) => { d.groups = d.groups?.filter((x) => x.id !== g.id); d.tracks.forEach((t) => { if (t.group === g.id) t.group = undefined; }); }); else setG(g.id, (x) => { x.name = n.trim().slice(0, 18); }); };
+  return (
+    <div class="groups">
+      {gs.map((g) => { const n = p.tracks.filter((t) => t.group === g.id).length; return <div class="grp">
+        <button class="gname" onClick={() => rename(g)} aria-label={'Renombrar o borrar ' + g.name}>{g.name}<small>{n}</small></button>
+        <button class={'m' + (g.mute ? ' on' : '')} aria-label={'Mutear grupo ' + g.name} {...tap(() => setG(g.id, (x) => { x.mute = !x.mute; }))}>M</button>
+        <button class={'s' + (g.solo ? ' on' : '')} aria-label={'Solo grupo ' + g.name} {...tap(() => setG(g.id, (x) => { x.solo = !x.solo; }))}>S</button>
+      </div>; })}
+      <button class="chip" onClick={() => { const n = prompt('Nombre del grupo nuevo', 'Grupo ' + (gs.length + 1)); if (n && n.trim()) up((d) => { d.groups = [...(d.groups ?? []), { id: 'g' + Date.now().toString(36), name: n.trim().slice(0, 18) }]; }); }}>+ Grupo</button>
+    </div>
+  );
+}
+function GroupPick({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  if (!p.groups?.length) return null;
+  return <><div class="sub">Grupo</div>
+    <div class="chips">
+      <button class={'chip' + (!t.group ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.group = undefined; })}>Ninguno</button>
+      {p.groups.map((g) => <button class={'chip' + (t.group === g.id ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.group = g.id; })}>{g.name}</button>)}
+    </div></>;
+}
+
+/* ---------- toques simultáneos ----------
+   El navegador manda "click" de a un dedo por vez. Con pointerup cada dedo cuenta solo, así podés mutear varias cosas juntas.
+   Si el dedo se movió (scroll), no cuenta. El click queda para mouse y teclado. */
+function tap(fn: () => void) {
+  return {
+    onPointerDown: (e: PointerEvent) => { (e.currentTarget as any)._tp = { x: e.clientX, y: e.clientY, id: e.pointerId }; },
+    onPointerUp: (e: PointerEvent) => { const el = e.currentTarget as any, st = el._tp; el._tp = null; if (st && st.id === e.pointerId && Math.hypot(e.clientX - st.x, e.clientY - st.y) < 12) { el._tpDone = performance.now(); fn(); } },
+    onPointerCancel: (e: PointerEvent) => { (e.currentTarget as any)._tp = null; },
+    onClick: (e: MouseEvent) => { const d = (e.currentTarget as any)._tpDone; if (d && performance.now() - d < 700) return; fn(); },
+  };
 }
 
 /* ---------- grabar sesión ---------- */

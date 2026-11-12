@@ -51,14 +51,17 @@ export type Track = {
   fx?: { drive?: number; hp?: number; lp?: number; chorus?: number }; // inserto: saturación, pasa altos, pasa bajos, chorus
   groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
   rollEdited?: boolean; // ya se tocaron a mano las notas del piano roll
+  group?: string; // id del grupo al que pertenece
   roll?: boolean; // bajo, arpegio o acordes editados a mano en el piano roll: suenan las notas de `notes` en vez de lo generado
   auto?: Partial<Record<AutoKey, number[]>>; // automatización: 64 valores 0..1 (uno por paso de los 4 compases)
   vox?: { from: number; rev: boolean; has: boolean; pos?: number }; // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
+export type Group = { id: string; name: string; mute?: boolean; solo?: boolean };
 export type Project = {
   name: string; genre: string; bpm: number; swing: number; kit: string;
+  groups?: Group[]; // grupos de instrumentos: se mutean o se ponen en solo todos juntos
   seq: number[]; chords: { name: string; tones: string[]; midi: number[] }[];
   tracks: Track[];
   fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number };
@@ -308,6 +311,13 @@ export function rollFromTrack(p: Project, t: Track): Note[] {
   c?.ev.forEach((evs: any[], s: number) => evs.forEach((e) => { if (e.n == null) return; const k = s + ':' + e.n; if (seen.has(k)) return; seen.add(k); out.push({ s, n: e.n, l: Math.max(1, Math.min(64 - s, Math.round(e.l + 0.15))) }); }));
   return out;
 }
+/* palabras con buen resultado (calculadas con la propia armonía de la app) para "Palabra aleatoria" */
+export const WORDS: Record<string, string[]> = {
+  Linda: ['Calma', 'Amor', 'Alma', 'Juego', 'Flor', 'Hielo', 'Eclipse', 'Dulce', 'Aurora', 'Cielo', 'Luna'],
+  Divertida: ['Banana', 'Caramelo', 'Disco', 'Playa', 'Cumbia', 'Locura', 'Circo', 'Globo', 'Fiesta', 'Chispa', 'Feliz', 'Bonito'],
+  Oscura: ['Sueño', 'Silencio', 'Lobo', 'Nube', 'Mar', 'Rumba', 'Tumba', 'Miedo', 'Ritual', 'Niebla', 'Tormenta', 'Sombra', 'Noche', 'Bosque', 'Vampiro'],
+  'Oscura que suena alegre': ['Fantasma', 'Veneno', 'Cripta', 'Demonio', 'Infierno', 'Cuervo', 'Medianoche'],
+};
 export const nameScale = (p: Project, octs = 2) => { const b = [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))].sort((a, c) => a - c), out: number[] = []; for (let o = 0; o < octs; o++) b.forEach((pc) => out.push(60 + pc + 12 * o)); return out.sort((a, c) => a - c); };
 
 export function newProject(name = '', genre = 'prog'): Project {
@@ -326,7 +336,9 @@ export function newProject(name = '', genre = 'prog'): Project {
     ],
     fx: { revSize: 0.8, revDamp: 0.35, revRet: 0.9, dlyFb: 0.42, dlyRet: 0.7, duck: 0.4 },
     master: { eq: [0, 0, 0, 0, 0, 0, 0, 0], target: -14, auto: true, ceiling: -1 },
+    groups: [{ id: 'drums', name: 'Batería' }],
   };
+  p.tracks.forEach((t) => { if (t.type === 'drum') t.group = 'drums'; });
   applyGenre(p, genre);
   return p;
 }
@@ -441,7 +453,10 @@ export function compile(p: Project) {
   const cm = Math.pow(2, e * 1.4 - dk * 2); // brillo de los sintes
   const shape = (sy: Synth | undefined, amt = 1) => sy && (cm !== 1) ? { ...sy, cutoff: clamp(sy.cutoff * Math.pow(cm, amt), 60, 16000) } : sy;
   const sendK = Math.pow(2, sp * 2.6);
-  const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !t.mute) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
+  // un grupo muteado apaga a todos sus instrumentos; un grupo en solo los pone en solo (sin tocar el estado propio de cada pista)
+  const G = new Map((p.groups ?? []).map((g) => [g.id, g]));
+  const offOf = (t: Track) => t.mute || !!(t.group && G.get(t.group)?.mute), soloOf = (t: Track) => t.solo || !!(t.group && G.get(t.group)?.solo);
+  const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !offOf(t)) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
     let kind = 'synth', synth: Synth | undefined, sample: string | undefined;
@@ -483,7 +498,7 @@ export function compile(p: Project) {
     const fx = t.type !== 'drum' && e > 0 ? { ...t.fx, drive: clamp((t.fx?.drive ?? 0) + e * 0.6, 0, 1) } : t.fx;
     const groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
     return {
-      id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: t.mute, solo: t.solo,
+      id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid'), fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
