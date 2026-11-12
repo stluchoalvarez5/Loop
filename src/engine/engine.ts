@@ -69,9 +69,10 @@ export class Engine {
     if (this.node) { this.send('vox:' + id, d); this.send('vox:' + id + ':r', r); }
   }
   get sr() { return this.ctx?.sampleRate ?? 48000; }
-  update(p: Project) {
+  /* atLoop: el cambio espera a que termine la vuelta (escenas) */
+  update(p: Project, atLoop = false) {
     if (!this.node) { this.pending = p; return; }
-    this.node.port.postMessage({ type: 'project', project: compile(p) });
+    this.node.port.postMessage({ type: 'project', project: compile(p), atLoop });
   }
   /* iPhone: el audio tiene que destrabarse dentro del mismo toque (sin esperar nada antes) y, para que suene
      aunque el celu esté en modo silencio, la sesión de audio tiene que ser de "reproducción" y no "ambiente". */

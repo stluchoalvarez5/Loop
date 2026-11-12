@@ -336,3 +336,47 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;paddin
 .gpanel .sub{margin-top:10px}
 .gother{color:var(--mut);font-size:10.5px}
 .strip .gt{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--mut);max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin-top:-2px}
+
+/* deshacer / rehacer */
+.undo{width:34px;height:30px;border-radius:9px;background:var(--card);border:1px solid var(--line);color:var(--txt);display:grid;place-items:center}
+.undo svg{width:17px;height:17px}
+.undo:disabled{opacity:.3}
+.tr-undo{display:none}
+/* tempo: el número es el botón de tap */
+.bpm .tap{width:36px;height:auto;background:none;display:flex;flex-direction:column;align-items:center;line-height:1;padding:1px 0;border-radius:7px;touch-action:manipulation}
+.bpm .tap small{font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--dim);letter-spacing:1px}
+.bpm .tap.on{background:color-mix(in srgb,var(--hot) 30%,transparent)}
+.bpm button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+/* escenas */
+.scenes{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.scn{height:48px;border-radius:12px;background:var(--bg2);border:1px dashed var(--line);font-family:'JetBrains Mono',monospace;font-weight:600;font-size:18px;color:var(--dim)}
+.scn.used{border-style:solid;color:var(--txt)}
+.scn.on{background:color-mix(in srgb,var(--hot) 22%,transparent);border:1px solid var(--hot);color:#fff}
+.scn.q{border:1px solid var(--mint);animation:blink 0.5s steps(2) infinite}
+.scn.del{border-color:var(--red);color:var(--red)}
+.qtag{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--mint)}
+.scenes-in{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+.scenes-in>span{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mut)}
+.scenes-in .scenes{flex:1;gap:6px}
+.scenes-in .scn{height:36px;font-size:15px}
+/* mixer compacto */
+.mixer{align-items:start}
+.fxbtn{font-size:11px;color:var(--mut);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:5px 8px;display:flex;align-items:center;gap:4px}
+.fxbtn i{font-style:normal;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--bg);background:var(--c);border-radius:6px;padding:0 4px}
+.strip.open .fxbtn{color:var(--txt);border-color:var(--c)}
+/* MIDI */
+.midig{font-size:10.5px;color:var(--dim);margin:8px 0 4px}
+.learn{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:13px;background:var(--bg2);border:1px solid var(--mint);border-radius:12px;padding:10px}
+.learn .dotrec{width:9px;height:9px;border-radius:50%;background:var(--mint);animation:blink 1s steps(2) infinite}
+.maps{display:flex;flex-direction:column;gap:6px}
+.maps>div{display:flex;align-items:center;gap:8px;font-size:13px}
+.maps span{flex:1}
+.maps small{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--mut)}
+@media (orientation: landscape) and (max-height: 560px){
+  .page.scene{grid-template-areas:"stage name" "stage projs" "scenes macros" "kits macros"}
+  .a-scenes{grid-area:scenes}
+}
+@media (orientation: landscape) and (max-height: 560px){
+  .tr-undo{display:flex;flex-direction:column;gap:4px}
+  .tr-undo .undo{height:24px;width:32px}
+}

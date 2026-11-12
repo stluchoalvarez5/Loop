@@ -58,6 +58,65 @@ export type Track = {
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
+/* ---------- escenas: lo que cambia entre A, B, C y D (patrones, notas, encendido y automatización; la mezcla es la misma) ---------- */
+export const SCENES = ['A', 'B', 'C', 'D'];
+const SK = ['steps', 'mute', 'arp', 'notes', 'roll', 'rollEdited', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto', 'autoMelody'] as const;
+export type SceneSnap = { t: Record<string, Partial<Track>>; macros?: Project['macros']; macroAuto?: Project['macroAuto']; fill?: boolean };
+const cl = <T,>(o: T): T => (o === undefined ? o : JSON.parse(JSON.stringify(o)));
+export function snapScene(p: Project): SceneSnap {
+  const t: Record<string, Partial<Track>> = {};
+  p.tracks.forEach((x) => { const o: any = {}; SK.forEach((k) => { if (x[k] !== undefined) o[k] = cl(x[k]); }); t[x.id] = o; });
+  return { t, macros: cl(p.macros), macroAuto: cl(p.macroAuto), fill: p.fill };
+}
+function loadScene(p: Project, s: SceneSnap) {
+  p.tracks.forEach((x) => { const o = s.t[x.id]; if (!o) return; SK.forEach((k) => { (x as any)[k] = cl((o as any)[k]); }); });
+  p.macros = cl(s.macros); p.macroAuto = cl(s.macroAuto); p.fill = s.fill;
+}
+/* pasa a otra escena: guarda la actual y carga la otra (si está vacía, arranca como copia de la actual) */
+export function switchScene(p: Project, to: string) {
+  const cur = p.scene ?? 'A'; if (cur === to) return;
+  p.scenes = { ...p.scenes, [cur]: snapScene(p) };
+  const s = p.scenes[to]; if (s) loadScene(p, s); p.scene = to;
+}
+export const sceneUsed = (p: Project, k: string) => k === (p.scene ?? 'A') || !!p.scenes?.[k];
+export function nextScene(p: Project) { const cur = SCENES.indexOf(p.scene ?? 'A'); for (let i = 1; i <= 4; i++) { const k = SCENES[(cur + i) % 4]; if (sceneUsed(p, k)) return k; } return p.scene ?? 'A'; }
+export function clearScene(p: Project, k: string) { if (k === (p.scene ?? 'A')) return; const sc = { ...p.scenes }; delete sc[k]; p.scenes = sc; }
+
+/* ---------- variación: otro patrón para la pista, de las variantes del género o cambiando unos golpes ---------- */
+export function varyTrack(p: Project, t: Track): string {
+  const G = GENRES[p.genre], n = ((t as any).vari ?? 0) + 1; (t as any).vari = n;
+  const r = seeded(clean(p.name || 'Loop') + '#var:' + t.id + ':' + n), same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
+  const cycle = <T,>(list: T[], cur: (x: T) => boolean) => { if (list.length < 2) return null; const i = list.findIndex(cur); return list[(i + 1 + Math.floor(r() * (list.length - 1))) % list.length]; };
+  if (t.type === 'drum') {
+    const opts = G && ['kick', 'clap', 'hat', 'open', 'perc'].includes(t.id) ? [...new Map(G.drums.map((d) => [d[t.id as 'kick'], parseDrum(d[t.id as 'kick'])])).values()].filter((x) => x.some(Boolean)) : [];
+    const pick = cycle(opts, (x) => same(x, t.steps));
+    if (pick && !same(pick, t.steps)) { t.steps = [...pick]; return 'otro patrón del género'; }
+    const st = [...t.steps], kick = t.sound === 'kick';
+    for (let k = 0; k < 3; k++) { const i = Math.floor(r() * 16); if (kick && i % 4 === 0) continue; st[i] = st[i] ? (i % 4 === 0 ? st[i] : 0) : r() < 0.5 ? 3 : 1; }
+    t.steps = st; return 'cambié algunos golpes';
+  }
+  if (t.type === 'bass') {
+    const pick = G ? cycle(G.bass, (b) => same(parseBass(b.line).steps, t.steps) && same(parseBass(b.line).line, t.bassLine)) : null;
+    if (pick) { const pb = parseBass(pick.line); t.steps = pb.steps; t.bassLine = pb.line; t.bassLen = pick.l; return 'otra línea de bajo del género'; }
+    const ln = [...(t.bassLine ?? Array(16).fill(0))]; for (let k = 0; k < 3; k++) { const i = 1 + Math.floor(r() * 15); if (t.steps[i]) ln[i] = pick0(r, [0, 12, 7, 10, 0]); }
+    t.bassLine = ln; return 'cambié algunas notas';
+  }
+  if (t.type === 'arp' && t.arp) {
+    const pick = G ? cycle(G.arp, (a) => a.mode === t.arp!.mode && a.rate === t.arp!.rate && a.oct === t.arp!.oct) : null;
+    if (pick) { t.arp = { mode: pick.mode, rate: pick.rate, oct: pick.oct, gate: pick.mode === 'acid' ? acidPattern(p).gate : pick.gate ? parseGate(pick.gate) : Array(16).fill(true) }; return 'otro arpegio del género'; }
+    const modes = ['name', 'up', 'down', 'pp', 'chord', 'chordpp'].filter((m) => m !== t.arp!.mode); t.arp = { ...t.arp, mode: pick0(r, modes) }; return 'otro orden de notas';
+  }
+  if (t.type === 'chords') {
+    const pick = G ? cycle(G.chords, (c) => c.mode === (t.chordMode ?? 'pad') && (!c.steps || same(parseDrum(c.steps).map((v) => (v ? 1 : 0)), t.steps))) : null;
+    if (pick) { t.chordMode = pick.mode; t.steps = pick.steps ? parseDrum(pick.steps).map((v) => (v ? 1 : 0)) : R([0]); t.chordLen = pick.len; return 'otro ritmo de acordes del género'; }
+    t.chordMode = t.chordMode === 'pad' ? 'stab' : 'pad'; if (!t.steps.some(Boolean)) t.steps = [0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0]; return 'otro modo de acordes';
+  }
+  if (t.type === 'melody') { t.notes = generateMelody(p, 'v' + n); t.autoMelody = true; return 'melodía nueva'; }
+  return '';
+}
+const pick0 = <T,>(r: () => number, a: T[]) => a[Math.floor(r() * a.length)];
+const FILL_SOUNDS = ['snare', 'snare808', 'snareSoft', 'clap', 'rim', 'rim2'];
+
 export type MacroKey = 'energy' | 'dark' | 'space' | 'groove';
 export type Group = { id: string; name: string; mute?: boolean; solo?: boolean };
 export type Project = {
@@ -69,7 +128,10 @@ export type Project = {
   master: { eq: number[]; target: number; auto: boolean; ceiling: number };
   seed?: number;
   id?: string; title?: string; // lugar donde se guarda y nombre que se muestra en Mis loops (el nombre musical es `name`)
-  edited?: boolean; // se tocó algo después de generarlo: generar otro nombre no lo pisa, va a un lugar nuevo
+  edited?: boolean;
+  scene?: string; scenes?: Record<string, SceneSnap>; // escenas A..D: variaciones del patrón que cambian al terminar la vuelta
+  chain?: boolean; // encadenar escenas: al terminar cada vuelta pasa a la siguiente que tenga algo
+  fill?: boolean; // redoble de batería en los últimos 2 tiempos del compás 4 // se tocó algo después de generarlo: generar otro nombre no lo pisa, va a un lugar nuevo
   macros?: { energy: number; dark: number; space: number; groove: number }; // 0..1, 0.5 = como lo dejó el género
   macroAuto?: Partial<Record<MacroKey, number[]>>; // automatización de las macros: 64 valores 0..1, mandan sobre el fader
   harmony?: 'tonal' | 'puro'; // tonal: se busca la tonalidad del nombre; puro: solo las notas exactas de las letras
@@ -471,6 +533,7 @@ export function compile(p: Project) {
   // un grupo muteado apaga a todos sus instrumentos; un grupo en solo los pone en solo (sin tocar el estado propio de cada pista)
   const G = new Map((p.groups ?? []).map((g) => [g.id, g]));
   const offOf = (t: Track) => t.mute || !!(t.group && G.get(t.group)?.mute), soloOf = (t: Track) => t.solo || !!(t.group && G.get(t.group)?.solo);
+  const fillId = p.fill ? (FILL_SOUNDS.map((snd) => p.tracks.find((t) => t.type === 'drum' && t.sound === snd && !offOf(t))).find(Boolean) ?? p.tracks.find((t) => t.type === 'drum' && t.sound !== 'kick' && !offOf(t)))?.id : undefined;
   const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !offOf(t)) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
@@ -511,6 +574,8 @@ export function compile(p: Project) {
       else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05) }; for (let s = 0; s < 64; s++) if (t.steps[s % 16]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: 0.8, l: t.chordLen ?? 0.8 })); }
       else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
     }
+    if (t.id === fillId) for (let s = 56; s < 64; s++) ev[s] = [{ v: 0.3 + 0.7 * ((s - 56) / 7) ** 1.3 }]; // redoble: semicorcheas que crecen en los últimos 2 tiempos
+    if (p.fill && t.type === 'drum' && t.sound !== 'kick' && t.id !== fillId && ['hat', 'open'].includes(t.sound)) for (let s = 60; s < 64; s++) ev[s] = [];
     if (t.type !== 'drum') synth = shape(synth, t.type === 'bass' ? 0.5 : 1);
     const fx = t.type !== 'drum' && e > 0 ? { ...t.fx, drive: clamp((t.fx?.drive ?? 0) + e * 0.6, 0, 1) } : t.fx;
     let groove: number[] | undefined;

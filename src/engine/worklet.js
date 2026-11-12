@@ -199,6 +199,9 @@ class LoopEngine extends AudioWorkletProcessor {
   onMsg(m) {
     if (m.type === 'sample') { this.samples[m.key] = m.data; return; }
     if (m.type === 'project') {
+      // escena en cola: se aplica justo cuando la vuelta vuelve al paso 0
+      if (m.atLoop && this.playing) { this.pendingProj = m; return; }
+      this.pendingProj = null;
       const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing; this.mod = m.project.mod || null; this.swingA = m.project.swingA || null;
       this.tracks = m.project.tracks.map((t) => {
         const o = old.find((x) => x.id === t.id);
@@ -254,7 +257,7 @@ class LoopEngine extends AudioWorkletProcessor {
   process(inputs, outputs) {
     const out = outputs[0], OL = out[0], OR = out[1] || out[0], N = OL.length, B = this.buf;
     for (const k in B) { if (B[k].length !== N) B[k] = new Float32Array(N); else B[k].fill(0); }
-    const tracks = this.tracks, sr = this.sr;
+    let tracks = this.tracks; const sr = this.sr;
     // secuenciador: disparos dentro de este bloque
     this.duckHit = -1; this.stepAt = -1;
     if (this.playing && this.compiled) {
@@ -265,7 +268,7 @@ class LoopEngine extends AudioWorkletProcessor {
           for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off); }
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
-          if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; }
+          if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; if (this.pendingProj) { const pp = this.pendingProj; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; } }
           this.nextT = this.next * sl + swOff(this.next);
         }
         this.pos++;
