@@ -4,7 +4,7 @@
 
 const TAU = Math.PI * 2;
 const STEPS = 64;
-const MAXV = 12;
+const MAXV = 12, MAXV_HARD = 16; // voces por pista: arriba de 12, la más vieja se apaga con un fundido corto (sin clic)
 
 /* ---------- utilidades DSP ---------- */
 function autoAt(a, k0, k1, fr) { return a[k0] + (a[k1] - a[k0]) * fr; }
@@ -42,6 +42,13 @@ class SVF {
 }
 
 /* ---------- voces ---------- */
+/* apaga una voz en ~4 ms en vez de cortarla seco (un corte seco suena como un clic) */
+function fastRelease(v, sr) {
+  if (!v.on) return;
+  const k = Math.exp(-1 / (sr * 0.004));
+  if (v.stage !== undefined) { v.stage = 2; v.rK = k; v.len = Math.min(v.len, v.t); }
+  else { v.hold = Math.min(v.hold, v.n); v.fade = k; }
+}
 class SampleVoice {
   constructor() { this.on = false; }
   start(buf, rate, vel, dec, pan, sr, from) {
@@ -350,7 +357,7 @@ class LoopEngine extends AudioWorkletProcessor {
     this.kwL = new KWeight(this.sr); this.kwR = new KWeight(this.sr);
     this.ms = 0; this.msK = Math.exp(-1 / (this.sr * 3)); this.auto = 1; this.target = -14; this.autoOn = true;
     this.compEnv = 0; this.limG = 1; this.LA = 64; this.laL = new Float32Array(this.LA); this.laR = new Float32Array(this.LA); this.laI = 0;
-    this.pkWin = new Float32Array(this.LA); this.ceil = dbToGain(-1);
+    this.pkWin = new Float32Array(this.LA); this.pkBlk = new Float32Array(this.LA >> 3); this.ceil = dbToGain(-1); this.limAtk = 1 - Math.exp(-5 / this.LA);
     this.duck = 1; this.duckTarget = 1; this.meterN = 0; this.peak = 0; this.revRet = 0.8; this.dlyRet = 0.6;
     this.buf = { L: new Float32Array(128), R: new Float32Array(128), rL: new Float32Array(128), rR: new Float32Array(128), dL: new Float32Array(128), dR: new Float32Array(128), tL: new Float32Array(128), tR: new Float32Array(128), kd: new Float32Array(128) };
     this.stepAt = -1; this.clock = 0; this.freezeAt = 0; this.quiet = false;
@@ -407,7 +414,7 @@ class LoopEngine extends AudioWorkletProcessor {
       return;
     }
     if (m.type === 'play') { const f = m.from | 0, sl = this.stepLen(); this.playing = true; this.pos = f * sl; this.next = f; this.nextT = f * sl; this.step = -1; return; }
-    if (m.type === 'stop') { this.playing = false; this.tracks.forEach((t) => t.voices.forEach((v) => { if (v.stage !== undefined) v.stage = 2; else v.g *= 0.2; })); return; }
+    if (m.type === 'stop') { this.playing = false; this.tracks.forEach((t) => t.voices.forEach((v) => { if (v.stage !== undefined) v.stage = 2; else fastRelease(v, this.sr); })); return; }
     if (m.type === 'preview') { const t = this.tracks.find((x) => x.id === m.id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); }
   }
   stepLen() { return this.sr * 60 / this.bpm / 4; }
@@ -421,7 +428,15 @@ class LoopEngine extends AudioWorkletProcessor {
     // la voz tiene que ser del tipo de la pista: sampler, sinte clásico o sinte pro
     const pro = t.kind !== 'sample' && !!(t.synth && t.synth.pro), mk = () => (t.kind === 'sample' ? new SampleVoice() : pro ? new ProVoice() : new SynthVoice());
     let v = t.voices.find((x) => !x.on && !!x.pro === pro);
-    if (!v) { if (t.voices.length < MAXV) { v = mk(); t.voices.push(v); } else { const k = t.vi++ % t.voices.length; v = t.voices[k]; if (!!v.pro !== pro) { v = mk(); t.voices[k] = v; } } }
+    if (!v) {
+      if (t.voices.length < MAXV) { v = mk(); t.voices.push(v); }
+      else {
+        // ya hay muchas sonando: la más vieja se suelta con un fundido corto y la nota nueva va en otra voz
+        const k = t.vi++ % t.voices.length; fastRelease(t.voices[k], this.sr);
+        if (t.voices.length < MAXV_HARD) { v = mk(); t.voices.push(v); }
+        else { v = t.voices[k]; if (!!v.pro !== pro) { v = mk(); t.voices[k] = v; } }
+      }
+    }
     const pan = (t.spread || 0) * (Math.random() * 2 - 1);
     if (t.kind === 'sample') {
       const key = ev.k || t.sample, buf = this.samples[key]; if (!buf) return;
@@ -461,7 +476,9 @@ class LoopEngine extends AudioWorkletProcessor {
     if (this.duckHit >= 0 || this.duckEnv !== undefined) {
       const rel = Math.exp(-1 / (sr * (60 / this.bpm) * 0.12));
       let e = this.duckEnv ?? 0;
-      for (let i = 0; i < N; i++) { if (i === this.duckHit) e = 1; kickDuck[i] = e; e *= rel; }
+      // el bombo no hunde el volumen en una sola muestra (eso es un clic): baja en ~4 ms y vuelve despacio
+      const atk = 1 - Math.exp(-1 / (sr * 0.004));
+      for (let i = 0; i < N; i++) { if (i === this.duckHit) this.duckA = true; if (this.duckA) { e += (1 - e) * atk; if (e > 0.985) this.duckA = false; } else e *= rel; kickDuck[i] = e; }
       this.duckEnv = e;
     }
     const anySolo = tracks.some((t) => t.solo);
@@ -578,10 +595,10 @@ class LoopEngine extends AudioWorkletProcessor {
       l *= this.auto; r *= this.auto;
       // limitador con lookahead
       const I = this.laI, dl = this.laL[I], drr = this.laR[I];
-      this.laL[I] = l; this.laR[I] = r; this.pkWin[I] = Math.max(Math.abs(l), Math.abs(r)); this.laI = (I + 1) % this.LA;
-      let m = 0; for (let k = 0; k < this.LA; k += 4) if (this.pkWin[k] > m) m = this.pkWin[k];
+      this.laL[I] = l; this.laR[I] = r; const ap0 = Math.max(Math.abs(l), Math.abs(r)); this.pkWin[I] = ap0; const bi = I >> 3; this.pkBlk[bi] = (I & 7) === 0 ? ap0 : Math.max(this.pkBlk[bi], ap0); this.laI = (I + 1) % this.LA;
+      let m = 0; const W = this.pkBlk; for (let k = 0; k < W.length; k++) if (W[k] > m) m = W[k]; // pico de toda la ventana, por tramos de 8 muestras (antes se salteaban 3 de cada 4)
       const need = m > this.ceil ? this.ceil / m : 1;
-      this.limG = need < this.limG ? need : this.limG + (need - this.limG) * 0.0004;
+      this.limG = need < this.limG ? this.limG + (need - this.limG) * this.limAtk : this.limG + (need - this.limG) * 0.0004; // baja en forma suave dentro de la anticipación
       let ol = dl * this.limG, or = drr * this.limG;
       const c = this.ceil;
       if (ol > c) ol = c; else if (ol < -c) ol = -c; if (or > c) or = c; else if (or < -c) or = -c;

@@ -64,12 +64,15 @@ npx vite preview --port 4173 & python3 tests/smoke.py   # prueba de humo con Pla
 - Las ediciones de las perillas de un sinte se guardan en `track.synth` (copia del preset) y `compile()` usa `track.synth ?? SYNTHS[track.sound].p`. El kick que dispara el sidechain es la primera pista de batería con sonido `kick` que esté encendida.
 - `public/samples/`: set TR-909 de Rob Roy Recordings. **La licencia exige no modificar, no borrar y no renombrar los archivos, y no usarlos con fines de lucro.** Si la app alguna vez se monetiza, hay que reemplazarlos por sonidos con licencia comercial.
 
+- **Sin clics** (worklet): el sidechain del bombo baja con un ataque de ~4 ms (`duckA`) en vez de hundirse en una muestra (ese escalón era el clic en cada golpe, medido: salto 50 veces mayor que sin sidechain; ahora queda igual que sin sidechain). Cuando una pista ya tiene 12 voces sonando, la más vieja se apaga con `fastRelease()` (~4 ms) y la nueva usa otra voz (hasta 16); el stop también apaga los samples con fundido en vez de cortarlos. El limitador mira el pico de toda su ventana (por tramos de 8 muestras en `pkBlk`) y baja la ganancia suave dentro de la anticipación (`limAtk`).
+
 ## Reglas para que suene bien y fluido
 
 0. **iPhone**: el audio se destraba con `engine.unlock()`, que tiene que correr dentro del mismo toque (sin `await` antes): reanuda el `AudioContext`, pone `navigator.audioSession.type = 'playback'` y reproduce en bucle un WAV en silencio con un `<audio>`, para que suene aunque el celu esté en modo silencio. App lo llama en el primer toque de cualquier parte y `play()` también. Hace falta iOS 14.5 o más (AudioWorklet); si no está, se avisa en pantalla. Playwright no puede bajar WebKit acá: lo de iPhone hay que probarlo en un iPhone real.
 
 1. Nada de programar notas con `setTimeout`, `setInterval` ni nodos de Web Audio por nota: todo sonido nuevo se implementa como voz dentro del worklet.
 2. En el `process()` del worklet no se crean objetos por muestra ni se reserva memoria por bloque (salvo los buffers reutilizables de `this.buf`).
+7. Nada de cambios de ganancia o cortes de voz instantáneos: todo lo que sube o baja el volumen de golpe (sidechain, robo de voz, stop, mute) tiene que tener una rampa o un fundido de unos milisegundos, si no suena un clic.
 3. El hilo principal solo manda mensajes chicos (`project`, `play`, `stop`, `sample`). Cualquier cambio en la interfaz llama a `engine.update(p)`, que recompila y manda el proyecto entero, y el motor lo aplica al instante.
 4. El volumen percibido tiene que mantenerse parejo: no saques ni saltees la ganancia automática ni el limitador del master. El techo es `master.ceiling` (-1 dBFS).
 5. Controles táctiles: `Knob` y `Fader` usan `useGrab()`, "mantener para mover": un deslizamiento hace scroll y, si el dedo queda quieto unos 170 ms, el control se agarra. Se usa en todos los potes y faders (la prop `instant` existe pero hoy no la usa ningún control). La app también funciona en horizontal: en celulares acostados, la navegación pasa a una barra lateral y Patrón y Master se acomodan en dos columnas (media query `orientation: landscape and max-height: 560px`).
