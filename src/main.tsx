@@ -29,6 +29,8 @@ const load = (): Project | null => { migrate(); return loadProject(currentId()) 
 let saveT: any = 0, saveP: Project | null = null, onSaveFail: () => void = () => {};
 const flushSave = () => { clearTimeout(saveT); saveT = 0; if (saveP && !saveProject(saveP)) onSaveFail(); saveP = null; };
 const save = (p: Project) => { saveP = p; clearTimeout(saveT); saveT = setTimeout(flushSave, 400); };
+// el menú de mantener apretado (copiar, pegar, compartir) no tiene que aparecer sobre los controles; en los campos de texto sí
+if (typeof document !== 'undefined') document.addEventListener('contextmenu', (e) => { if (!(e.target as HTMLElement)?.closest?.('input,textarea')) e.preventDefault(); });
 if (typeof document !== 'undefined') { document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); }); window.addEventListener('pagehide', flushSave); }
 /* nombre para un loop nuevo: "Loop N", con el primer número libre */
 const nextTitle = () => { const used = new Set(listProjects().map((m) => m.title)); let n = 1; while (used.has('Loop ' + n)) n++; return 'Loop ' + n; };

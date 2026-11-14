@@ -619,3 +619,10 @@ html,body{font-family:'Inter',system-ui,sans-serif;font-size:14px}
   .app.has-detail{padding-bottom:calc(var(--navh) + min(40vh,400px) + 16px + var(--safe-b))}
 }
 @media (max-height: 640px){.tname{scroll-margin-top:128px}}
+/* mantener apretado no selecciona texto ni abre el menú de copiar/pegar (salvo en los campos donde se escribe) */
+html,body,.app,.sheet,.detail,.tut{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,[contenteditable]{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+.mixer,.strip,.knob,.fader,.pads,.grid,.eqg,.lane,.roll{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.app ::selection{background:transparent}
+.app input::selection,.app textarea::selection{background:color-mix(in srgb,var(--hot) 40%,transparent)}
+img,svg{-webkit-user-drag:none}
