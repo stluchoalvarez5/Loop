@@ -94,7 +94,7 @@ export function autoShape(shape: string, lo: number, hi: number): number[] {
   });
 }
 export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal';
-export type Note = { s: number; n: number; l: number };
+export type Note = { s: number; n: number; l: number; o?: number }; // o = desfase dentro del paso de 16 (0..1): notas de 1/32 o tresillos; l en pasos de 16 (puede ser fraccionario)
 export type Track = {
   id: string; name: string; color: string; type: TrackType;
   steps: number[]; // 16 pasos: 0 apagado, 1 golpe, 2 acento
@@ -102,7 +102,7 @@ export type Track = {
   pitch: number; decay: number;
   vol: number; pan: number; mute: boolean; solo: boolean; rev: number; dly: number; duck: number;
   synth?: Synth;
-  arp?: { mode: string; rate: '16' | '8' | '4' | 'tr'; oct: number; gate: boolean[]; pat?: ArpPat; len?: number; reg?: number }; // pat: arpegiador que sigue los acordes (len = largo de nota, reg = registro −1/0/1)
+  arp?: { mode: string; rate: '16' | '8' | '4' | 'tr' | '32' | 't8' | 't16'; oct: number; gate: boolean[]; pat?: ArpPat; len?: number; reg?: number }; // pat: arpegiador que sigue los acordes (len = largo de nota, reg = registro −1/0/1)
   chordMode?: 'pad' | 'stab' | 'gate';
   chordLen?: number; // largo de cada golpe de acorde en pasos (stab y gate)
   bassLine?: number[]; // bajo: semitonos sobre la fundamental en cada paso (0, 12 = octava, 7 = quinta…)
@@ -516,7 +516,7 @@ export function newTrack(p: Project, type: TrackType, sound?: string): Track {
 export function rollFromTrack(p: Project, t: Track): Note[] {
   const c = compile({ ...p, tracks: p.tracks.map((x) => (x.id === t.id ? { ...x, roll: false, mute: false, solo: false } : x)) }).tracks.find((x) => x.id === t.id);
   const out: Note[] = [], seen = new Set<string>();
-  c?.ev.forEach((evs: any[], s: number) => evs.forEach((e) => { if (e.n == null) return; const k = s + ':' + e.n; if (seen.has(k)) return; seen.add(k); out.push({ s, n: e.n, l: Math.max(1, Math.min(64 - s, Math.round(e.l + 0.15))) }); }));
+  c?.ev.forEach((evs: any[], s: number) => evs.forEach((e) => { if (e.n == null) return; const k = s + ':' + e.n + ':' + (e.o ? e.o.toFixed(3) : 0); if (seen.has(k)) return; seen.add(k); const fine = e.o || e.l < 0.9; out.push({ s, n: e.n, l: fine ? Math.max(0.25, Math.min(64 - s, +(e.l + 0.15).toFixed(3))) : Math.max(1, Math.min(64 - s, Math.round(e.l + 0.15))), ...(e.o ? { o: +e.o.toFixed(4) } : {}) }); }));
   return out;
 }
 /* palabras con buen resultado (calculadas con la propia armonía de la app) para "Palabra aleatoria" */
@@ -658,14 +658,35 @@ export function arpTones(p: Project, t: Track, b: number) {
   return u;
 }
 /* la nota que toca cada uno de los 64 pasos (cuenta las notas que suenan, no los casilleros) */
+/* orden de las notas del arpegiador en un compás (según el patrón) */
+function arpOrder(a: NonNullable<Track['arp']>, u: number[]) {
+  const d = [...u].reverse();
+  return a.pat === 'down' ? d : a.pat === 'updown' ? (u.length > 2 ? u.concat(u.slice(1, -1).reverse()) : u) : a.pat === 'downup' ? (d.length > 2 ? d.concat(d.slice(1, -1).reverse()) : d)
+    : a.pat === 'thumb' ? u.slice(1).flatMap((m) => [u[0], m]) : u;
+}
 export function arpSeq(p: Project, t: Track): number[] {
   const a = t.arp!, out: number[] = Array(64).fill(60), r = seeded(clean(p.name || 'Loop') + '#arp2');
   for (let b = 0; b < 4; b++) {
-    const u = arpTones(p, t, b), d = [...u].reverse();
-    const seq = a.pat === 'down' ? d : a.pat === 'updown' ? (u.length > 2 ? u.concat(u.slice(1, -1).reverse()) : u) : a.pat === 'downup' ? (d.length > 2 ? d.concat(d.slice(1, -1).reverse()) : d)
-      : a.pat === 'thumb' ? u.slice(1).flatMap((m) => [u[0], m]) : u;
+    const u = arpTones(p, t, b), seq = arpOrder(a, u);
     let k = 0;
     for (let s = b * 16; s < b * 16 + 16; s++) { out[s] = a.pat === 'rand' ? u[Math.floor(r() * u.length)] : seq[k % Math.max(1, seq.length)] ?? u[0]; if (arpPlays(t, s)) k++; }
+  }
+  return out;
+}
+/* velocidades finas del arpegio: casilleros por compás (1/32, tresillo de corchea, tresillo de semicorchea) */
+export const ARP_FINE: Record<string, number> = { '32': 32, t8: 12, t16: 24 };
+/* golpes del arpegiador en una velocidad fina: paso, desfase dentro del paso y notas (el ritmo del "gate" se lee por el paso donde cae cada casillero) */
+export function arpFineHits(p: Project, t: Track): { s: number; o: number; ns: number[]; acc: boolean }[] {
+  const a = t.arp!, N = ARP_FINE[a.rate], out: { s: number; o: number; ns: number[]; acc: boolean }[] = [], r = seeded(clean(p.name || 'Loop') + '#arp3');
+  if (!N) return out;
+  for (let b = 0; b < 4; b++) {
+    const u = arpTones(p, t, b), seq = arpOrder(a, u); let k = 0;
+    for (let j = 0; j < N; j++) {
+      const pos = (j * 16) / N, st = Math.floor(pos + 1e-6), s = b * 16 + st;
+      if (!a.gate[s % a.gate.length]) continue;
+      const ns = a.pat === 'chord' ? arpTones(p, { ...t, arp: { ...a, oct: 1 } }, b) : [a.pat === 'rand' ? u[Math.floor(r() * u.length)] : seq[k % Math.max(1, seq.length)] ?? u[0]];
+      k++; out.push({ s, o: pos - st < 1e-6 ? 0 : pos - st, ns, acc: j % (N / 4) === 0 });
+    }
   }
   return out;
 }
@@ -723,11 +744,11 @@ export function compile(p: Project) {
     if (t.type === 'vocal') {
       // la voz es un clip de hasta 4 compases: suena una vez por vuelta, desde su posición
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
-      ev[Math.max(0, Math.min(63, t.vox?.pos ?? 0))].push({ v: 0.9 });
+      { const ps = Math.max(0, Math.min(63.5, t.vox?.pos ?? 0)), s0 = Math.floor(ps + 1e-6); ev[s0].push({ v: 0.9, ...(ps - s0 > 1e-6 ? { o: ps - s0 } : {}) }); }
     } else if (t.roll && (t.type === 'bass' || t.type === 'arp' || t.type === 'chords')) {
       // editada a mano en el piano roll
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? (t.type === 'bass' ? SYNTHS.bassSaw.p : t.type === 'arp' ? SYNTHS.pluck.p : SYNTHS.strings.p);
-      (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - (t.type === 'chords' ? 0.05 : 0.15)) }); });
+      (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(Math.min(0.5, nt.l), nt.l - (t.type === 'chords' ? 0.05 : 0.15)), ...(nt.o ? { o: nt.o } : {}) }); });
     } else if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(p.kit, t.sound);
       if (fineArr(t)) stepHits(t).forEach((h) => { const ghost = clamp(0.38 * (1 + mAt('energy', h.s) * 1.2), 0.15, 0.7); ev[h.s].push({ v: h.v === 2 ? 1 : h.v === 3 ? ghost : 0.72, o: h.o }); });
@@ -750,15 +771,16 @@ export function compile(p: Project) {
           ev[s].push({ n: f(s), v: ac.acc[i] ? 1 : 0.7, l: tie ? 1.15 : 0.6, g: ac.slide[i] && G(s - 1) ? 1 : 0 }); }
       } else if (t.arp!.pat && t.arp!.mode !== 'acid') {
         // arpegiador: largo de nota según la velocidad y el "Largo" elegido; "Acorde entero" toca todas las notas juntas
-        const a = t.arp!, iv = a.rate === '4' ? 4 : a.rate === '8' ? 2 : 1, l = Math.max(0.25, iv * (a.len ?? 0.8));
-        for (let s = 0; s < 64; s++) if (arpPlays(t, s)) {
+        const a = t.arp!, iv = a.rate === '4' ? 4 : a.rate === '8' ? 2 : ARP_FINE[a.rate] ? 16 / ARP_FINE[a.rate] : 1, l = Math.max(0.25, iv * (a.len ?? 0.8));
+        if (ARP_FINE[a.rate]) arpFineHits(p, t).forEach((h) => h.ns.forEach((n) => ev[h.s].push({ n, v: (h.acc ? 0.95 : 0.78) * (a.pat === 'chord' ? 0.8 : 1), l, ...(h.o ? { o: h.o } : {}) })));
+        else for (let s = 0; s < 64; s++) if (arpPlays(t, s)) {
           const v = s % 4 === 0 ? 0.95 : 0.78;
           if (a.pat === 'chord') arpTones(p, { ...t, arp: { ...a, oct: 1 } }, Math.floor(s / 16)).forEach((n) => ev[s].push({ n, v: v * 0.8, l })); else ev[s].push({ n: f(s), v, l });
         }
       } else for (let s = 0; s < 64; s++) if (arpPlays(t, s)) ev[s].push({ n: f(s), v: s % 4 === 0 ? 0.95 : 0.78, l: t.arp!.rate === '8' ? 1.8 : 0.9 });
     } else if (t.type === 'melody') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.lead.p;
-      (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - 0.1) }); });
+      (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(Math.min(0.5, nt.l), nt.l - 0.1), ...(nt.o ? { o: nt.o } : {}) }); });
     } else {
       const base = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.strings.p;
       if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); if (synth.pro && synth !== base) synth.pro = { ...base.pro!, env1: { a: 0.004, d: Math.min(base.pro!.env1.d, 0.4), s: 0, r: 0.15 } }; for (const { s, o } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: 0.8, l: t.chordLen ?? 1, o })); }
