@@ -102,7 +102,7 @@ export type Track = {
   pitch: number; decay: number;
   vol: number; pan: number; mute: boolean; solo: boolean; rev: number; dly: number; duck: number;
   synth?: Synth;
-  arp?: { mode: string; rate: '16' | '8' | 'tr'; oct: number; gate: boolean[] };
+  arp?: { mode: string; rate: '16' | '8' | '4' | 'tr'; oct: number; gate: boolean[]; pat?: ArpPat; len?: number; reg?: number }; // pat: arpegiador que sigue los acordes (len = largo de nota, reg = registro −1/0/1)
   chordMode?: 'pad' | 'stab' | 'gate';
   chordLen?: number; // largo de cada golpe de acorde en pasos (stab y gate)
   bassLine?: number[]; // bajo: semitonos sobre la fundamental en cada paso (0, 12 = octava, 7 = quinta…)
@@ -351,7 +351,7 @@ export function blankProject(m: Manual, genre: string, bpm: number, drums: boole
     t.mute = false; t.groove = t.type === 'drum' && drums ? t.groove : undefined;
     if (t.type === 'drum') { if (!drums) t.steps = Array(16).fill(0); else if (!t.steps.some(Boolean)) t.mute = true; }
     if (t.type === 'bass') { t.steps = Array(16).fill(0); t.bassLine = Array(16).fill(0); }
-    if (t.type === 'arp' && t.arp) t.arp = { ...t.arp, mode: 'chord', gate: Array(16).fill(false) };
+    if (t.type === 'arp' && t.arp) t.arp = { ...t.arp, mode: 'chord', pat: 'up', rate: '16', len: 0.8, reg: 0, gate: Array(16).fill(false) };
     if (t.type === 'chords') { t.chordMode = 'stab'; t.steps = Array(16).fill(0); t.chordLen = 1; }
     if (t.type === 'melody') { t.notes = []; t.autoMelody = false; }
   });
@@ -479,7 +479,7 @@ export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
   if (type === 'bass') return mkTrack(id, 'Bajo 2', 'bass', sound ?? 'fmBass', { color, vol: 0.7, duck: 0.5 });
   if (type === 'chords') return mkTrack(id, 'Acordes 2', 'chords', sound ?? 'airy', { color, vol: 0.55, rev: 0.4, duck: 0.4, chordMode: 'pad', steps: [1, ...Array(15).fill(0)] });
-  if (type === 'arp') return mkTrack(id, 'Arpegio 2', 'arp', sound ?? 'pluck', { color, vol: 0.55, rev: 0.35, dly: 0.3, duck: 0.3, arp: { mode: 'up', rate: '8', oct: 2, gate: Array(16).fill(true) } });
+  if (type === 'arp') return mkTrack(id, 'Arpegio 2', 'arp', sound ?? 'pluck', { color, vol: 0.55, rev: 0.35, dly: 0.3, duck: 0.3, arp: { mode: 'chord', pat: 'up', rate: '16', oct: 2, len: 0.8, reg: 0, gate: Array(16).fill(true) } });
   return mkTrack(id, 'Melodía', 'melody', sound ?? 'lead', { color, vol: 0.6, rev: 0.3, dly: 0.25, duck: 0.3, notes: generateMelody(p, id), autoMelody: true });
 }
 /* pasa lo que hoy genera una pista (bajo, arpegio o acordes) a notas de piano roll, para editarlas a mano */
@@ -575,6 +575,7 @@ export function projectFromName(name: string, variant = 0, genre = 'deep'): Proj
 
 /* ---------- compilación: proyecto → eventos por paso (64 pasos = 4 compases) ---------- */
 function arpNotes(p: Project, t: Track) {
+  if (t.arp!.pat && t.arp!.mode !== 'acid') { const sq = arpSeq(p, t); return (s: number) => sq[s % 64]; }
   const a = t.arp!, nm = p.seq.length ? p.seq : [69], L = nm.length, oc = (o: number) => 12 * (o % a.oct);
   const up = () => { const b = [...new Set(nm)].sort((x, y) => x - y), o: number[] = []; for (let k = 0; k < a.oct; k++) b.forEach((m) => o.push(m + 12 * k)); return o; };
   const r = seeded(p.name + '#arp');
@@ -602,6 +603,32 @@ function arpNotes(p: Project, t: Track) {
     }
   };
 }
+/* ---------- arpegiador: recorre las notas del acorde de cada compás, nota por nota (y arranca de nuevo al cambiar de acorde) ---------- */
+export type ArpPat = 'up' | 'down' | 'updown' | 'downup' | 'thumb' | 'rand' | 'chord';
+export const ARP_PATS: [ArpPat | 'acid', string][] = [['up', 'Sube'], ['down', 'Baja'], ['updown', 'Sube y baja'], ['downup', 'Baja y sube'], ['thumb', 'Pulgar'], ['rand', 'Al azar'], ['chord', 'Acorde entero'], ['acid', 'Acid 303']];
+export const ARP_RHYTHMS: [string, string][] = [['Todos', 'xxxxxxxxxxxxxxxx'], ['Sincopado', 'x.xx.xx.x.xx.xx.'], ['Contratiempo', '..x...x...x...x.'], ['Galope', 'xx.xx.xx.xx.xx.x'], ['Salteado', 'x.x.x.x.x.x.x.x.'], ['Respira', 'xxxx....xxxx....']];
+/* notas del acorde del compás b, de grave a agudo, en el registro y las octavas del arpegiador */
+export function arpTones(p: Project, t: Track, b: number) {
+  const a = t.arp!, c = p.chords[b % 4]?.midi ?? [60], pcs = [...new Set(c.map((m) => ((m % 12) + 12) % 12))];
+  // arranca en la fundamental del acorde (la más cercana al registro) y sigue hacia arriba
+  const mid = 57 + 12 * (a.reg ?? 0), rpc = pcs[0], root = mid + ((((rpc - mid) % 12) + 18) % 12) - 6;
+  const base = pcs.map((pc) => root + ((pc - rpc) % 12 + 12) % 12).sort((x, y) => x - y);
+  const u: number[] = []; for (let k = 0; k < Math.max(1, a.oct); k++) base.forEach((m) => u.push(m + 12 * k));
+  return u;
+}
+/* la nota que toca cada uno de los 64 pasos (cuenta las notas que suenan, no los casilleros) */
+export function arpSeq(p: Project, t: Track): number[] {
+  const a = t.arp!, out: number[] = Array(64).fill(60), r = seeded(clean(p.name || 'Loop') + '#arp2');
+  for (let b = 0; b < 4; b++) {
+    const u = arpTones(p, t, b), d = [...u].reverse();
+    const seq = a.pat === 'down' ? d : a.pat === 'updown' ? (u.length > 2 ? u.concat(u.slice(1, -1).reverse()) : u) : a.pat === 'downup' ? (d.length > 2 ? d.concat(d.slice(1, -1).reverse()) : d)
+      : a.pat === 'thumb' ? u.slice(1).flatMap((m) => [u[0], m]) : u;
+    let k = 0;
+    for (let s = b * 16; s < b * 16 + 16; s++) { out[s] = a.pat === 'rand' ? u[Math.floor(r() * u.length)] : seq[k % Math.max(1, seq.length)] ?? u[0]; if (arpPlays(t, s)) k++; }
+  }
+  return out;
+}
+
 /* línea acid tipo 303: casi todo en la tónica, saltos de octava, quinta y séptima, con acentos, slides y silencios */
 export function acidPattern(p: Project) {
   const r = seeded(clean(p.name || 'Loop') + '#acid'), t = p.tonic ?? ((p.seq[0] ?? 60) % 12), sc = p.scale ?? [];
@@ -617,7 +644,7 @@ export function acidPattern(p: Project) {
 }
 /* pasos de 16 (un compás que se repite) o de 64 (cuatro compases distintos): se lee siempre con el largo que tenga */
 export const expand64 = <T,>(a: T[]): T[] => (a.length === 64 ? [...a] : Array.from({ length: 64 }, (_, i) => a[i % a.length]));
-export const arpPlays = (t: Track, i: number) => { const a = t.arp!; if (!a.gate[i % a.gate.length]) return false; if (a.rate === '8') return i % 2 === 0; if (a.rate === 'tr') return i % 4 !== 1; return true; };
+export const arpPlays = (t: Track, i: number) => { const a = t.arp!; if (!a.gate[i % a.gate.length]) return false; if (a.rate === '4') return i % 4 === 0; if (a.rate === '8') return i % 2 === 0; if (a.rate === 'tr') return i % 4 !== 1; return true; };
 export function arpPreview(p: Project, t: Track) { const f = arpNotes(p, t); return (s: number) => f(s); }
 
 /* macros: 4 controles que mueven muchos parámetros a la vez, sin tocar el proyecto (se aplican al compilar) */
@@ -679,6 +706,13 @@ export function compile(p: Project) {
         const G = (k: number) => t.arp!.gate[(((k % 64) + 64) % 64) % t.arp!.gate.length];
         for (let s = 0; s < 64; s++) { const i = s % 16; if (!G(s)) continue; const nx = (i + 1) % 16, tie = G(s + 1) && ac.slide[nx];
           ev[s].push({ n: f(s), v: ac.acc[i] ? 1 : 0.7, l: tie ? 1.15 : 0.6, g: ac.slide[i] && G(s - 1) ? 1 : 0 }); }
+      } else if (t.arp!.pat && t.arp!.mode !== 'acid') {
+        // arpegiador: largo de nota según la velocidad y el "Largo" elegido; "Acorde entero" toca todas las notas juntas
+        const a = t.arp!, iv = a.rate === '4' ? 4 : a.rate === '8' ? 2 : 1, l = Math.max(0.25, iv * (a.len ?? 0.8));
+        for (let s = 0; s < 64; s++) if (arpPlays(t, s)) {
+          const v = s % 4 === 0 ? 0.95 : 0.78;
+          if (a.pat === 'chord') arpTones(p, { ...t, arp: { ...a, oct: 1 } }, Math.floor(s / 16)).forEach((n) => ev[s].push({ n, v: v * 0.8, l })); else ev[s].push({ n: f(s), v, l });
+        }
       } else for (let s = 0; s < 64; s++) if (arpPlays(t, s)) ev[s].push({ n: f(s), v: s % 4 === 0 ? 0.95 : 0.78, l: t.arp!.rate === '8' ? 1.8 : 0.9 });
     } else if (t.type === 'melody') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.lead.p;

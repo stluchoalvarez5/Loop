@@ -19,7 +19,7 @@ import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
   type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  expand64, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
+  expand64, arpSeq, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
@@ -655,6 +655,35 @@ function AddTrack({ onAdd, full }: { onAdd: (t: TrackType, s?: string) => void; 
     {drums && DRUM_GROUPS.map(([g, list]) => <><div class="sub">{g}</div><div class="chips">{list.map((k) => <button class="chip" onClick={() => { onAdd('drum', k); setOpen(false); setDrums(false); }}>{DRUM_SOUNDS[k]}</button>)}</div></>)}
   </div>;
 }
+/* ---------- arpegiador: sigue solo los acordes del loop ---------- */
+const LEGACY_PAT: Record<string, string> = { chord: 'up', up: 'up', down: 'down', pp: 'updown', chordpp: 'updown', rand: 'rand', acid: 'acid' };
+function Arpeggiator({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const a = t.arp!, cur = a.mode === 'acid' ? 'acid' : a.pat ?? LEGACY_PAT[a.mode] ?? '';
+  const set = (fn: (x: NonNullable<Track['arp']>) => void) => upT(t.id, (x) => { const n = { ...x.arp!, gate: [...x.arp!.gate] }; if (!n.pat && n.mode !== 'acid') { n.pat = (LEGACY_PAT[n.mode] as any) || 'up'; n.mode = 'chord'; } fn(n); x.arp = n; x.roll = false; });
+  const seq = useMemo(() => (a.pat && a.mode !== 'acid' ? arpSeq(p, t) : null), [p, t]);
+  const gateStr = (a.gate.length === 16 ? a.gate : a.gate.slice(0, 16)).map((g) => (g ? 'x' : '.')).join('');
+  return <>
+    <div class="sub">Sigue los acordes del loop</div>
+    <div class="arp-ch">{p.chords.map((c, b) => <div><b>{c.name}</b><small>compás {b + 1}</small>{seq && <span>{seq.slice(b * 16, b * 16 + 16).filter((_, i) => arpPlays(t, b * 16 + i)).slice(0, 8).map(noteName).join(' ')}{arpPlays(t, b * 16) ? '…' : ''}</span>}</div>)}</div>
+    <div class="sub">Patrón</div>
+    <div class="arp-pats">{ARP_PATS.map(([k, l]) => <button class={'chip' + (cur === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => set((n) => { if (k === 'acid') { n.mode = 'acid'; n.pat = undefined; } else { n.mode = 'chord'; n.pat = k; } })}>{l}</button>)}</div>
+    {cur !== 'acid' && <>
+      <div class="sub">Velocidad</div>
+      <div class="seg">{([['4', '1/4'], ['8', '1/8'], ['16', '1/16'], ['tr', 'Galope']] as const).map(([k, l]) => <button class={a.rate === k ? 'on' : ''} onClick={() => set((n) => { n.rate = k; })}>{l}</button>)}</div>
+      <div class="arp-2">
+        <div><div class="sub">Octavas</div><div class="seg">{[1, 2, 3, 4].map((o) => <button class={a.oct === o ? 'on' : ''} onClick={() => set((n) => { n.oct = o; })}>{o}</button>)}</div></div>
+        <div><div class="sub">Registro</div><div class="seg">{([[-1, 'Grave'], [0, 'Medio'], [1, 'Agudo']] as const).map(([v, l]) => <button class={(a.reg ?? 0) === v ? 'on' : ''} onClick={() => set((n) => { n.reg = v; })}>{l}</button>)}</div></div>
+      </div>
+      <div class="sub">Largo de las notas</div>
+      <div class="seg">{([[0.35, 'Corto'], [0.8, 'Medio'], [1.1, 'Largo'], [1.8, 'Ligado']] as const).map(([v, l]) => <button class={Math.abs((a.len ?? 0.8) - v) < 0.05 ? 'on' : ''} onClick={() => set((n) => { n.len = v; })}>{l}</button>)}</div>
+    </>}
+    <div class="sub">Ritmo</div>
+    <div class="chips">{ARP_RHYTHMS.map(([l, g]) => <button class={'chip' + (gateStr === g && a.gate.every((x, i) => x === (g[i % 16] === 'x')) ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => set((n) => { n.gate = [...g].map((c) => c === 'x'); })}>{l}</button>)}
+      <button class="chip" onClick={() => set((n) => { n.gate = Array(16).fill(false); })}>Vacío</button></div>
+    <div class="hint">El arpegiador toca, nota por nota, las notas del acorde de cada compás (los acordes que elegiste en Escena → Armar) y arranca de nuevo cuando cambia el acorde. Patrón: el orden (Sube, Baja, ida y vuelta, Pulgar alterna la nota más grave con las demás, Acorde entero las toca juntas). Velocidad: cada cuánto toca. Octavas: cuántas octavas recorre. Ritmo: qué pasos tocan; también los podés prender y apagar en la grilla de Patrón (y por compás).</div>
+  </>;
+}
+
 /* volumen y pan del instrumento, arriba de su editor: son los mismos del Mixer (y respetan la automatización) */
 /* tono del instrumento: afinación (sintes; batería y voz la tienen en su sección), fino y vibrato */
 function PitchRow({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
@@ -711,19 +740,13 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
   const setS = (k: string, v: number) => upT(t.id, (x) => { x.synth = { ...(x.synth ?? SYNTHS[x.sound].p), [k]: v }; });
   return <>
     <LevelRow t={t} upT={upT} />
+    {t.type === 'arp' && <Arpeggiator p={p} t={t} upT={upT} />}
     <PitchRow t={t} upT={upT} />
     <div class="sub">Sonido{t.synth && <button class="lnk" onClick={() => upT(t.id, (x) => { x.synth = undefined; })}>Restablecer</button>}</div>
     <label class="sel-w"><select class="sel" value={s?.pro ? '' : t.sound} onChange={(e) => { const k = (e.target as HTMLSelectElement).value; if (k) upT(t.id, (x) => { x.sound = k; x.synth = undefined; }); }}>
       {s?.pro && <option value="">Sinte pro</option>}
       {presets.map((k) => <option value={k}>{SYNTHS[k].label}</option>)}
     </select></label>
-    {t.type === 'arp' && <>
-      <div class="sub">Orden de las notas</div>
-      <label class="sel-w"><select class="sel" value={t.arp!.mode} onChange={(e) => upT(t.id, (x) => { x.arp!.mode = (e.target as HTMLSelectElement).value; })}>{[['name', 'Nombre'], ['up', 'Sube'], ['down', 'Baja'], ['pp', 'Ping-pong'], ['mirror', 'Espejo'], ['jump', 'Saltos'], ['rand', 'Al azar'], ['chord', 'Acorde'], ['chordpp', 'Acorde ida y vuelta'], ['acid', 'Acid 303']].map(([k, l]) => <option value={k}>{l}</option>)}</select></label>
-      <div class="sub">Ritmo y octavas</div>
-      <div class="seg">{[['16', '1/16'], ['8', '1/8'], ['tr', 'Galope']].map(([k, l]) => <button class={t.arp!.rate === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.arp!.rate = k as any; })}>{l}</button>)}</div>
-      <div class="seg" style={{ marginTop: '6px' }}>{[1, 2, 3].map((o) => <button class={t.arp!.oct === o ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.arp!.oct = o; })}>{o} oct</button>)}</div>
-    </>}
     {t.type === 'chords' && <>
       <div class="sub">Modo</div>
       <div class="seg">{[['pad', 'Sostenido'], ['stab', 'Stabs'], ['gate', 'Gate']].map(([k, l]) => <button class={t.chordMode === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.chordMode = k as any; if (k === 'gate' && x.steps.filter(Boolean).length < 4) x.steps = [1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0]; if (k === 'stab' && !x.steps.some(Boolean)) x.steps = [0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0]; })}>{l}</button>)}</div>
@@ -1017,6 +1040,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Variación, copiar y pegar', body: 'El dado arriba del editor de cada instrumento le da otro patrón (de los que usa el género, o cambiando algunos golpes y notas). En la pestaña Más, "Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. Arriba de la grilla, las barritas agregan un redoble y el tacho vacía la batería.', art: artChips(['Variación', 'Copiar patrón', 'Pegar'], 0) },
     { title: 'Sinte pro', body: 'En modo Avanzado, en la pestaña Sonido del bajo, el arpegio, los acordes o la melodía, "Editar a fondo" abre un sinte completo, estilo Serum: dos osciladores con tablas de onda (Forma recorre la tabla), unísono con detune y ancho estéreo, sub y ruido, filtro de varios tipos, dos envolventes, dos LFO al ritmo del loop y una matriz para conectar todo. Hay sonidos pro listos y podés guardar los tuyos en Mis sonidos.', art: artKnobs(['Forma', 'Detune', 'Corte', 'LFO']) },
     { title: 'Ecualizador de cada instrumento', body: 'En el editor de cada instrumento, la pestaña EQ tiene un ecualizador de 4 bandas: arrastrás los puntos de la curva con el dedo (a los costados la frecuencia, arriba o abajo cuánto sube o baja) o usás las perillas y los ajustes rápidos (Menos barro, Más brillo, Radio…). En el Mixer lo abrís con el botón EQ de cada columna.', art: artKnobs(['Graves', 'Medio', 'Agudos', 'Ancho']) },
+    { title: 'Arpegiador', body: 'La pista de arpegio sigue sola los acordes del loop: arriba ves los 4 acordes y las notas que va a tocar en cada compás. Elegís el patrón (Sube, Baja, Sube y baja, Pulgar, Al azar, Acorde entero o Acid 303), la velocidad (1/4, 1/8, 1/16 o Galope), cuántas octavas recorre, el registro, el largo de las notas y un ritmo listo (Sincopado, Contratiempo, Galope…). Si cambiás los acordes en Escena → Armar, el arpegio cambia con ellos.', art: artChips(['Sube', 'Pulgar', '1/8', 'Sincopado'], 0) },
     { title: 'Piano roll', body: 'La melodía son 4 compases que dibujás en el piano roll, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
     { title: 'Automatización', body: 'En modo Avanzado, la pestaña Movimiento de cada instrumento es su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },

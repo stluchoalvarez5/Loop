@@ -596,3 +596,12 @@ html,body{font-family:'Inter',system-ui,sans-serif;font-size:14px}
 .barsel{flex:1}
 .barsel button{padding:7px 4px;font-family:'JetBrains Mono',monospace;font-size:12.5px}
 .tname .b4{font-family:'JetBrains Mono',monospace;font-size:9px;line-height:12px;color:var(--c);border:1px solid var(--c);border-radius:2px;padding:0 3px;flex:none}
+/* arpegiador */
+.arp-ch{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.arp-ch>div{background:var(--bg2);border:1px solid var(--line);border-left:3px solid var(--c);border-radius:3px;padding:6px 7px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.arp-ch b{font-size:13.5px;font-weight:600}
+.arp-ch small{font-size:9.5px;color:var(--dim)}
+.arp-ch span{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arp-pats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.arp-pats .chip{padding:9px 4px;font-size:12px}
+.arp-2{display:grid;grid-template-columns:2fr 3fr;gap:8px}
