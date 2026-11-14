@@ -464,7 +464,7 @@ class LoopEngine extends AudioWorkletProcessor {
       for (let i = 0; i < N; i++) {
         while (this.pos >= this.nextT) {
           const st = this.next; this.step = st;
-          for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off); }
+          for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off + (ev.o ? Math.round(ev.o * sl) : 0)); } // ev.o: desfase dentro del paso (grilla fina)
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
           if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; if (this.pendingProj) { const pp = this.pendingProj; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; } else if (this.arr) { const np = this.arr[++this.arrI]; if (np) { this.onMsg({ type: 'project', project: np }); tracks = this.tracks; } } }

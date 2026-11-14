@@ -109,6 +109,8 @@ export type Track = {
   bassLen?: number; // bajo: largo de cada nota en pasos
   fine?: number; // afinación fina en cents (−100..100)
   vib?: { d: number; r: number }; // vibrato: profundidad en semitonos y velocidad en Hz
+  div?: 16 | 32 | 12 | 24; // división del compás de esta pista: 16 = semicorcheas (normal), 32 = fusas, 12 = tresillos de corchea, 24 = tresillos de semicorchea
+  grid?: Partial<Record<number, number[]>>; // golpes de la grilla fina, uno por división (largo = división de un compás repetido, o ×4 con cuatro compases distintos)
   eq?: EqBand[]; // EQ de la pista: 4 bandas [grave (estante), medio 1, medio 2, agudo (estante)]
   fx?: { drive?: number; hp?: number; lp?: number; chorus?: number; crush?: number; phaser?: number }; // inserto: saturación, bitcrusher, pasa altos, pasa bajos, phaser, chorus
   groove?: number[]; // atraso de cada uno de los 16 pasos, en fracción de semicorchea
@@ -122,7 +124,7 @@ export type Track = {
 };
 /* ---------- escenas: lo que cambia entre A, B, C y D (patrones, notas, encendido y automatización; la mezcla es la misma) ---------- */
 export const SCENES = ['A', 'B', 'C', 'D'];
-const SK = ['steps', 'mute', 'arp', 'notes', 'roll', 'rollEdited', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto', 'autoMelody'] as const;
+const SK = ['steps', 'div', 'grid', 'mute', 'arp', 'notes', 'roll', 'rollEdited', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto', 'autoMelody'] as const;
 export type SceneSnap = { t: Record<string, Partial<Track>>; macros?: Project['macros']; macroAuto?: Project['macroAuto']; fill?: boolean };
 const cl = <T,>(o: T): T => (o === undefined ? o : JSON.parse(JSON.stringify(o)));
 export function snapScene(p: Project): SceneSnap {
@@ -149,6 +151,10 @@ export function varyTrack(p: Project, t: Track): string {
   const G = GENRES[p.genre], n = ((t as any).vari ?? 0) + 1; (t as any).vari = n;
   const r = seeded(clean(p.name || 'Loop') + '#var:' + t.id + ':' + n), same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
   const cycle = <T,>(list: T[], cur: (x: T) => boolean) => { if (list.length < 2) return null; const i = list.findIndex(cur); return list[(i + 1 + Math.floor(r() * (list.length - 1))) % list.length]; };
+  if (fineArr(t) && (t.type === 'drum' || t.type === 'bass' || t.type === 'chords')) { // grilla fina: se cambian unos golpes sueltos
+    const a = [...fineArr(t)!]; for (let k = 0; k < 3; k++) { const i = Math.floor(r() * a.length); a[i] = a[i] ? 0 : t.type === 'drum' && r() < 0.4 ? 3 : 1; }
+    t.grid = { ...t.grid, [t.div!]: a }; return 'cambié algunos golpes';
+  }
   const many = (a?: any[]) => !!a && a.length === 64 && a.some((v, i) => v !== a[i % 16]); // la pista tiene compases distintos: se cambian golpes sueltos, no se pisa todo
   if (t.type === 'drum') {
     const opts = G && !many(t.steps) && ['kick', 'clap', 'hat', 'open', 'perc'].includes(t.id) ? [...new Map(G.drums.map((d) => [d[t.id as 'kick'], parseDrum(d[t.id as 'kick'])])).values()].filter((x) => x.some(Boolean)) : [];
@@ -185,6 +191,23 @@ export function varyTrack(p: Project, t: Track): string {
 }
 const pick0 = <T,>(r: () => number, a: T[]) => a[Math.floor(r() * a.length)];
 const FILL_SOUNDS = ['snare', 'snare808', 'snareSoft', 'clap', 'rim', 'rim2'];
+
+/* ---------- división del compás por instrumento ---------- */
+export const DIVS: [16 | 32 | 12 | 24, string, string][] = [[16, '1/16', 'Semicorcheas: 16 por compás (lo normal)'], [32, '1/32', 'Fusas: 32 por compás, para redobles y flams'], [12, 'Tresillo 1/8', '12 por compás: tres golpes por tiempo'], [24, 'Tresillo 1/16', '24 por compás: seis golpes por tiempo']];
+export const fineArr = (t: Track): number[] | null => (t.div && t.div !== 16 ? t.grid?.[t.div] ?? null : null);
+/* arma la grilla fina de una pista a partir de su patrón normal: se conservan los golpes que caen justo en la nueva grilla */
+export function initFine(t: Track, d: number): number[] {
+  const src = t.steps, long = src.length === 64, out = Array(long ? 4 * d : d).fill(0);
+  for (let b = 0; b < (long ? 4 : 1); b++) for (let j = 0; j < d; j++) { const pos = (j * 16) / d; if (Number.isInteger(pos)) out[b * d + j] = src[(long ? b * 16 : 0) + pos] ?? 0; }
+  return out;
+}
+/* golpes de una pista como { paso de 16, desfase dentro del paso (0..1), valor }: de la grilla fina si la tiene, y si no, de sus pasos */
+export function stepHits(t: Track): { s: number; o: number; v: number }[] {
+  const out: { s: number; o: number; v: number }[] = [], a = fineArr(t), d = t.div ?? 16;
+  if (a) { const long = a.length === 4 * d; for (let b = 0; b < 4; b++) for (let j = 0; j < d; j++) { const v = a[long ? b * d + j : j]; if (!v) continue; const f = b * 16 + (j * 16) / d, s = Math.min(63, Math.floor(f + 1e-9)); out.push({ s, o: Math.max(0, f - s), v }); } return out; }
+  for (let s = 0; s < 64; s++) { const v = t.steps[s % t.steps.length]; if (v) out.push({ s, o: 0, v }); }
+  return out;
+}
 
 export type MacroKey = 'energy' | 'dark' | 'space' | 'groove';
 export type EqBand = { f: number; g: number; q: number }; // frecuencia (Hz), ganancia (dB) y ancho (Q, solo en las campanas)
@@ -707,15 +730,16 @@ export function compile(p: Project) {
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - (t.type === 'chords' ? 0.05 : 0.15)) }); });
     } else if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(p.kit, t.sound);
-      for (let s = 0; s < 64; s++) {
+      if (fineArr(t)) stepHits(t).forEach((h) => { const ghost = clamp(0.38 * (1 + mAt('energy', h.s) * 1.2), 0.15, 0.7); ev[h.s].push({ v: h.v === 2 ? 1 : h.v === 3 ? ghost : 0.72, o: h.o }); });
+      else for (let s = 0; s < 64; s++) {
         const es = mAt('energy', s), ghost = clamp(0.38 * (1 + es * 1.2), 0.15, 0.7), v = t.steps[s % t.steps.length];
         if (v) ev[s].push({ v: v === 2 ? 1 : v === 3 ? ghost : 0.72 }); else if (t.id === 'hat' && es > 0.22 && s % 2 === 1) ev[s].push({ v: 0.22 + es * 0.3 });
       }
     } else if (t.type === 'bass') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.bassSaw.p;
-      for (let s = 0; s < 64; s++) {
-        const v = t.steps[s % t.steps.length]; if (!v) continue; let m = p.chords[Math.floor(s / 16)].midi[0]; while (m > 47) m -= 12; while (m < 36) m += 12;
-        ev[s].push({ n: m - 12 + (t.bassLine ? t.bassLine[s % t.bassLine.length] ?? 0 : 0), v: v === 2 ? 1 : 0.8, l: t.bassLen ?? 0.85 });
+      for (const { s, o, v } of stepHits(t)) {
+        let m = p.chords[Math.floor(s / 16)].midi[0]; while (m > 47) m -= 12; while (m < 36) m += 12;
+        ev[s].push({ n: m - 12 + (t.bassLine ? t.bassLine[s % t.bassLine.length] ?? 0 : 0), v: v === 2 ? 1 : 0.8, l: t.bassLen ?? 0.85, o });
       }
     } else if (t.type === 'arp') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.pluck.p; const f = arpNotes(p, t);
@@ -737,8 +761,8 @@ export function compile(p: Project) {
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(0.5, nt.l - 0.1) }); });
     } else {
       const base = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.strings.p;
-      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); if (synth.pro && synth !== base) synth.pro = { ...base.pro!, env1: { a: 0.004, d: Math.min(base.pro!.env1.d, 0.4), s: 0, r: 0.15 } }; for (let s = 0; s < 64; s++) if (t.steps[s % t.steps.length]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: 0.8, l: t.chordLen ?? 1 })); }
-      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05), pro: base.pro && { ...base.pro, env1: { ...base.pro.env1, a: Math.min(base.pro.env1.a, 0.004), r: Math.min(base.pro.env1.r, 0.05) } } }; for (let s = 0; s < 64; s++) if (t.steps[s % t.steps.length]) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: 0.8, l: t.chordLen ?? 0.8 })); }
+      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); if (synth.pro && synth !== base) synth.pro = { ...base.pro!, env1: { a: 0.004, d: Math.min(base.pro!.env1.d, 0.4), s: 0, r: 0.15 } }; for (const { s, o } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: 0.8, l: t.chordLen ?? 1, o })); }
+      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05), pro: base.pro && { ...base.pro, env1: { ...base.pro.env1, a: Math.min(base.pro.env1.a, 0.004), r: Math.min(base.pro.env1.r, 0.05) } } }; for (const { s, o } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: 0.8, l: t.chordLen ?? 0.8, o })); }
       else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
     }
     if (t.id === fillId) for (let s = 56; s < 64; s++) ev[s] = [{ v: 0.3 + 0.7 * ((s - 56) / 7) ** 1.3 }]; // redoble: semicorcheas que crecen en los últimos 2 tiempos

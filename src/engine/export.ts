@@ -112,7 +112,7 @@ export function midi(p: Project, only?: string): Uint8Array {
     if (t.mute || t.type === 'vocal') return; // la voz va como audio en los stems, no como MIDI
     const ct = c.tracks[k], evs: { t: number; d: number[] }[] = [];
     ct.ev.forEach((list: any[], s: number) => list.forEach((e) => {
-      const tick = s * T;
+      const tick = s * T + Math.round((e.o || 0) * T);
       if (t.type === 'drum') { const n = GM[t.sound] ?? 37, v = Math.round((e.v ?? 0.8) * 110); drumEv.push({ t: tick, d: [0x99, n, v] }, { t: tick + 60, d: [0x89, n, 0] }); }
       else { const n = Math.max(0, Math.min(127, Math.round(e.n + (t.pitch || 0)))), v = Math.round((e.v ?? 0.8) * 110), off = tick + Math.max(30, Math.round(e.l * T)); evs.push({ t: tick, d: [0x90 | ch, n, v] }, { t: off, d: [0x80 | ch, n, 0] }); }
     }));

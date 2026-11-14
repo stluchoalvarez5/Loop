@@ -626,3 +626,15 @@ input,textarea,[contenteditable]{-webkit-user-select:text;user-select:text;-webk
 .app ::selection{background:transparent}
 .app input::selection,.app textarea::selection{background:color-mix(in srgb,var(--hot) 40%,transparent)}
 img,svg{-webkit-user-drag:none}
+/* división fina del compás */
+.divs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.divs button{padding:9px 2px;font-size:12px;border:1px solid var(--bb);border-radius:3px;background:var(--bh);color:var(--txt)}
+.divs button.on{background:var(--c,var(--hot));border-color:var(--c,var(--hot));color:#111;font-weight:600}
+.fine{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.frow{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:4px}
+.fp{height:44px;border-radius:2px;background:#2e2e2e}
+.fp.q{background:#3a3a3a}
+.fp.v1{background:color-mix(in srgb,var(--c) 62%,#2e2e2e)}
+.fp.v2{background:var(--c);box-shadow:inset 0 0 0 2px rgba(255,255,255,.55)}
+.fp.gh{opacity:.5}
+.pad.fsub::after{content:'';position:absolute;right:3px;bottom:3px;width:5px;height:5px;border-radius:50%;background:#fff;opacity:.85}
