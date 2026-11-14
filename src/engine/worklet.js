@@ -382,6 +382,8 @@ class LoopEngine extends AudioWorkletProcessor {
       // escena en cola: se aplica justo cuando la vuelta vuelve al paso 0
       if (m.atLoop && this.playing) { this.pendingProj = m; return; }
       this.pendingProj = null;
+      // cambio de tempo mientras suena: la posición se reescala, así sigue en el mismo paso (si no, se disparaba una ráfaga de notas)
+      if (this.playing && this.compiled && m.project.bpm !== this.bpm) { const r = this.bpm / m.project.bpm; this.pos *= r; this.nextT *= r; }
       const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing; this.mod = m.project.mod || null; this.swingA = m.project.swingA || null;
       this.tracks = m.project.tracks.map((t) => {
         const o = old.find((x) => x.id === t.id);
@@ -449,14 +451,14 @@ class LoopEngine extends AudioWorkletProcessor {
       v.bpm = this.bpm; v.start(t.synth, ev.n, ev.v, ev.l * this.stepLen(), this.sr, pan);
       v.delay = offset; t.last = v;
     }
-    if (t.isKick && offset < 128) this.duckHit = offset;
+    if (t.isKick && offset < 128 && !t.mute && (!this.anySolo || t.solo)) this.duckHit = offset; // un bombo que no se escucha no hace sidechain
   }
   process(inputs, outputs) {
     const out = outputs[0], OL = out[0], OR = out[1] || out[0], N = OL.length, B = this.buf;
     for (const k in B) { if (B[k].length !== N) B[k] = new Float32Array(N); else B[k].fill(0); }
     let tracks = this.tracks; const sr = this.sr;
     // secuenciador: disparos dentro de este bloque
-    this.duckHit = -1; this.stepAt = -1;
+    this.duckHit = -1; this.stepAt = -1; this.anySolo = tracks.some((t) => t.solo);
     if (this.playing && this.compiled) {
       const sl = this.stepLen(), loopLen = sl * STEPS, swA = this.swingA, swOff = (st) => (st % 2 ? (swA ? swA[st] : this.swing) * sl * 0.33 : 0);
       for (let i = 0; i < N; i++) {

@@ -9,6 +9,7 @@ export type Vox = { sr: number; data: Float32Array };
 export const saveVox = (id: string, v: Vox) => tx('readwrite', (s) => s.put({ sr: v.sr, data: v.data }, id));
 export const loadVox = (id: string) => tx<Vox | undefined>('readonly', (s) => s.get(id));
 export const deleteVox = (id: string) => tx('readwrite', (s) => s.delete(id));
+export const voxKeys = () => tx<IDBValidKey[]>('readonly', (s) => s.getAllKeys()).then((k) => k.map(String));
 
 /* pasa el audio a mono, recorta los silencios del principio y del final, normaliza y suaviza los bordes */
 export function cleanVox(buf: AudioBuffer, maxSec = 8): Vox {

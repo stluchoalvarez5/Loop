@@ -1,7 +1,7 @@
 /* Exportación: renderiza el loop con el mismo motor (worklet) dentro de un OfflineAudioContext
    y lo codifica a WAV, MP3 o un paquete para Ableton (stems WAV + MIDI). */
 import workletUrl from './worklet.js?url';
-import { compile, clean, switchScene, sceneUsed, SCENES, type Project } from '../model';
+import { compile, switchScene, sceneUsed, SCENES, type Project } from '../model';
 import type { Engine } from './engine';
 
 export type Progress = (msg: string) => void;
@@ -114,7 +114,7 @@ export function midi(p: Project, only?: string): Uint8Array {
     ct.ev.forEach((list: any[], s: number) => list.forEach((e) => {
       const tick = s * T;
       if (t.type === 'drum') { const n = GM[t.sound] ?? 37, v = Math.round((e.v ?? 0.8) * 110); drumEv.push({ t: tick, d: [0x99, n, v] }, { t: tick + 60, d: [0x89, n, 0] }); }
-      else { const n = Math.max(0, Math.min(127, Math.round(e.n))), v = Math.round((e.v ?? 0.8) * 110), off = tick + Math.max(30, Math.round(e.l * T)); evs.push({ t: tick, d: [0x90 | ch, n, v] }, { t: off, d: [0x80 | ch, n, 0] }); }
+      else { const n = Math.max(0, Math.min(127, Math.round(e.n + (t.pitch || 0)))), v = Math.round((e.v ?? 0.8) * 110), off = tick + Math.max(30, Math.round(e.l * T)); evs.push({ t: tick, d: [0x90 | ch, n, v] }, { t: off, d: [0x80 | ch, n, 0] }); }
     }));
     if (t.type !== 'drum' && evs.length) { trks.push(track(t.name, evs)); ch = (ch + 1) % 9; }
   });
@@ -123,12 +123,14 @@ export function midi(p: Project, only?: string): Uint8Array {
   return new Uint8Array([...head, ...trks.flat()]);
 }
 
-export const baseName = (p: Project) => (clean(p.name || 'loop').toLowerCase() || 'loop') + '_' + p.bpm + 'bpm' + (p.key && !p.key.startsWith('sin') ? '_' + p.key.replace(/\s+/g, '-').replace('#', 's') : '');
+const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+export const baseName = (p: Project) => (slug(p.title || p.name || '') || 'loop') + '_' + p.bpm + 'bpm' + (p.key && !p.key.startsWith('sin') ? '_' + p.key.replace(/\s+/g, '-').replace('#', 's') : '');
 
 export async function abletonZip(engine: Engine, p: Project, loops: number, prog: Progress): Promise<Uint8Array> {
   const { zipSync } = await import('fflate');
   const files: Record<string, Uint8Array | [Uint8Array, { level: 0 }]> = {}, base = baseName(p);
-  const live = p.tracks.filter((t) => !t.mute);
+  const gOff = new Set((p.groups ?? []).filter((g) => g.mute).map((g) => g.id));
+  const live = p.tracks.filter((t) => !t.mute && !(t.group && gOff.has(t.group)));
   for (let i = 0; i < live.length; i++) {
     const t = live[i]; prog(`Renderizando ${t.name} (${i + 1} de ${live.length})…`);
     const a = await renderAudio(engine, p, loops, t.id);
@@ -142,7 +144,7 @@ export async function abletonZip(engine: Engine, p: Project, loops: number, prog
   const drumsOnly = { ...p, tracks: p.tracks.map((t) => (t.type === 'drum' ? t : { ...t, mute: true })) };
   files['MIDI/Batería.mid'] = midi(drumsOnly);
   files['LEEME.txt'] = new TextEncoder().encode([
-    `Loop: ${p.name || 'sin nombre'}`, `Tempo: ${p.bpm} BPM · 4/4 · ${loops * 4} compases`, `Tonalidad: ${p.key ?? '-'}`, `Acordes: ${p.chords.map((c) => c.name).join(' – ')}`, '',
+    `Loop: ${p.title || p.name || 'sin nombre'}`, `Tempo: ${p.bpm} BPM · 4/4 · ${loops * 4} compases`, `Tonalidad: ${p.key ?? '-'}`, `Acordes: ${p.chords.map((c) => c.name).join(' – ')}`, '',
     'Cómo usarlo en Ableton Live:',
     `1. Poné el tempo del set en ${p.bpm} BPM.`,
     '2. Arrastrá los WAV de la carpeta Stems a pistas de audio, todos en el compás 1. Están en el mismo largo y suenan juntos como la mezcla.',

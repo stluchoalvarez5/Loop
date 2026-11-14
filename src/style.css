@@ -605,3 +605,17 @@ html,body{font-family:'Inter',system-ui,sans-serif;font-size:14px}
 .arp-pats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
 .arp-pats .chip{padding:9px 4px;font-size:12px}
 .arp-2{display:grid;grid-template-columns:2fr 3fr;gap:8px}
+.txt{width:100%;background:var(--bg2);border:1px solid var(--bb);border-radius:3px;color:var(--txt);font:inherit;font-size:15px;padding:10px 12px;outline:none}.txt:focus{border-color:var(--hot)}button,select,.pad,.chip{touch-action:manipulation}
+/* grilla en celu parado: 8 pasos por vez */
+.pads.p8{grid-template-columns:repeat(8,minmax(0,1fr));gap:4px}
+.tname{scroll-margin-top:245px}
+.halfsel{flex:1}
+.halfsel button{padding:7px 4px;font-family:'JetBrains Mono',monospace;font-size:12.5px}
+@media (max-width: 599px){
+  .grid{grid-template-columns:26px 78px minmax(0,1fr);gap:5px 5px}
+  .pad,.tname,.pads.vrow{height:38px}
+  .pw{height:26px}
+  .detail{height:min(40vh,400px)}
+  .app.has-detail{padding-bottom:calc(var(--navh) + min(40vh,400px) + 16px + var(--safe-b))}
+}
+@media (max-height: 640px){.tname{scroll-margin-top:128px}}

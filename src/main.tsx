@@ -11,13 +11,13 @@ import '@fontsource/jetbrains-mono/600.css';
 import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
-import { saveVox, loadVox, deleteVox, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
+import { saveVox, loadVox, deleteVox, voxKeys, cleanVox, startRecording, peaks, finishLoopVox } from './vox';
 import { renderAudio, renderArrangement, defaultArrangement, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
 import { migrate, listProjects, loadProject, saveProject, deleteProject, renameProject, duplicate, currentId, newId, titleOf, exportFile, importFile, type Meta } from './store';
 import { registerSW } from 'virtual:pwa-register';
 import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
-  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, WORDS, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   expand64, arpSeq, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -30,7 +30,11 @@ let saveT: any = 0, saveP: Project | null = null, onSaveFail: () => void = () =>
 const flushSave = () => { clearTimeout(saveT); saveT = 0; if (saveP && !saveProject(saveP)) onSaveFail(); saveP = null; };
 const save = (p: Project) => { saveP = p; clearTimeout(saveT); saveT = setTimeout(flushSave, 400); };
 if (typeof document !== 'undefined') { document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); }); window.addEventListener('pagehide', flushSave); }
+/* nombre para un loop nuevo: "Loop N", con el primer número libre */
+const nextTitle = () => { const used = new Set(listProjects().map((m) => m.title)); let n = 1; while (used.has('Loop ' + n)) n++; return 'Loop ' + n; };
 /* carga en el motor las voces grabadas de un proyecto (están en IndexedDB) */
+/* borra del celu los audios de voz que ya no usa ningún loop guardado */
+const sweepVox = async () => { const used = new Set<string>(); listProjects().forEach((m) => loadProject(m.id)?.tracks.forEach((t) => { if (t.type === 'vocal') used.add(t.id); })); for (const k of await voxKeys()) if (!used.has(k)) await deleteVox(k); };
 const loadVoxes = async (p: Project) => {
   const vs = p.tracks.filter((t) => t.type === 'vocal' && t.vox?.has); if (!vs.length) return;
   await engine.init(); for (const t of vs) { const v = await loadVox(t.id).catch(() => undefined); if (v) engine.setVox(t.id, v.data, v.sr); }
@@ -166,6 +170,13 @@ function Fader({ value, onChange, color, min = 0, max = 1, def, h = 150, label, 
       <div class="track" /><div class="lvl" style={{ height: Math.max(0, h - 6 - top) + 'px', background: color }} /><div class="cap" style={{ top: top + 'px' }} />
     </div>
   );
+}
+/* pantalla angosta (celu parado): la grilla muestra 8 pasos por vez, con casilleros que se pueden tocar */
+function useNarrow() {
+  const q = '(max-width: 599px)';
+  const [n, setN] = useState(() => typeof matchMedia !== 'undefined' && matchMedia(q).matches);
+  useEffect(() => { const m = matchMedia(q), f = () => setN(m.matches); m.addEventListener?.('change', f); return () => m.removeEventListener?.('change', f); }, []);
+  return n;
 }
 function useLandscape() {
   const q = '(orientation: landscape) and (max-height: 560px)';
@@ -306,7 +317,7 @@ const hz = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : Math.round(
 
 /* ---------- app ---------- */
 function App() {
-  const [p, setP] = useState<Project>(() => load() ?? blankProject({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 }, 'deep', 122, true));
+  const [p, setP] = useState<Project>(() => load() ?? { ...blankProject({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 }, 'deep', 122, true), title: 'Loop 1' });
   const [recA, setRecA] = useState(false); // grabar movimientos
   // modo Simple (por defecto) o Avanzado: el avanzado muestra automatización, sinte pro, MIDI, grupos, EQ e insertos
   const [adv, setAdvS] = useState(() => { try { return localStorage.getItem('loop.adv') === '1'; } catch { return false; } });
@@ -314,27 +325,28 @@ function App() {
   const [tab, setTab] = useState<'scene' | 'pat' | 'mix' | 'master'>('scene');
   const [vis, setVis] = useState<StageMode>('wave');
   const [order, setOrder] = useState(false);
-  const land = useLandscape();
+  const land = useLandscape(), narrow = useNarrow();
+  const [half, setHalf] = useState(0), viewRef = useRef({ narrow: false, half: 0 }); viewRef.current = { narrow, half }; // mitad del compás a la vista (pasos 1–8 o 9–16)
   // guías: la intro aparece al abrir (salvo "No mostrar al abrir"); la de cada sección, la primera vez que entrás. El botón Guía las vuelve a abrir.
   const ls = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return '1'; } }, set: (k: string) => { try { localStorage.setItem(k, '1'); } catch { /* */ } } };
-  const [guide, setGuide] = useState<TutKey | null>(() => (ls.get('loop.noTutorial') ? (ls.get('loop.seen.scene') ? null : 'scene') : 'intro'));
+  const [guide, setGuide] = useState<TutKey | null>(() => (ls.get('loop.noTutorial') ? null : 'intro'));
   const closeGuide = (never: boolean) => {
     const g = guide; if (!g) return;
-    if (g === 'intro') { if (never) ls.set('loop.noTutorial'); setGuide(ls.get('loop.seen.' + tab) ? null : tab); return; }
+    if (g === 'intro') { ls.set('loop.noTutorial'); void never; setGuide(null); return; }
     ls.set('loop.seen.' + g); setGuide(null);
   };
-  const goTab = (t: 'scene' | 'pat' | 'mix' | 'master') => { setTab(t); if (!guide && !ls.get('loop.seen.' + t)) setGuide(t); };
+  const goTab = (t: 'scene' | 'pat' | 'mix' | 'master') => { setTab(t); if (!guide && !ls.get('loop.seen.' + t)) { ls.set('loop.seen.' + t); flash('Tocá "Guía" (abajo a la derecha) para ver cómo se usa esta sección.', 3500); } };
   const [sel, setSel] = useState('arp');
   const [playing, setPlaying] = useState(false);
   const [noAudio, setNoAudio] = useState(false);
-  // grabar la sesión: todo lo que suena, con lo que vayas tocando, hasta 20 minutos
+  // grabar la sesión: todo lo que suena, con lo que vayas tocando, hasta 10 minutos
   const [rec, setRec] = useState(false), [recSecs, setRecSecs] = useState(0), [take, setTake] = useState<Take | null>(null);
   const recTimer = useRef<any>(0);
   const toggleRec = async () => {
     if (!rec) {
       try {
         await engine.startSession(p); setRec(true); setPlaying(true); setRecSecs(0);
-        recTimer.current = setInterval(() => { const sec = engine.sessionFrames / engine.sr; setRecSecs(sec); if (sec >= 1200) stopRec(true); }, 500);
+        recTimer.current = setInterval(() => { const sec = engine.sessionFrames / engine.sr; setRecSecs(sec); if (sec >= 600) stopRec(true); }, 500);
       } catch (e) { console.error(e); flash('No se pudo empezar a grabar en este navegador.', 4000); }
       return;
     }
@@ -342,7 +354,7 @@ function App() {
   };
   const stopRec = async (limit: boolean) => {
     clearInterval(recTimer.current); const t = await engine.stopSession(); setRec(false);
-    if (t && t.frames > 0) { setTake(t); flash((limit ? 'Llegaste a los 20 minutos. ' : '') + 'Sesión grabada: la descargás en Master.', 4000); }
+    if (t && t.frames > 0) { setTake(t); flash((limit ? 'Llegaste a los 10 minutos. ' : '') + 'Sesión grabada: la descargás en Master.', 4000); }
   };
   const phRef = useRef<HTMLStyleElement>(null), meterRef = useRef<HTMLElement>(null), barRef = useRef<HTMLElement>(null), lufsRef = useRef<HTMLElement>(null);
   const [stats, setStats] = useState({ lufs: -70, auto: 0, gr: 0 });
@@ -367,7 +379,7 @@ function App() {
     setP((cur) => { if (!auto) remember(cur, true); const d = clone(cur); switchScene(d, k); if (!auto) d.edited = true; engine.update(d, live); save(d); return d; });
     if (live) { queuedRef.current = k; setQueued(k); }
   };
-  useEffect(() => { onSaveFail = () => flash('No queda lugar en el celu para guardar: borrá algún loop en Mis loops.', 5000); engine.update(p); save(p); loadVoxes(p); }, []);
+  useEffect(() => { onSaveFail = () => flash('No queda lugar en el celu para guardar: borrá algún loop en Mis loops.', 5000); engine.update(p); save(p); loadVoxes(p); setTimeout(() => sweepVox().catch(() => {}), 4000); }, []);
   // abrir otro proyecto: suena al instante (si estaba sonando, sigue) y se cargan sus voces
   const openProject = (np: Project) => { flushSave(); hist.current = { past: [], future: [], t: 0 }; queuedRef.current = null; setQueued(null); setP(np); engine.update(np); save(np); loadVoxes(np); if (!np.tracks.some((t) => t.id === sel)) setSel(np.tracks[0]?.id ?? ''); };
   const toggleRecA = () => { const on = !REC.on; REC.on = on; setRecA(on); if (on) { if (!engine.playing) toggle(); flash('Grabando movimientos: lo que muevas en el Mixer o en las Macros queda en la automatización.', 3500); } };
@@ -376,9 +388,10 @@ function App() {
     engine.onStep = (s) => {
       const i = s % 16 + 1; engine.beat.step = s; setPlaying(true); // por si arrancó desde la grabación de voz
       const k = pRef.current.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !t.mute);
-      if (k && k.steps[s % 16]) engine.beat.t = performance.now();
+      if (k && k.steps[s % k.steps.length]) engine.beat.t = performance.now();
       const seen = !vbRef.current || Math.floor(s / 16) + 1 === vbRef.current;
-      if (phRef.current) phRef.current.textContent = (seen ? `.pads>.pad:nth-child(${i}){outline:2px solid #fff;outline-offset:-2px}` : '') + `.leds span:nth-child(${i}){background:var(--mint);box-shadow:0 0 8px var(--mint)}.barsel button:nth-child(${Math.floor(s / 16) + 2}){box-shadow:inset 0 -3px 0 var(--mint)}`;
+      const vw = viewRef.current, i16 = s % 16, pad = vw.narrow ? (Math.floor(i16 / 8) === vw.half ? (i16 % 8) + 1 : 0) : i;
+      if (phRef.current) phRef.current.textContent = (seen && pad ? `.pads>.pad:nth-child(${pad}){outline:2px solid #fff;outline-offset:-2px}` : '') + `.halfsel button:nth-child(${Math.floor(i16 / 8) + 1}){box-shadow:inset 0 -3px 0 var(--mint)}.leds span:nth-child(${i}){background:var(--mint);box-shadow:0 0 8px var(--mint)}.barsel button:nth-child(${Math.floor(s / 16) + 2}){box-shadow:inset 0 -3px 0 var(--mint)}`;
       if (barRef.current) barRef.current.textContent = String(Math.floor(s / 16) + 1);
       if (s === 0 && queuedRef.current) { queuedRef.current = null; setQueued(null); }
       // cadena: en el último compás se pone en cola la escena siguiente
@@ -416,6 +429,8 @@ function App() {
   };
   // si a los 1,5 s el audio sigue trabado (pasa en algunos iPhone), avisamos qué revisar
   const checkAudio = () => setTimeout(() => { if (engine.playing && engine.state !== 'running') flash('No se escucha? Tocá play de nuevo, subí el volumen y revisá que el celu no esté en silencio.', 6000); }, 1500);
+  // al volver a la app (o tras una llamada) el audio puede quedar suspendido: se reanuda solo o con el próximo toque
+  useEffect(() => { const w = () => engine.wake(); document.addEventListener('visibilitychange', w); window.addEventListener('pointerdown', w, true); window.addEventListener('focus', w); return () => { document.removeEventListener('visibilitychange', w); window.removeEventListener('pointerdown', w, true); window.removeEventListener('focus', w); }; }, []);
   // el primer toque en cualquier parte destraba el audio (iPhone)
   useEffect(() => {
     if (!('AudioWorkletNode' in window)) { setNoAudio(true); return; }
@@ -424,15 +439,16 @@ function App() {
   }, []);
 
   // desde cero: loop vacío con la tonalidad y los acordes elegidos (no pisa un loop editado, igual que generar)
-  const fromScratch = (m: Manual, genre: string, drums: boolean) => {
-    const np = blankProject(m, genre, p.bpm, drums); np.id = p.edited ? newId() : p.id; np.edited = true;
+  const fromScratch = (m: Manual, genre: string, drums: boolean, title: string) => {
+    const np = blankProject(m, genre, p.bpm, drums); np.title = title.trim().slice(0, 32) || nextTitle(); np.id = p.edited ? newId() : p.id; np.edited = true;
     if (p.edited) flash('"' + titleOf(p) + '" quedó guardado en Mis loops');
     remember(p, true); flushSave(); setP(np); engine.update(np); save(np);
     setTimeout(() => { goTab('pat'); flash(drums ? 'Loop nuevo con la batería del género: sumale bajo, acordes y melodía.' : 'Loop vacío: tocá los casilleros para armar tu ritmo.', 3500); }, 0);
   };
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
   const [toast, setToast] = useState('');
-  const flash = (m: string, ms = 1800) => { setToast(m); setTimeout(() => setToast(''), ms); };
+  const toastT = useRef<any>(0);
+  const flash = (m: string, ms = 1800) => { clearTimeout(toastT.current); setToast(m); toastT.current = setTimeout(() => setToast(''), ms); };
   flashG = flash;
   const [fxAll, setFxAll] = useState(false), [fxOpen, setFxOpen] = useState<Record<string, boolean>>({}); // mixer compacto: efectos plegados
   // editar un paso: en "Todos" cambia ese paso en los 4 compases; en un compás, solo ahí (la pista pasa a tener 4 compases distintos)
@@ -455,7 +471,6 @@ function App() {
   }));
   const stepEdit = (t: Track, fn: (x: Track) => void) => { try { navigator.vibrate?.(8); } catch { /* sin vibración */ } const wasMuted = t.mute; upT(t.id, (x) => { fn(x); if (x.mute) x.mute = false; }); if (wasMuted) flash(t.name + ' encendida'); };
   const upT = (id: string, fn: (t: Track) => void) => up((d) => fn(d.tracks.find((t) => t.id === id)!));
-  const letters = useMemo(() => { const c = clean(p.name || 'Loop'); return [...c].map((ch) => [ch, letterNote(ch)]); }, [p.name]);
   const arpNotes = useMemo(() => { const o: Record<string, (s: number) => number> = {}; p.tracks.forEach((t) => { if (t.type === 'arp') o[t.id] = arpPreview(p, t); }); return o; }, [p]);
 
   const [vb, setVbS] = useState(0), vbRef = useRef(0); vbRef.current = vb; // compás que se edita en la grilla: 0 = todos (el mismo en los 4)
@@ -463,8 +478,10 @@ function App() {
   const [detail, setDetail] = useState(false), [loopsOpen, setLoopsOpen] = useState(false), [dTab, setDTab] = useState<DTab>('snd');
   const pick = (id: string, tb: DTab = 'snd') => { if (id === sel && detail && tb === dTab) setDetail(false); else { setSel(id); setDTab(tb); setDetail(true); } };
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDetail(false); setLoopsOpen(false); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
-  const delTrack = () => { if (!tr) return; const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); if (tr.type === 'vocal') deleteVox(tr.id).catch(() => {}); setSel(left[0].id); setDetail(false); flash(tr.name + ' eliminada'); };
+  const delTrack = () => { if (!tr) return; const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); setSel(left[0].id); setDetail(false); flash(tr.name + ' eliminada'); };
   const showDetail = detail && (tab === 'pat' || tab === 'mix') && !!tr;
+  // al abrir el editor, la fila del instrumento elegido queda a la vista arriba de él
+  useEffect(() => { if (showDetail && tab === 'pat') setTimeout(() => document.querySelector('.tname[data-tid="' + sel + '"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 60); }, [showDetail, sel, tab]);
 
   return (
     <div class={'app' + (adv ? ' adv' : ' simple') + (showDetail ? ' has-detail' : '')}>
@@ -530,11 +547,12 @@ function App() {
         </>}>
           {adv && <Groups p={p} up={up} />}
           <div class="barsel-w"><span class="sb-l">Compás</span><div class="seg barsel">{['Todos', '1', '2', '3', '4'].map((l, k) => <button class={vb === k ? 'on' : ''} onClick={() => setVb(k)} aria-label={k ? 'Editar el compás ' + k : 'Editar los 4 compases juntos'}>{l}</button>)}</div></div>
+          {narrow && !order && <div class="barsel-w"><span class="sb-l">Pasos</span><div class="seg halfsel">{['1 – 8', '9 – 16'].map((l, k) => <button class={half === k ? 'on' : ''} onClick={() => setHalf(k)} aria-label={'Ver los pasos ' + l}>{l}</button>)}</div></div>}
           {vb > 0 && <div class="chips" style={{ margin: '-2px 0 8px' }}><button class="chip ic" onClick={() => { barOp('copy'); flash('Compás ' + vb + ' copiado a los 4'); }}>{Ic.copy}Copiar a los 4 compases</button><button class="chip ic" onClick={() => { barOp('clear'); flash('Compás ' + vb + ' vacío'); }}>{Ic.trash}Vaciar compás {vb}</button></div>}
           <div class="grid">
             {p.tracks.map((t, ti) => <>
               <button class={'pw' + (t.mute ? '' : ' on')} style={{ '--c': t.color } as any} aria-label={(t.mute ? 'Encender ' : 'Apagar ') + t.name} {...tap(() => upT(t.id, (x) => { x.mute = !x.mute; }))} />
-              <button class={'tname' + (sel === t.id && showDetail ? ' sel' : '') + (t.mute || gMuted(p, t) ? ' mute' : '')} style={{ '--c': t.color } as any} onClick={() => pick(t.id)} aria-label={'Abrir ' + t.name}>
+              <button class={'tname' + (sel === t.id && showDetail ? ' sel' : '') + (t.mute || gMuted(p, t) ? ' mute' : '')} style={{ '--c': t.color } as any} data-tid={t.id} onClick={() => pick(t.id)} aria-label={'Abrir ' + t.name}>
                 <span class="ti">{trackIcon(t)}</span><span class="tn">{t.name}</span>{(diff4(t.steps) || diff4(t.arp?.gate) || diff4(t.bassLine)) && <span class="b4" title="Tiene compases distintos">4</span>}{t.auto && Object.keys(t.auto).length > 0 && <span class="au" title="Tiene automatización">A</span>}<i class="vu" ref={(el) => { vuRefs.current[t.id] = el; }} />
               </button>
               {order ? <div class="ord">
@@ -544,8 +562,9 @@ function App() {
               </div> : t.type === 'vocal' ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => { setSel(t.id); setDetail(true); }}>
                 {[0, 1, 2, 3].map((b) => <i style={{ left: b * 25 + '%' }} />)}
                 {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
-              </button> : <div class="pads">
-                {Array.from({ length: 16 }, (_, i) => {
+              </button> : <div class={'pads' + (narrow ? ' p8' : '')}>
+                {Array.from({ length: narrow ? 8 : 16 }, (_, j) => {
+                  const i = (narrow ? half * 8 : 0) + j;
                   const open = () => { setSel(t.id); setDetail(true); };
                   const inBar = (n: { s: number }) => n.s % 16 === i && (!vb || Math.floor(n.s / 16) === vb - 1);
                   if (t.roll && t.type !== 'melody') {
@@ -703,7 +722,7 @@ function LevelRow({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
   return <>
     <div class="sub">Nivel</div>
     <div class="knobs">
-      <Knob label="Volumen" {...vol} min={0} max={1} def={0.8} color={t.color} fmt={(v) => (v < 0.005 ? 'mudo' : (20 * Math.log10(v * v * 1.6)).toFixed(1) + ' dB')} />
+      <Knob label="Volumen" {...vol} min={0} max={1} def={0.8} color={t.color} fmt={(v) => (v < 0.005 ? 'mudo' : ((x) => (x > 0 ? '+' : '') + x.toFixed(1) + ' dB')(40 * Math.log10(v / 0.8)))} />
       <Knob label="Pan" {...pan} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.02 ? 'centro' : (v < 0 ? 'izq ' : 'der ') + Math.round(Math.abs(v) * 100))} />
     </div>
   </>;
@@ -1034,7 +1053,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Batería', body: 'Elegí el kit: el 909 y el 808 clásicos, uno por género, Synthwave 80s, Electro o Lo-Fi. Cambia el sonido del bombo, el clap, los hats y el redoblante sin tocar el patrón.', art: artChips(['909', '808', 'Techno', 'Lo-Fi'], 1) },
   ],
   pat: [
-    { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos. Arriba de la grilla elegís el compás: en "Todos" lo que tocás se repite en los 4 compases; en 1, 2, 3 o 4 cambiás solo ese compás (por ejemplo, un golpe distinto al final). "Copiar a los 4 compases" y "Vaciar compás" aplican al compás elegido, y las pistas con compases distintos muestran un 4 al lado del nombre.', art: artGrid },
+    { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos. Arriba de la grilla elegís el compás: en "Todos" lo que tocás se repite en los 4 compases; en 1, 2, 3 o 4 cambiás solo ese compás (por ejemplo, un golpe distinto al final). "Copiar a los 4 compases" y "Vaciar compás" aplican al compás elegido, y las pistas con compases distintos muestran un 4 al lado del nombre. Con el celu parado ves 8 pasos por vez, bien grandes: con "Pasos 1 – 8 / 9 – 16" pasás a la otra mitad del compás (la que está sonando se marca en verde). Acostado ves los 16 juntos.', art: artGrid },
     { title: 'Grupos y orden', body: 'En modo Avanzado, arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando el nombre de un grupo abrís su panel para renombrarlo, sumar o sacar instrumentos o borrarlo. El botón de las flechas ordena los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
     { title: 'Editar una pista', body: 'Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo. Arriba de Sonido tenés el volumen y el pan del instrumento (los mismos del Mixer) y el tono: afinación, fino y vibrato. En Movimiento también podés automatizar el Tono para que suba o baje a lo largo de los 4 compases.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Variación, copiar y pegar', body: 'El dado arriba del editor de cada instrumento le da otro patrón (de los que usa el género, o cambiando algunos golpes y notas). En la pestaña Más, "Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. Arriba de la grilla, las barritas agregan un redoble y el tacho vacía la batería.', art: artChips(['Variación', 'Copiar patrón', 'Pegar'], 0) },
@@ -1052,7 +1071,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Grabar movimientos', body: '(Modo Avanzado) Tocá "Grabar movimientos" y, mientras suena, mové el volumen, el pan, la reverb, el delay, la saturación o los filtros: cada movimiento queda grabado en la automatización de esa pista, en el paso exacto. Al soltar, queda lo grabado y se repite en cada vuelta. Las perillas con una A ya tienen automatización. Para corregir, grabás encima o la editás en Patrón.', art: <div class="art-vox"><span class="dot" />Grabar movimientos<svg viewBox="0 0 160 30" aria-hidden="true"><path d="M0 24 C 30 24, 40 6, 70 8 S 120 26, 160 12" fill="none" stroke={Y} stroke-width="2" /></svg></div> },
   ],
   master: [
-    { title: 'Grabar sesión', body: 'El botón rojo (al lado del play, o acá en Master) graba en vivo todo lo que suena mientras tocás: perillas, pistas que prendés y apagás, cambios de género. Hasta 20 minutos. Cuando terminás, la descargás en WAV o MP3.', art: <div class="art-vox"><span class="dot" />● REC 2:41<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 6 + Math.abs(Math.sin(k * 0.9) * Math.cos(k * 0.3)) * 20; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
+    { title: 'Grabar sesión', body: 'El botón rojo (al lado del play, o acá en Master) graba en vivo todo lo que suena mientras tocás: perillas, pistas que prendés y apagás, cambios de género. Hasta 10 minutos. Cuando terminás, la descargás en WAV o MP3.', art: <div class="art-vox"><span class="dot" />● REC 2:41<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 6 + Math.abs(Math.sin(k * 0.9) * Math.cos(k * 0.3)) * 20; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
     { title: 'Exportar', body: 'Con "Tema con escenas" armás el orden de las partes (por ejemplo A A B B C C C C D D C C) y sale un tema entero, de una pasada. Elegí cuántos compases y descargá en WAV (máxima calidad), MP3 (liviano) o el paquete para Ableton, con cada pista por separado, la mezcla y los MIDI. Después lo compartís desde el botón Compartir.', art: artChips(['WAV', 'MP3', 'Ableton'], 0) },
     { title: 'Salida y volumen', body: '(Modo Avanzado) El volumen se mantiene parejo solo: la ganancia automática lleva el loop al nivel elegido (en LUFS) y el limitador evita que sature. Los medidores te muestran cuánto está trabajando cada uno.', art: <div class="art-meter"><div><i style={{ width: '72%' }} /></div><small>-14 LUFS · limitador -1 dB</small></div> },
     { title: 'Controlador MIDI', body: '(Modo Avanzado) Con Chrome (Android o compu) podés enchufar un controlador MIDI: "Conectar controlador", tocás lo que querés manejar (una macro, un volumen, una escena, play…) y movés la perilla o el pad. Las teclas sin asignar tocan la pista elegida. En iPhone no hay MIDI en el navegador.', art: artKnobs(['Energía', 'Espacio', 'Bajo', 'Kick']) },
@@ -1072,7 +1091,7 @@ function Tutorial({ kind, onClose }: { kind: TutKey; onClose: (never: boolean) =
         <p>{st.body}</p>
         <div class="tut-dots">{steps.map((_, k) => <button class={k === i ? 'on' : ''} aria-label={'Ir al paso ' + (k + 1)} onClick={() => setI(k)} />)}</div>
         <div class="tut-foot">
-          {kind === 'intro' ? <label><input type="checkbox" checked={never} onChange={(e) => setNever((e.target as HTMLInputElement).checked)} /> No mostrar al abrir</label> : <span />}
+          <span />
           <div class="tut-btns">
             {i > 0 && <button class="btn" onClick={() => setI(i - 1)}>Atrás</button>}
             <button class="btn hot" onClick={() => (last ? onClose(never) : setI(i + 1))}>{last ? (kind === 'intro' ? 'Empezar' : 'Entendido') : 'Siguiente'}</button>
@@ -1177,7 +1196,7 @@ function Session({ p, rec, secs, take, toggleRec, clear }: { p: Project; rec: bo
             {canShare && <button class="btn" onClick={() => (navigator as any).share({ files: [out.file], title: out.name }).catch(() => {})}>Compartir / Guardar en el celu</button>}
           </div></div>}
       </>}
-      {!rec && !take && <div class="hint">Graba en vivo todo lo que sale por los parlantes, con cada cambio que hagas mientras suena, hasta 20 minutos. Al terminar la descargás en WAV o MP3. Si el loop está parado, arranca solo.</div>}
+      {!rec && !take && <div class="hint">Graba en vivo todo lo que sale por los parlantes, con cada cambio que hagas mientras suena, hasta 10 minutos. Al terminar la descargás en WAV o MP3. Si el loop está parado, arranca solo.</div>}
     </Panel>
   );
 }
@@ -1249,7 +1268,8 @@ function EqEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
 
 /* ---------- desde cero: tonalidad, acordes, género base y "Crear" ----------
    Si el loop abierto ya es "desde cero", los cambios de tonalidad y acordes se aplican en vivo; "Crear" siempre arma uno nuevo. */
-function Scratch({ p, up, create }: { p: Project; up: (fn: (d: Project) => void) => void; create: (m: Manual, genre: string, drums: boolean) => void }) {
+function Scratch({ p, up, create }: { p: Project; up: (fn: (d: Project) => void) => void; create: (m: Manual, genre: string, drums: boolean, title: string) => void }) {
+  const [title, setTitle] = useState('');
   const [draft, setDraft] = useState<Manual>({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 });
   const [genre, setGenre] = useState(p.genre), [drums, setDrums] = useState(false);
   void draft; void setDraft;
@@ -1271,13 +1291,16 @@ function Scratch({ p, up, create }: { p: Project; up: (fn: (d: Project) => void)
     <div class="keyline"><span>Suena: <b>{p.chords.map((c) => c.name).join(' · ')}</b></span></div>
     <div class="sub">Color de los acordes</div>
     <div class="seg">{([[0, 'Tríadas'], [7, 'Séptimas'], [9, 'Novenas']] as [number, string][]).map(([v, l]) => <button class={m.ext === v ? 'on' : ''} onClick={() => set((x) => { x.ext = v; })}>{l}</button>)}</div>
+    <div class="sub">Sonidos de este loop</div>
+    <label class="sel-w"><select class="sel" aria-label="Género del loop" value={p.genre} onChange={(e) => { const g = (e.target as HTMLSelectElement).value; up((d) => applyGenreSound(d, g)); flashG('Sonidos de ' + GENRES[g].name + ': tus patrones y notas quedan igual'); }}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
     <div class="sub">Loop nuevo</div>
-    <div class="gen-row" style={{ marginTop: 0 }}>
+    <input class="txt" value={title} maxLength={32} placeholder="Nombre (opcional)" aria-label="Nombre del loop nuevo" onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
+    <div class="gen-row" style={{ marginTop: '8px' }}>
       <label class="sel-w"><span>Sonidos de</span><select class="sel" value={genre} onChange={(e) => setGenre((e.target as HTMLSelectElement).value)}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
       <button class={'ib' + (drums ? ' on' : '')} onClick={() => setDrums(!drums)} aria-pressed={drums}>{Ic.kick}<small>{drums ? 'Con batería' : 'Sin batería'}</small></button>
     </div>
-    <button class="btn hot" style={{ width: '100%', marginTop: '12px' }} onClick={() => create(m, genre, drums)}>Crear loop nuevo</button>
-    <div class="hint">La tonalidad (la nota, y si es menor, más oscura, o mayor, más alegre) y el acorde de cada compás se aplican al loop abierto al instante. El bajo, el arpegio y los acordes siguen solos esos acordes. Para empezar otro: elegí de qué género salen los sonidos (sintes, kit y mezcla), si arranca con la batería del género o vacío, y tocá "Crear loop nuevo"; se arma en Patrón tocando los casilleros, y la melodía va en el piano roll.</div>
+    <button class="btn hot" style={{ width: '100%', marginTop: '12px' }} onClick={() => { create(m, genre, drums, title); setTitle(''); }}>Crear loop nuevo</button>
+    <div class="hint">La tonalidad (la nota, y si es menor, más oscura, o mayor, más alegre) y el acorde de cada compás se aplican al loop abierto al instante. El bajo, el arpegio y los acordes siguen solos esos acordes. "Sonidos de este loop" cambia el kit, los sintes y la mezcla por los de otro género sin tocar tus patrones. Para empezar otro: ponele un nombre (si no, se llama Loop y un número), elegí de qué género salen los sonidos (sintes, kit y mezcla), si arranca con la batería del género o vacío, y tocá "Crear loop nuevo"; se arma en Patrón tocando los casilleros, y la melodía va en el piano roll.</div>
   </>;
 }
 
@@ -1517,11 +1540,12 @@ function Projects({ p, open, flash }: { p: Project; open: (np: Project) => void;
   const go = (id: string) => { flushSave(); const np = loadProject(id); if (np) { open(np); flash('Abriste "' + titleOf(np) + '"'); } else { flash('No se pudo abrir ese loop.'); refresh(); } };
   const remove = async (id: string) => {
     setSure(''); flushSave(); await deleteProject(id); const rest = listProjects(); setList(rest);
-    if (id === p.id) { const nx = loadProject(rest[0]?.id ?? null); open(nx ?? projectFromName('Loop')); }
+    if (id === p.id) { const nx = loadProject(rest[0]?.id ?? null); open(nx ?? { ...blankProject({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 }, 'deep', 122, true), title: 'Loop 1' }); }
     flash('Loop borrado');
   };
   const copy = async () => { flushSave(); const d = await duplicate(p); open(d); flushSave(); refresh(); flash('Copia guardada: ahora estás en "' + titleOf(d) + '"'); };
-  const rename = () => { const n = prompt('Nombre del loop (solo cambia cómo aparece en la lista, no el sonido)', titleOf(p)); if (n === null || !n.trim()) return; flushSave(); if (p.id) renameProject(p.id, n.trim().slice(0, 32)); const np = loadProject(p.id ?? null); if (np) open(np); refresh(); };
+  const [ren, setRen] = useState<string | null>(null);
+  const rename = (n: string) => { setRen(null); if (!n.trim()) return; flushSave(); if (p.id) renameProject(p.id, n.trim().slice(0, 32)); const np = loadProject(p.id ?? null); if (np) open(np); refresh(); };
   const toFile = async () => {
     setBusy(true);
     try {
@@ -1539,7 +1563,8 @@ function Projects({ p, open, flash }: { p: Project; open: (np: Project) => void;
   };
   return (
     <div class="projs-w">
-      <div class="chips" style={{ marginBottom: '8px' }}><button class="chip" onClick={rename}>Renombrar</button><button class="chip ic" onClick={copy}>{Ic.copy}Duplicar</button></div>
+      {ren !== null ? <form class="gp-row" style={{ marginBottom: '8px' }} onSubmit={(e) => { e.preventDefault(); rename(ren); }}><input value={ren} maxLength={32} aria-label="Nombre del loop" onInput={(e) => setRen((e.target as HTMLInputElement).value)} /><button class="btn hot" type="submit">Guardar</button><button class="btn" type="button" onClick={() => setRen(null)}>Cancelar</button></form>
+        : <div class="chips" style={{ marginBottom: '8px' }}><button class="chip" onClick={() => setRen(titleOf(p))}>Renombrar</button><button class="chip ic" onClick={copy}>{Ic.copy}Duplicar</button></div>}
       <div class="projs">
         {shown.map((m) => <div class={'proj' + (m.id === p.id ? ' cur' : '')}>
           <button class="pj-open" onClick={() => m.id !== p.id && go(m.id)} aria-label={m.id === p.id ? m.title + ' (abierto)' : 'Abrir ' + m.title}>

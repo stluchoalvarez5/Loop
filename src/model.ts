@@ -149,27 +149,34 @@ export function varyTrack(p: Project, t: Track): string {
   const G = GENRES[p.genre], n = ((t as any).vari ?? 0) + 1; (t as any).vari = n;
   const r = seeded(clean(p.name || 'Loop') + '#var:' + t.id + ':' + n), same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
   const cycle = <T,>(list: T[], cur: (x: T) => boolean) => { if (list.length < 2) return null; const i = list.findIndex(cur); return list[(i + 1 + Math.floor(r() * (list.length - 1))) % list.length]; };
+  const many = (a?: any[]) => !!a && a.length === 64 && a.some((v, i) => v !== a[i % 16]); // la pista tiene compases distintos: se cambian golpes sueltos, no se pisa todo
   if (t.type === 'drum') {
-    const opts = G && ['kick', 'clap', 'hat', 'open', 'perc'].includes(t.id) ? [...new Map(G.drums.map((d) => [d[t.id as 'kick'], parseDrum(d[t.id as 'kick'])])).values()].filter((x) => x.some(Boolean)) : [];
-    const pick = cycle(opts, (x) => same(x, t.steps));
-    if (pick && !same(pick, t.steps)) { t.steps = [...pick]; return 'otro patrón del género'; }
-    const st = [...t.steps], kick = t.sound === 'kick';
-    for (let k = 0; k < 3; k++) { const i = Math.floor(r() * 16); if (kick && i % 4 === 0) continue; st[i] = st[i] ? (i % 4 === 0 ? st[i] : 0) : r() < 0.5 ? 3 : 1; }
+    const opts = G && !many(t.steps) && ['kick', 'clap', 'hat', 'open', 'perc'].includes(t.id) ? [...new Map(G.drums.map((d) => [d[t.id as 'kick'], parseDrum(d[t.id as 'kick'])])).values()].filter((x) => x.some(Boolean)) : [];
+    const cur16 = t.steps.slice(0, 16), pick = cycle(opts, (x) => same(x, cur16));
+    if (pick && !same(pick, cur16)) { t.steps = [...pick]; return 'otro patrón del género'; }
+    const st = [...t.steps], kick = t.sound === 'kick', L = st.length;
+    for (let k = 0; k < (L === 64 ? 6 : 3); k++) { const i = Math.floor(r() * L); if (kick && i % 4 === 0) continue; st[i] = st[i] ? (i % 4 === 0 ? st[i] : 0) : r() < 0.5 ? 3 : 1; }
     t.steps = st; return 'cambié algunos golpes';
   }
   if (t.type === 'bass') {
-    const pick = G ? cycle(G.bass, (b) => same(parseBass(b.line).steps, t.steps) && same(parseBass(b.line).line, t.bassLine)) : null;
+    const pick = G && !many(t.steps) && !many(t.bassLine) ? cycle(G.bass, (b) => same(parseBass(b.line).steps, t.steps.slice(0, 16)) && same(parseBass(b.line).line, (t.bassLine ?? []).slice(0, 16))) : null;
     if (pick) { const pb = parseBass(pick.line); t.steps = pb.steps; t.bassLine = pb.line; t.bassLen = pick.l; return 'otra línea de bajo del género'; }
-    const ln = [...(t.bassLine ?? Array(16).fill(0))]; for (let k = 0; k < 3; k++) { const i = 1 + Math.floor(r() * 15); if (t.steps[i]) ln[i] = pick0(r, [0, 12, 7, 10, 0]); }
+    const L = t.steps.length, ln = Array.from({ length: L }, (_, i) => (t.bassLine ? t.bassLine[i % t.bassLine.length] ?? 0 : 0));
+    for (let k = 0; k < (L === 64 ? 6 : 3); k++) { const i = 1 + Math.floor(r() * (L - 1)); if (t.steps[i]) ln[i] = pick0(r, [0, 12, 7, 10, 0]); }
     t.bassLine = ln; return 'cambié algunas notas';
   }
   if (t.type === 'arp' && t.arp) {
+    if (t.arp.pat && t.arp.mode !== 'acid') { // arpegiador: otro patrón y otro ritmo, sin perder el resto
+      const pats = (['up', 'down', 'updown', 'downup', 'thumb', 'rand'] as ArpPat[]).filter((x) => x !== t.arp!.pat); t.arp = { ...t.arp, pat: pick0(r, pats) };
+      if (!many(t.arp.gate)) t.arp.gate = [...pick0(r, ARP_RHYTHMS.slice(0, 5))[1]].map((c) => c === 'x');
+      return 'otro patrón de arpegio';
+    }
     const pick = G ? cycle(G.arp, (a) => a.mode === t.arp!.mode && a.rate === t.arp!.rate && a.oct === t.arp!.oct) : null;
     if (pick) { t.arp = { mode: pick.mode, rate: pick.rate, oct: pick.oct, gate: pick.mode === 'acid' ? acidPattern(p).gate : pick.gate ? parseGate(pick.gate) : Array(16).fill(true) }; return 'otro arpegio del género'; }
     const modes = ['name', 'up', 'down', 'pp', 'chord', 'chordpp'].filter((m) => m !== t.arp!.mode); t.arp = { ...t.arp, mode: pick0(r, modes) }; return 'otro orden de notas';
   }
   if (t.type === 'chords') {
-    const pick = G ? cycle(G.chords, (c) => c.mode === (t.chordMode ?? 'pad') && (!c.steps || same(parseDrum(c.steps).map((v) => (v ? 1 : 0)), t.steps))) : null;
+    const pick = G ? cycle(G.chords, (c) => c.mode === (t.chordMode ?? 'pad') && (!c.steps || same(parseDrum(c.steps).map((v) => (v ? 1 : 0)), t.steps.slice(0, 16)))) : null;
     if (pick) { t.chordMode = pick.mode; t.steps = pick.steps ? parseDrum(pick.steps).map((v) => (v ? 1 : 0)) : R([0]); t.chordLen = pick.len; return 'otro ritmo de acordes del género'; }
     t.chordMode = t.chordMode === 'pad' ? 'stab' : 'pad'; if (!t.steps.some(Boolean)) t.steps = [0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0]; return 'otro modo de acordes';
   }
@@ -549,6 +556,17 @@ export function applyGenre(p: Project, g: string, variant = 0) {
   // inserto y groove por pista según el género
   p.tracks.forEach((t) => { if (['kick', 'clap', 'hat', 'open', 'perc', 'bass', 'arp', 'chords', 'melody'].includes(t.id)) { t.fx = G.ins[t.id] ? { ...G.ins[t.id] } : undefined; t.groove = G.groove[t.id] ? [...G.groove[t.id]!] : undefined; } });
   applyHarmony(p, variant ? String(variant) : '');
+}
+
+/* cambia los sonidos de un loop a los de otro género (kit, sintes, mezcla, insertos y efectos) sin tocar patrones, notas ni tempo */
+export function applyGenreSound(p: Project, g: string) {
+  const G = GENRES[g]; if (!G) return; p.genre = g;
+  const r = seeded('snd:' + g), T = (id: string) => p.tracks.find((t) => t.id === id);
+  p.kit = pick(r, G.kit); p.fx = { ...G.fx };
+  const kick = T('kick'); if (kick) { kick.pitch = G.kick.pitch; kick.decay = G.kick.decay; }
+  const set = (t: Track | undefined, sound: string, m: { vol: number; rev: number; dly: number; duck: number }) => { if (!t) return; t.vol = m.vol; t.rev = m.rev; t.dly = m.dly; t.duck = m.duck; if (!t.synth?.pro) { t.sound = sound; t.synth = undefined; } };
+  set(T('bass'), pick(r, G.bassSound), G.mix.bass); set(T('chords'), pick(r, G.chordSound), G.mix.chords); set(T('arp'), pick(r, G.arpSound), G.mix.arp); set(T('melody'), pick(r, G.mel.sound), G.mix.melody);
+  p.tracks.forEach((t) => { if (['kick', 'clap', 'hat', 'open', 'perc', 'bass', 'arp', 'chords', 'melody'].includes(t.id)) t.fx = G.ins[t.id] ? { ...G.ins[t.id] } : undefined; });
 }
 
 /* ---------- semilla por nombre: un loop distinto (y lindo) por nombre ---------- */

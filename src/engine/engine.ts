@@ -111,6 +111,8 @@ export class Engine {
     return { sr: this.ctx!.sampleRate, chunks: s.chunks, frames: s.frames };
   }
   get state() { return this.ctx?.state ?? 'none'; }
+  /* reanuda el audio si el sistema lo suspendió (volver de otra app, una llamada, pantalla bloqueada) */
+  wake() { const c = this.ctx; if (c && this.playing && c.state !== 'running' && document.visibilityState === 'visible') { c.resume().catch(() => {}); this.silent?.play().catch(() => {}); } }
   async play(p: Project, from = 0) {
     this.unlock(); await this.init(); await this.ctx!.resume(); this.update(p);
     this.node!.port.postMessage({ type: 'play', from }); this.playing = true;
