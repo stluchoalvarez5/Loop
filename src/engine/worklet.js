@@ -381,7 +381,13 @@ class LoopEngine extends AudioWorkletProcessor {
     if (m.type === 'project') {
       // escena en cola: se aplica justo cuando la vuelta vuelve al paso 0
       if (m.atLoop && this.playing) { this.pendingProj = m; return; }
-      this.pendingProj = null;
+      // hay una escena en cola y llega otro cambio (mover una perilla, editar): la escena NO entra antes de tiempo.
+      // El cambio se aplica ya en lo común (mezcla, FX, insertos) pero los patrones, el encendido y la automatización siguen siendo los de la escena que suena;
+      // la versión nueva queda en cola y entra justo en el paso 0
+      if (this.playing && this.pendingProj && this.compiled) {
+        const cur = this.compiled; this.pendingProj = m;
+        m = { ...m, project: { ...m.project, swing: cur.swing, swingA: cur.swingA, mod: cur.mod, tracks: m.project.tracks.map((t) => { const o = cur.tracks.find((x) => x.id === t.id); return o ? { ...t, ev: o.ev, play: o.play, auto: o.auto } : t; }) } };
+      } else this.pendingProj = null;
       // cambio de tempo mientras suena: la posición se reescala, así sigue en el mismo paso (si no, se disparaba una ráfaga de notas)
       if (this.playing && this.compiled && m.project.bpm !== this.bpm) { const r = this.bpm / m.project.bpm; this.pos *= r; this.nextT *= r; }
       const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing; this.mod = m.project.mod || null; this.swingA = m.project.swingA || null;
@@ -467,7 +473,7 @@ class LoopEngine extends AudioWorkletProcessor {
           for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off + (ev.o ? Math.round(ev.o * sl) : 0)); } // ev.o: desfase dentro del paso (grilla fina)
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
-          if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; if (this.pendingProj) { const pp = this.pendingProj; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; } else if (this.arr) { const np = this.arr[++this.arrI]; if (np) { this.onMsg({ type: 'project', project: np }); tracks = this.tracks; } } }
+          if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; if (this.pendingProj) { const pp = this.pendingProj; this.pendingProj = null; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; } else if (this.arr) { const np = this.arr[++this.arrI]; if (np) { this.onMsg({ type: 'project', project: np }); tracks = this.tracks; } } }
           this.nextT = this.next * sl + swOff(this.next);
         }
         this.pos++;
