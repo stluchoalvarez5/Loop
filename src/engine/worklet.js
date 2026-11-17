@@ -70,6 +70,52 @@ class SampleVoice {
   }
 }
 
+/* voz de efectos: ruido y/o tono con un barrido de filtro y de tono, sincronizada al tempo (risers, impactos, barridos…).
+   Todo se calcula acá adentro: nada de nodos por golpe. Se apaga con un fundido corto al final y al soltarla (sin clics). */
+class FxVoice {
+  constructor() { this.on = false; }
+  start(P, vel, dur, sr, pan, sl) {
+    this.P = P; this.g = vel; this.on = true; this.n = 0; this.sr = sr; this.dur = Math.max(256, dur);
+    this.i1L = 0; this.i2L = 0; this.i1R = 0; this.i2R = 0; this.ph = 0; this.lph = 0;
+    this.rA = ((Math.random() * 4294967295) | 0) || 1; this.rB = ((Math.random() * 4294967295) | 0) || 7;
+    this.pl = Math.cos((pan + 1) * Math.PI / 4); this.pr = Math.sin((pan + 1) * Math.PI / 4);
+    this.hold = 1e12; this.fade = Math.exp(-1 / (sr * 0.02));
+    this.lr = P.lfoS > 0 ? 1 / (P.lfoS * sl) : 0; // ciclos del LFO por muestra
+    this.gc = 0.1; this.kc = 1; this.inc = 0.01; this.hk = Math.exp(-6 / this.dur); this.hg = 1;
+    this.k = 2 * (1 - Math.min(0.96, P.res) * 0.97);
+  }
+  render(L, R, a, b, cm, gps, pm) {
+    const P = this.P, sr = this.sr, dur = this.dur, ex = Math.pow(2, P.curve * 2), env = P.env, md = P.mode, nz = P.noise, wv = P.wave, ld = P.lfoD, lr = this.lr, drv = P.drive, k = this.k;
+    const atk = Math.max(8, sr * 0.003), edge = Math.max(8, sr * 0.006);
+    for (let i = a; i < b; i++) {
+      const n = this.n; if (n >= dur) { this.on = false; return; }
+      const u = n / dur, lfo = lr ? Math.sin(TAU * this.lph) : 0;
+      if ((n & 15) === 0) {
+        const w = Math.pow(u, ex);
+        let f = P.f0 * Math.pow(P.f1 / P.f0, w); if (ld && lr) f *= Math.pow(2, ld * lfo * 1.5);
+        this.gc = Math.tan(Math.PI * Math.min(Math.max(f, 20), sr * 0.42) / sr);
+        let fo = P.o0 * Math.pow(P.o1 / P.o0, w) * pm; if (P.lfoP && lr) fo *= Math.pow(2, (P.lfoP * lfo) / 12); this.inc = Math.min(0.45, fo / sr);
+      }
+      let am = env === 'rise' ? 0.05 + 0.95 * u * u : env === 'fall' ? (1 - u) * (1 - u) : env === 'swell' ? Math.pow(Math.sin(Math.PI * u), 1.5) : env === 'hit' ? (this.hg *= this.hk) : 1;
+      if (ld && lr) am *= 1 - ld * 0.5 * (1 - lfo);
+      if (n < atk) am *= n / atk; if (dur - n < edge) am *= (dur - n) / edge;
+      this.ph += this.inc; if (this.ph >= 1) this.ph -= 1; if (lr) { this.lph += lr; if (this.lph >= 1) this.lph -= 1; }
+      const o = wv === 'sine' ? Math.sin(TAU * this.ph) : wv === 'saw' ? 2 * this.ph - 1 : (this.ph < 0.5 ? 1 : -1);
+      let x = this.rA; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; this.rA = x; const nL = x / 2147483648;
+      x = this.rB; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; this.rB = x; const nR = x / 2147483648;
+      const tone = (1 - nz) * o, g = this.gc, a1 = 1 / (1 + g * (g + k)), a2 = g * a1, a3 = g * a2;
+      let yl, yr;
+      { const xi = nz * nL + tone, v3 = xi - this.i2L, v1 = a1 * this.i1L + a2 * v3, v2 = this.i2L + a2 * this.i1L + a3 * v3; this.i1L = 2 * v1 - this.i1L; this.i2L = 2 * v2 - this.i2L; yl = md === 'lp' ? v2 : md === 'bp' ? v1 * k : xi - k * v1 - v2; }
+      { const xi = nz * nR + tone, v3 = xi - this.i2R, v1 = a1 * this.i1R + a2 * v3, v2 = this.i2R + a2 * this.i1R + a3 * v3; this.i1R = 2 * v1 - this.i1R; this.i2R = 2 * v2 - this.i2R; yr = md === 'lp' ? v2 : md === 'bp' ? v1 * k : xi - k * v1 - v2; }
+      if (drv) { const dk = 1 + drv * 6, dg = 1 / Math.sqrt(dk); yl = Math.tanh(yl * dk) * dg; yr = Math.tanh(yr * dk) * dg; }
+      const gg = am * this.g * 0.5 * (P.lvl || 1);
+      L[i] += yl * gg * this.pl; R[i] += yr * gg * this.pr;
+      this.n++;
+      if (this.n > this.hold) { this.g *= this.fade; if (this.g < 1e-4) { this.on = false; return; } }
+    }
+  }
+}
+
 class SynthVoice {
   constructor() { this.on = false; this.f = new SVF(); this.f2 = new SVF(); this.ph = new Float64Array(7); }
   start(p, note, vel, lenSamp, sr, pan) {
@@ -434,7 +480,7 @@ class LoopEngine extends AudioWorkletProcessor {
       for (const x of t.voices) if (x.on && x.stage < 2) { x.len = Math.min(x.len, x.t + offset); if (x.stage === 0) x.stage = 2; }
     }
     // la voz tiene que ser del tipo de la pista: sampler, sinte clásico o sinte pro
-    const pro = t.kind !== 'sample' && !!(t.synth && t.synth.pro), mk = () => (t.kind === 'sample' ? new SampleVoice() : pro ? new ProVoice() : new SynthVoice());
+    const fxv = t.kind === 'fx', pro = !fxv && t.kind !== 'sample' && !!(t.synth && t.synth.pro), mk = () => (fxv ? new FxVoice() : t.kind === 'sample' ? new SampleVoice() : pro ? new ProVoice() : new SynthVoice());
     let v = t.voices.find((x) => !x.on && !!x.pro === pro);
     if (!v) {
       if (t.voices.length < MAXV) { v = mk(); t.voices.push(v); }
@@ -453,6 +499,9 @@ class LoopEngine extends AudioWorkletProcessor {
       const hum = 1 + (Math.random() * 2 - 1) * (t.human || 0);
       v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0);
       v.delay = offset;
+    } else if (fxv) {
+      if (!t.fxp) return; const sl = this.stepLen();
+      v.start(t.fxp, ev.v, t.fxp.len * sl, this.sr, pan, sl); v.delay = offset;
     } else {
       v.bpm = this.bpm; v.start(t.synth, ev.n, ev.v, ev.l * this.stepLen(), this.sr, pan);
       v.delay = offset; t.last = v;

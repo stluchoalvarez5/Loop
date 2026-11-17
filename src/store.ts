@@ -17,7 +17,7 @@ export const titleOf = (p: Project) => p.title || p.name || 'Loop';
 export function normalize(p: Project): Project {
   if (!GENRES[p.genre]) applyGenre(p, 'prog');
   if (!p.groups) { p.groups = [{ id: 'drums', name: 'Batería' }]; p.tracks.forEach((t) => { if (t.type === 'drum') t.group = 'drums'; }); }
-  p.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal' && !SYNTHS[t.sound]) t.sound = t.type === 'bass' ? 'bassSaw' : t.type === 'chords' ? 'strings' : 'pluck'; });
+  p.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal' && t.type !== 'fx' && !SYNTHS[t.sound]) t.sound = t.type === 'bass' ? 'bassSaw' : t.type === 'chords' ? 'strings' : 'pluck'; });
   return p;
 }
 

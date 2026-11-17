@@ -93,10 +93,39 @@ export function autoShape(shape: string, lo: number, hi: number): number[] {
     return +(lo + (hi - lo) * u).toFixed(3);
   });
 }
-export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal';
+export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal' | 'fx';
+/* canal de efectos de sonido (risers, impactos, barridos…): una voz generativa del worklet, sincronizada al tempo.
+   env: cómo sube y baja el volumen; mode: tipo de filtro; len: largo en pasos de 16; f0→f1: barrido del filtro (Hz);
+   noise: mezcla ruido (1) / tono (0); o0→o1: barrido del tono (Hz); curve: forma del barrido (−1..1);
+   lfoS: pasos por ciclo del LFO (0 = apagado), lfoD: profundidad (volumen y filtro), lfoP: vibrato del tono en semitonos */
+export type FxP = { env: 'rise' | 'fall' | 'hit' | 'swell' | 'hold'; mode: 'lp' | 'bp' | 'hp'; len: number; f0: number; f1: number; res: number; noise: number; wave: 'sine' | 'saw' | 'sqr'; o0: number; o1: number; curve: number; lfoS: number; lfoD: number; lfoP: number; drive: number; lvl?: number };
+const fxp = (o: Partial<FxP>): FxP => ({ env: 'rise', mode: 'lp', len: 16, f0: 300, f1: 9000, res: 0.3, noise: 1, wave: 'saw', o0: 220, o1: 220, curve: 0, lfoS: 0, lfoD: 0, lfoP: 0, drive: 0, ...o });
+export const FX_SOUNDS: Record<string, { label: string; group: string; p: FxP }> = {
+  riser: { label: 'Riser de ruido', group: 'Subidas', p: fxp({ env: 'rise', mode: 'bp', f0: 300, f1: 9000, res: 0.35 }) },
+  riserTone: { label: 'Riser tonal', group: 'Subidas', p: fxp({ lvl: 0.7, env: 'rise', f0: 500, f1: 12000, noise: 0.2, o0: 110, o1: 1760, curve: 0.3 }) },
+  riserSiren: { label: 'Riser sirena', group: 'Subidas', p: fxp({ lvl: 0.35, env: 'rise', f0: 1500, f1: 6000, noise: 0, wave: 'sqr', o0: 300, o1: 1500, lfoS: 2, lfoP: 2 }) },
+  sweepUp: { label: 'Barrido hacia arriba', group: 'Subidas', p: fxp({ env: 'rise', len: 8, f0: 120, f1: 9000, res: 0.75, drive: 0.15 }) },
+  down: { label: 'Downlifter', group: 'Bajadas', p: fxp({ env: 'fall', mode: 'bp', f0: 9000, f1: 250, res: 0.35 }) },
+  sweepDown: { label: 'Barrido hacia abajo', group: 'Bajadas', p: fxp({ env: 'fall', len: 8, f0: 9000, f1: 150, res: 0.7 }) },
+  laser: { label: 'Láser', group: 'Bajadas', p: fxp({ env: 'fall', len: 2, f0: 9000, f1: 9000, res: 0.2, noise: 0, o0: 5000, o1: 180, curve: -0.2 }) },
+  impact: { label: 'Impacto', group: 'Golpes', p: fxp({ env: 'hit', len: 8, f0: 7000, f1: 180, res: 0.2, noise: 0.35, wave: 'sine', o0: 120, o1: 36, drive: 0.2 }) },
+  boom: { label: 'Boom grave', group: 'Golpes', p: fxp({ env: 'hit', len: 8, f0: 300, f1: 60, noise: 0, wave: 'sine', o0: 80, o1: 28, drive: 0.1 }) },
+  crash: { label: 'Crash', group: 'Golpes', p: fxp({ env: 'hit', mode: 'hp', f0: 5500, f1: 7500, res: 0.1 }) },
+  noiseHit: { label: 'Golpe de ruido', group: 'Golpes', p: fxp({ env: 'hit', mode: 'bp', len: 2, f0: 3000, f1: 1400 }) },
+  zap: { label: 'Zap', group: 'Golpes', p: fxp({ env: 'hit', len: 1, f0: 9000, f1: 2000, res: 0.2, noise: 0.1, wave: 'sqr', o0: 1800, o1: 70 }) },
+  drop: { label: 'Gota', group: 'Golpes', p: fxp({ env: 'hit', len: 1, f0: 5000, f1: 1500, noise: 0, wave: 'sine', o0: 1400, o1: 300, curve: 0.5 }) },
+  whoosh: { label: 'Whoosh', group: 'Texturas', p: fxp({ lvl: 1.5, env: 'swell', mode: 'bp', len: 8, f0: 400, f1: 4500, res: 0.45 }) },
+  wind: { label: 'Viento', group: 'Texturas', p: fxp({ lvl: 1.7, env: 'swell', mode: 'bp', len: 32, f0: 500, f1: 900, res: 0.5, lfoS: 8, lfoD: 0.6 }) },
+  rumble: { label: 'Rumble', group: 'Texturas', p: fxp({ lvl: 2, env: 'swell', len: 32, f0: 90, f1: 260, drive: 0.35 }) },
+  pulses: { label: 'Ruido a pulsos', group: 'Texturas', p: fxp({ env: 'hold', mode: 'bp', f0: 1200, f1: 6000, res: 0.4, lfoS: 1, lfoD: 1 }) },
+  siren: { label: 'Sirena', group: 'Texturas', p: fxp({ lvl: 0.3, env: 'hold', f0: 3500, f1: 3500, noise: 0, wave: 'sqr', o0: 600, o1: 600, lfoS: 8, lfoP: 7 }) },
+  wobble: { label: 'Wobble', group: 'Texturas', p: fxp({ lvl: 0.8, env: 'hold', len: 8, f0: 600, f1: 600, res: 0.6, noise: 0, o0: 55, o1: 55, lfoS: 4, lfoD: 0.9, drive: 0.3 }) },
+};
+export const FX_GROUPS: [string, string[]][] = [['Subidas', ['riser', 'riserTone', 'riserSiren', 'sweepUp']], ['Bajadas', ['down', 'sweepDown', 'laser']], ['Golpes', ['impact', 'boom', 'crash', 'noiseHit', 'zap', 'drop']], ['Texturas', ['whoosh', 'wind', 'rumble', 'pulses', 'siren', 'wobble']]];
 export type Note = { s: number; n: number; l: number; o?: number }; // o = desfase dentro del paso de 16 (0..1): notas de 1/32 o tresillos; l en pasos de 16 (puede ser fraccionario)
 export type Track = {
   id: string; name: string; color: string; type: TrackType;
+  fxs?: FxP; // canal de efectos: parámetros del sonido (se parte del preset `sound`)
   kit?: string; // kit propio de este instrumento de batería (si falta, el del loop)
   vel?: number[]; velG?: Record<number, number[]>; // fuerza de cada golpe (0..1; 0 = la de siempre): vel sigue a steps (16 o 64), velG a grid[div] (div o 4*div)
   steps: number[]; // 16 pasos: 0 apagado, 1 golpe, 2 acento
@@ -508,6 +537,7 @@ const PALETTE = ['#e5655b', '#e98a5f', '#e9c46a', '#d6cf7e', '#a7c973', '#6fbf86
 export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   const n = p.tracks.length, id = type + '-' + Date.now().toString(36), color = PALETTE[n % PALETTE.length];
   if (type === 'vocal') { const t = mkTrack(id, 'Voz', 'vocal', 'vox', { color: '#e5655b', vol: 0.8, rev: 0.25, dly: 0.3, duck: 0.2 }); t.steps = Array(16).fill(0); t.steps[0] = 2; t.fx = { hp: 110 }; t.vox = { from: 0, rev: false, has: false, pos: 0 }; return t; }
+  if (type === 'fx') { const k = sound ?? 'riser'; const t = mkTrack(id, 'FX ' + (FX_SOUNDS[k]?.label ?? 'Efecto'), 'fx', k, { color, vol: 0.6, rev: 0.3, dly: 0.15, fxs: { ...FX_SOUNDS[k].p } }); t.steps = Array(64).fill(0); t.steps[48] = 1; return t; }
   if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
   if (type === 'bass') return mkTrack(id, 'Bajo 2', 'bass', sound ?? 'fmBass', { color, vol: 0.7, duck: 0.5 });
   if (type === 'chords') return mkTrack(id, 'Acordes 2', 'chords', sound ?? 'airy', { color, vol: 0.55, rev: 0.4, duck: 0.4, chordMode: 'pad', steps: [1, ...Array(15).fill(0)] });
@@ -742,11 +772,14 @@ export function compile(p: Project) {
   const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !offOf(t)) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
-    let kind = 'synth', synth: Synth | undefined, sample: string | undefined;
+    let kind = 'synth', synth: Synth | undefined, sample: string | undefined, fxp: FxP | undefined;
     if (t.type === 'vocal') {
       // la voz es un clip de hasta 4 compases: suena una vez por vuelta, desde su posición
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
       { const ps = Math.max(0, Math.min(63.5, t.vox?.pos ?? 0)), s0 = Math.floor(ps + 1e-6); ev[s0].push({ v: 0.9, ...(ps - s0 > 1e-6 ? { o: ps - s0 } : {}) }); }
+    } else if (t.type === 'fx') {
+      kind = 'fx'; fxp = { ...(FX_SOUNDS[t.sound]?.p ?? FX_SOUNDS.riser.p), ...t.fxs };
+      for (const h of stepHits(t)) ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : 0.85), ...(h.o ? { o: h.o } : {}) });
     } else if (t.roll && (t.type === 'bass' || t.type === 'arp' || t.type === 'chords')) {
       // editada a mano en el piano roll
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? (t.type === 'bass' ? SYNTHS.bassSaw.p : t.type === 'arp' ? SYNTHS.pluck.p : SYNTHS.strings.p);
@@ -800,13 +833,13 @@ export function compile(p: Project) {
       groove = g64.some((x) => x > 0) ? g64 : undefined;
     } else groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
     return {
-      id: t.id, kind, sample, synth, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
+      id: t.id, kind, sample, synth, fxp, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined, fine: t.fine || 0, vib: t.vib && t.vib.d > 0.001 ? t.vib : undefined,
       mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
-      spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' ? 0 : 0.05,
-      cutAmt: t.type === 'drum' || t.type === 'vocal' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum', spAdd: t.type !== 'drum' && t.type !== 'bass',
+      spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' || t.type === 'fx' ? 0 : 0.05,
+      cutAmt: t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx',
     };
   });
   const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;
