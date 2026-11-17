@@ -817,7 +817,7 @@ function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) =
       const nm = file.name.replace(/\.[^.]+$/, '').slice(0, 24);
       upT(t.id, (x) => { x.vox = { ...(x.vox ?? { from: 0, rev: false, has: false }), has: true, from: 0, name: nm, sec: +(v.data.length / v.sr).toFixed(2) }; x.mute = false; if (x.name === 'Sample') x.name = nm.slice(0, 14) || 'Sample'; });
       refresh();
-    } catch { setErr('No se pudo leer ese audio. Probá con un WAV, MP3 o M4A.'); }
+    } catch (e: any) { setErr(e?.message === 'silencio' ? 'Ese audio está en silencio (o casi): no tiene nada para escuchar.' : 'No se pudo leer ese audio (el formato puede no ser compatible con este celu). Probá con un WAV o MP3.'); }
     setBusy(false);
   };
   const has = !!t.vox?.has, vx = t.vox ?? { from: 0, rev: false, has: false };

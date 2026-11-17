@@ -60,12 +60,19 @@ export function peaks(d: Float32Array, cols = 120) { const o: number[] = [], k =
 
 /* sample propio: a mono, sin el silencio del principio, normalizado y con los bordes suavizados; hasta 30 s para no llenar la memoria */
 export function cleanSample(buf: AudioBuffer, maxSec = 30): Vox {
-  const sr = buf.sampleRate, n = Math.min(buf.length, Math.round(maxSec * sr)), mono = new Float32Array(n);
-  for (let ch = 0; ch < buf.numberOfChannels; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels; }
+  const sr = buf.sampleRate, n = Math.min(buf.length, Math.round(maxSec * sr)), mono = new Float32Array(n), nc = buf.numberOfChannels;
+  for (let ch = 0; ch < nc; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < n; i++) mono[i] += d[i] / nc; }
+  // un estéreo con los canales en contrafase se anula al sumarlos a mono: en ese caso se usa el canal con más energía
+  if (nc > 1) {
+    const en = (d: ArrayLike<number>) => { let e = 0; for (let i = 0; i < n; i++) e += d[i] * d[i]; return e; };
+    let best = 0, bestE = -1; for (let ch = 0; ch < nc; ch++) { const e = en(buf.getChannelData(ch)); if (e > bestE) { bestE = e; best = ch; } }
+    if (en(mono) < bestE * 0.35) mono.set(buf.getChannelData(best).subarray(0, n));
+  }
   let pk = 0; for (let i = 0; i < n; i++) pk = Math.max(pk, Math.abs(mono[i]));
-  let a = 0; const th = Math.max(0.003, pk * 0.01); while (a < n - 1 && Math.abs(mono[a]) < th) a++;
+  if (!(pk > 1e-5)) throw new Error('silencio');
+  let a = 0; const th = pk * 0.01; while (a < n - 1 && Math.abs(mono[a]) < th) a++;
   a = Math.max(0, a - Math.round(sr * 0.002));
-  const out = mono.slice(a), g = pk > 0 ? 0.9 / pk : 1, f = Math.min(out.length >> 2, Math.round(sr * 0.004));
+  const out = mono.slice(a), g = 0.9 / pk, f = Math.min(out.length >> 2, Math.round(sr * 0.004));
   for (let i = 0; i < out.length; i++) out[i] *= g;
   for (let i = 0; i < f; i++) { out[i] *= i / f; out[out.length - 1 - i] *= i / f; }
   return { sr, data: out };
