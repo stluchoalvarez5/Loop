@@ -458,13 +458,15 @@ class LoopEngine extends AudioWorkletProcessor {
       // la versión nueva queda en cola y entra justo en el paso 0
       if (this.playing && this.pendingProj && this.compiled) {
         const cur = this.compiled; this.pendingProj = m;
-        m = { ...m, project: { ...m.project, swing: cur.swing, swingA: cur.swingA, mod: cur.mod, tracks: m.project.tracks.map((t) => { const o = cur.tracks.find((x) => x.id === t.id); return o ? { ...t, ev: o.ev, play: o.play, auto: o.auto } : t; }) } };
+        m = { ...m, project: { ...m.project, scene: cur.scene, swing: cur.swing, swingA: cur.swingA, mod: cur.mod, tracks: m.project.tracks.map((t) => { const o = cur.tracks.find((x) => x.id === t.id); return o ? { ...t, ev: o.ev, play: o.play, auto: o.auto } : t; }) } };
       } else this.pendingProj = null;
       // cambio de tempo mientras suena: la posición se reescala, así sigue en el mismo paso (si no, se disparaba una ráfaga de notas)
       if (this.playing && this.compiled && m.project.bpm !== this.bpm) { const r = this.bpm / m.project.bpm; this.pos *= r; this.nextT *= r; }
-      const old = this.tracks; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing; this.mod = m.project.mod || null; this.swingA = m.project.swingA || null;
+      const old = this.tracks, sceneChanged = !!this.compiled && this.compiled.scene !== m.project.scene; this.compiled = m.project; this.bpm = m.project.bpm; this.swing = m.project.swing; this.mod = m.project.mod || null; this.swingA = m.project.swingA || null;
       this.tracks = m.project.tracks.map((t) => {
         const o = old.find((x) => x.id === t.id);
+        // sample "de largo": al entrar a otra escena (o al encenderlo) arranca de nuevo desde el principio
+        if (t.once && this.done && o && (sceneChanged || (o.mute && !t.mute))) delete this.done[t.id];
         const nt = { ...t, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, vph: o ? o.vph : 0, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
         // inserto por pista: saturación, filtros pasa altos / pasa bajos y chorus (los buffers se reservan acá, nunca en process)
         const fx = t.fx || {};

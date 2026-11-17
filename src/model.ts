@@ -859,12 +859,12 @@ export function compile(p: Project) {
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined, fine: t.fine || 0, vib: t.vib && t.vib.d > 0.001 ? t.vib : undefined,
-      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal' || (t.type === 'sample' && !!(t.vox?.one || t.vox?.clip)),
+      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal' || (t.type === 'sample' && !!(t.vox?.one || t.vox?.clip || t.vox?.free)),
       tr: t.type === 'sample' && t.vox?.bpm ? p.bpm / t.vox.bpm : 1, keep: t.type === 'sample' && !!t.vox?.keep, once: t.type === 'sample' && !!t.vox?.free, loopv: t.type === 'sample' && !!t.vox?.loop, from: t.type === 'vocal' || t.type === 'sample' ? t.vox?.from ?? 0 : 0, to: t.type === 'sample' ? t.vox?.to ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' || t.type === 'fx' ? 0 : 0.05,
       cutAmt: t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' || t.type === 'sample' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx' && t.type !== 'sample', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx' && t.type !== 'sample',
     };
   });
   const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;
-  return { bars: NB, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8) }, master: p.master, tracks };
+  return { scene: p.scene ?? 'A', bars: NB, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8) }, master: p.master, tracks };
 }
