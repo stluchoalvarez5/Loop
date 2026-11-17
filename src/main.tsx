@@ -275,7 +275,7 @@ type DTab = 'snd' | 'rit' | 'notes' | 'eq' | 'move' | 'more';
 function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; adv: boolean; playing: boolean; onClose: () => void; onDelete: () => void; init?: DTab }) {
   const [tab, setTab] = useState<DTab>(init), [help, setHelp] = useState(false);
   const hasNotes = t.type === 'melody' || t.type === 'bass' || t.type === 'arp' || t.type === 'chords';
-  const canGrid = t.type === 'drum' || t.type === 'bass' || t.type === 'fx' || t.type === 'sample' || (t.type === 'chords' && (t.chordMode ?? 'pad') !== 'pad');
+  const canGrid = t.type === 'drum' || t.type === 'bass' || t.type === 'fx' || (t.type === 'sample' && !t.vox?.clip) || (t.type === 'chords' && (t.chordMode ?? 'pad') !== 'pad');
   const tabs: [DTab, string, any][] = [['snd', 'Sonido', Ic.wave], ...(canGrid ? [['rit', 'Ritmo', Ic.grid] as [DTab, string, any]] : []), ...(hasNotes ? [['notes', 'Notas', Ic.notes] as [DTab, string, any]] : []), ['eq', 'EQ', Ic.eq], ...(adv && t.type !== 'vocal' ? [['move', 'Movimiento', Ic.curve] as [DTab, string, any]] : []), ['more', 'Más', Ic.more]];
   const cur = tabs.some((x) => x[0] === tab) ? tab : 'snd';
   const canVary = t.type !== 'vocal' && t.type !== 'fx' && t.type !== 'sample' && !(t.roll && t.type !== 'melody');
@@ -573,9 +573,9 @@ function App() {
                 <button class="btn" disabled={ti === 0} aria-label={'Subir ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k > 0) [d.tracks[k - 1], d.tracks[k]] = [d.tracks[k], d.tracks[k - 1]]; }))}>▲ Subir</button>
                 <button class="btn" disabled={ti === p.tracks.length - 1} aria-label={'Bajar ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k >= 0 && k < d.tracks.length - 1) [d.tracks[k + 1], d.tracks[k]] = [d.tracks[k], d.tracks[k + 1]]; }))}>▼ Bajar</button>
                 {t.group && <span class="gtag">{p.groups?.find((g) => g.id === t.group)?.name}</span>}
-              </div> : t.type === 'vocal' ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => { setSel(t.id); setDetail(true); }}>
+              </div> : t.type === 'vocal' || (t.type === 'sample' && t.vox?.clip) ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => { setSel(t.id); setDetail(true); }}>
                 {[0, 1, 2, 3].map((b) => <i style={{ left: b * 25 + '%' }} />)}
-                {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
+                {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.type === 'sample' ? (t.vox.name || 'sample') + ' · una vez por vuelta' : t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
               </button> : <div class={'pads' + (narrow ? ' p8' : '')}>
                 {Array.from({ length: narrow ? 8 : 16 }, (_, j) => {
                   const i = (narrow ? half * 8 : 0) + j;
@@ -805,7 +805,8 @@ function LevelRow({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
   </>;
 }
 /* sample propio: se sube un audio (WAV, MP3, M4A…), queda guardado en el celu y suena en los golpes de la grilla como una percusión */
-function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const loopSec = (sceneBars(p) * 16 * 60) / p.bpm / 4;
   const [err, setErr] = useState(''), [busy, setBusy] = useState(false), [wave, setWave] = useState<number[]>([]);
   const refresh = () => { const d = engine.sampleData['vox:' + t.id]; setWave(d ? peaks(d, 120) : []); };
   useEffect(refresh, [t.id, t.vox?.has]);
@@ -853,6 +854,13 @@ function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) =
         <div class="tline" style={{ left: a0 * 100 + '%' }}><b>{ms(a0)}</b></div><div class="tline e" style={{ left: b0 * 100 + '%' }}><b>{ms(b0)}</b></div>
       </div>
       <div class="hint-s">Arrastrá las dos líneas sobre la onda para elegir dónde arranca y dónde termina el sample.</div>
+      <div class="sub">Cómo suena</div>
+      <div class="seg">{([[false, 'En los golpes'], [true, 'Una vez por vuelta']] as const).map(([k, l]) => <button class={!!vx.clip === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, clip: k, pos: x.vox!.pos ?? 0 }; })}>{l}</button>)}</div>
+      {vx.clip ? <>
+        <div class="sub2">Arranca en el compás</div>
+        <div class="seg">{[0, 1, 2, 3].map((b) => <button class={Math.floor((vx.pos ?? 0) / 16) === b && (vx.pos ?? 0) % 16 === 0 ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, pos: b * 16 }; })}>{b + 1}</button>)}</div>
+        <div class="hint-s">{loopSec ? `El loop dura ${loopSec.toFixed(1)} s y el audio ${(((vx.sec ?? 0) * (b0 - a0))).toFixed(1)} s (con el recorte). ${(vx.sec ?? 0) * (b0 - a0) > loopSec + 0.05 ? 'Es más largo que el loop: se corta al empezar la vuelta siguiente; recortalo con las líneas para que dure justo lo mismo.' : (vx.sec ?? 0) * (b0 - a0) < loopSec - 0.05 ? 'Es más corto que el loop: termina antes de que vuelva a empezar.' : 'Dura lo mismo que el loop.'}` : ''}</div>
+      </> : null}
       <div class="sub">Ajustes</div>
       <div class="knobs">
         <Knob label="Afinación" value={t.pitch} min={-24} max={24} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
@@ -864,7 +872,7 @@ function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) =
         <button class={'chip' + (vx.one ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, one: !x.vox!.one }; })}>Cada golpe corta el anterior</button>
       </div>
     </> : <div class="note" style={{ marginTop: '8px' }}>Todavía no hay audio: subí un archivo y suena en los golpes de la grilla (pestaña Ritmo).</div>}
-    <div class="hint">Subí cualquier audio corto (un golpe, un grito, un loop) y suena como una percusión: cada casillero de la grilla lo dispara. Se le recorta el silencio del principio y se normaliza; queda guardado en este celu junto con el loop. Con Afinación lo subís o bajás, con Largo lo cortás antes, con las líneas de la onda elegís dónde arranca y dónde termina y "Al revés" lo da vuelta. Activá "Cada golpe corta el anterior" si es un sample largo o un loop. Para que un loop largo suene una sola vez por vuelta, poné el golpe en el primer paso y desactivá los demás.</div>
+    <div class="hint">Subí cualquier audio corto (un golpe, un grito, un loop) y suena como una percusión: cada casillero de la grilla lo dispara. Se le recorta el silencio del principio y se normaliza; queda guardado en este celu junto con el loop. Con Afinación lo subís o bajás, con Largo lo cortás antes, con las líneas de la onda elegís dónde arranca y dónde termina y "Al revés" lo da vuelta. Para una capela o un loop largo, elegí "Una vez por vuelta": suena una sola vez cada vez que el loop da la vuelta (desde el compás que elijas) y no se superpone con sí mismo; "Cada golpe corta el anterior" sirve para samples largos disparados en la grilla.</div>
   </>;
 }
 /* canal de efectos de sonido: elegís el efecto y lo modificás con las perillas (todo suena sincronizado al tempo) */
@@ -918,7 +926,7 @@ function FxEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
 }
 function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; part: 'snd' | 'notes'; adv: boolean }) {
   if (t.type === 'fx') return <FxEditor t={t} upT={upT} />;
-  if (t.type === 'sample') return <SampleEditor t={t} upT={upT} />;
+  if (t.type === 'sample') return <SampleEditor p={p} t={t} upT={upT} />;
   if (t.type === 'drum') {
     return <>
       <LevelRow t={t} upT={upT} />

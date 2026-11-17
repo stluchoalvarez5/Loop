@@ -149,7 +149,7 @@ export type Track = {
   group?: string; // id del grupo al que pertenece
   roll?: boolean; // bajo, arpegio o acordes editados a mano en el piano roll: suenan las notas de `notes` en vez de lo generado
   auto?: Partial<Record<AutoKey, number[]>>; // automatización: 64 valores 0..1 (uno por paso de los 4 compases)
-  vox?: { from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number; to?: number; db?: number }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
+  vox?: { from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number; to?: number; db?: number; clip?: boolean }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
   // // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
@@ -797,7 +797,8 @@ export function compile(p: Project) {
     } else if (t.type === 'sample') {
       // sample propio (audio que subió el usuario): suena como una percusión en los golpes de la grilla
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
-      if (t.vox?.has) for (const h of stepHits(t)) ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : h.v === 3 ? 0.38 : 0.8), ...(h.o ? { o: h.o } : {}) });
+      if (t.vox?.has && t.vox.clip) { const ps = Math.max(0, Math.min(63.5, t.vox.pos ?? 0)), s0 = Math.floor(ps + 1e-6); ev[s0].push({ v: 0.9, ...(ps - s0 > 1e-6 ? { o: ps - s0 } : {}) }); } // capela / loop largo: suena una sola vez por vuelta
+      else if (t.vox?.has) for (const h of stepHits(t)) ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : h.v === 3 ? 0.38 : 0.8), ...(h.o ? { o: h.o } : {}) });
     } else if (t.type === 'fx') {
       kind = 'fx'; fxp = { ...(FX_SOUNDS[t.sound]?.p ?? FX_SOUNDS.riser.p), ...t.fxs };
       for (const h of stepHits(t)) ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : 0.85), ...(h.o ? { o: h.o } : {}) });
@@ -858,7 +859,7 @@ export function compile(p: Project) {
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined, fine: t.fine || 0, vib: t.vib && t.vib.d > 0.001 ? t.vib : undefined,
-      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal' || (t.type === 'sample' && !!t.vox?.one), from: t.type === 'vocal' || t.type === 'sample' ? t.vox?.from ?? 0 : 0, to: t.type === 'sample' ? t.vox?.to ?? 0 : 0,
+      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal' || (t.type === 'sample' && !!(t.vox?.one || t.vox?.clip)), from: t.type === 'vocal' || t.type === 'sample' ? t.vox?.from ?? 0 : 0, to: t.type === 'sample' ? t.vox?.to ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' || t.type === 'fx' ? 0 : 0.05,
       cutAmt: t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' || t.type === 'sample' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx' && t.type !== 'sample', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx' && t.type !== 'sample',
     };
