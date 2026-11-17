@@ -807,8 +807,10 @@ function LevelRow({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
 /* sample propio: se sube un audio (WAV, MP3, M4A…), queda guardado en el celu y suena en los golpes de la grilla como una percusión */
 function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
   const loopSec = (sceneBars(p) * 16 * 60) / p.bpm / 4;
-  const [err, setErr] = useState(''), [busy, setBusy] = useState(false), [wave, setWave] = useState<number[]>([]);
-  const refresh = () => { const d = engine.sampleData['vox:' + t.id]; setWave(d ? peaks(d, 120) : []); };
+  const [err, setErr] = useState(''), [busy, setBusy] = useState(false), [zoom, setZoom] = useState(1), [vs, setVs] = useState(0), [ver, setVer] = useState(0);
+  const refresh = () => setVer((v) => v + 1);
+  // onda de la parte que se ve (con zoom se acerca a un tramo para ubicar las líneas con precisión); si está "al revés" se dibuja la versión dada vuelta, que es la que suena
+  const wave = useMemo(() => { const d = engine.sampleData['vox:' + t.id + (t.vox?.rev ? ':r' : '')]; if (!d) return [] as number[]; const i0 = Math.floor(vs * d.length), i1 = Math.min(d.length, Math.max(i0 + 160, Math.floor((vs + 1 / zoom) * d.length))); return peaks(d.subarray(i0, i1), 160); }, [t.id, t.vox?.has, t.vox?.rev, zoom, vs, ver]);
   useEffect(refresh, [t.id, t.vox?.has]);
   const load = async (file?: File) => {
     if (!file) return; setErr(''); setBusy(true);
@@ -824,16 +826,23 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
   const has = !!t.vox?.has, vx = t.vox ?? { from: 0, rev: false, has: false }, mode: 'hit' | 'clip' | 'free' = vx.free ? 'free' : vx.clip ? 'clip' : 'hit';
   // recorte con líneas táctiles: el inicio es `from` y el final `to` (fracciones de 0 a 1 del audio); arrastra la línea más cercana al dedo
   const waveRef = useRef<HTMLDivElement>(null), drag = useRef('');
-  const a0 = vx.from ?? 0, b0 = vx.to && vx.to > a0 ? vx.to : 1, ms = (f: number) => ((vx.sec ?? 0) * f).toFixed(2) + ' s';
+  const sec = vx.sec ?? 0, a0 = vx.from ?? 0, b0 = vx.to && vx.to > a0 ? vx.to : 1, minGap = Math.max(0.0002, 0.002 / Math.max(0.05, sec || 1)); // el recorte puede achicarse hasta 2 ms
+  const ms = (f: number) => (sec * f).toFixed(zoom >= 4 ? 3 : 2) + ' s', px = (f: number) => (f - vs) * zoom * 100;
+  const setZ = (nz: number, center?: number) => { nz = Math.max(1, Math.min(256, nz)); const c = center ?? vs + 0.5 / zoom; setZoom(nz); setVs(Math.max(0, Math.min(1 - 1 / nz, c - 0.5 / nz))); };
+  const setRegion = (from: number, to: number) => upT(t.id, (x) => { const v = x.vox!; v.from = +Math.max(0, Math.min(1 - minGap, from)).toFixed(5); const tt = Math.max(v.from + minGap, Math.min(1, to)); v.to = tt >= 0.99995 ? undefined : +tt.toFixed(5); });
+  const nudge = (w: 'a' | 'b', dms: number) => { if (!sec) return; const d = dms / 1000 / sec; if (w === 'a') setRegion(a0 + d, b0); else setRegion(a0, b0 + d); };
+  // duración con la que suena el recorte (tempo y afinación del audio incluidos) y cuántos compases del loop son
+  const barSec = 240 / p.bpm, trv = vx.bpm ? p.bpm / vx.bpm : 1, speed = vx.keep ? trv : trv * Math.pow(2, (t.pitch || 0) / 12), played = (b0 - a0) * sec / speed;
+  const fit = (bars: number) => { if (!sec) return; const len = (bars * barSec * speed) / sec; let from = a0, to = a0 + len; if (to > 1) { to = 1; from = Math.max(0, 1 - len); } setRegion(from, to); };
   const trim = (e: PointerEvent, down: boolean) => {
     const el = waveRef.current; if (!el) return;
     if (!down && !drag.current) return;
-    const r = el.getBoundingClientRect(), f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const r = el.getBoundingClientRect(), f = Math.max(0, Math.min(1, vs + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) / zoom));
     if (down) { el.setPointerCapture(e.pointerId); drag.current = Math.abs(f - a0) <= Math.abs(f - b0) ? 'a' : 'b'; }
     const w = drag.current;
     upT(t.id, (x) => { const v = x.vox!, from = v.from ?? 0, to = v.to && v.to > from ? v.to : 1;
-      if (w === 'a') v.from = +Math.max(0, Math.min(to - 0.03, f)).toFixed(3); else v.to = +Math.max(from + 0.03, Math.min(1, f)).toFixed(3);
-      if (v.to !== undefined && v.to >= 0.999) v.to = undefined; });
+      if (w === 'a') v.from = +Math.max(0, Math.min(to - minGap, f)).toFixed(5); else v.to = +Math.max(from + minGap, Math.min(1, f)).toFixed(5);
+      if (v.to !== undefined && v.to >= 0.99995) v.to = undefined; });
   };
   return <>
     <LevelRow t={t} upT={upT} />
@@ -849,11 +858,23 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
       {(vx.sec ?? 0) >= 119.5 && <div class="hint-s">El audio es largo: se guardaron los primeros 2 minutos desde donde empieza el sonido.</div>}
       {vx.db !== undefined && vx.db < -36 && <div class="err">Este audio es muy bajito ({vx.db} dB): lo más probable es que sea solo ruido de fondo y no un sonido. Si la onda de abajo se ve como un bloque parejo, el archivo es ruido.</div>}
       <div class="swave" style={{ '--c': t.color, touchAction: 'none' } as any} ref={waveRef} onPointerDown={(e) => trim(e, true)} onPointerMove={(e) => trim(e, false)} onPointerUp={() => { drag.current = ''; }} onPointerCancel={() => { drag.current = ''; }}>
-        {(vx.rev ? [...wave].reverse() : wave).map((h) => <i style={{ height: Math.max(3, h * 100) + '%' }} />)}
-        <div class="shade" style={{ left: 0, width: a0 * 100 + '%' }} /><div class="shade" style={{ left: b0 * 100 + '%', right: 0 }} />
-        <div class="tline" style={{ left: a0 * 100 + '%' }}><b>{ms(a0)}</b></div><div class="tline e" style={{ left: b0 * 100 + '%' }}><b>{ms(b0)}</b></div>
+        {wave.map((h) => <i style={{ height: Math.max(3, h * 100) + '%' }} />)}
+        <div class="shade" style={{ left: 0, width: Math.max(0, Math.min(100, px(a0))) + '%' }} /><div class="shade" style={{ left: Math.max(0, Math.min(100, px(b0))) + '%', right: 0 }} />
+        {px(a0) >= -1 && px(a0) <= 101 && <div class="tline" style={{ left: px(a0) + '%' }}><b>{ms(a0)}</b></div>}
+        {px(b0) >= -1 && px(b0) <= 101 && <div class="tline e" style={{ left: px(b0) + '%' }}><b>{ms(b0)}</b></div>}
       </div>
-      <div class="hint-s">Arrastrá las dos líneas sobre la onda para elegir dónde arranca y dónde termina el sample.</div>
+      {zoom > 1 && <input class="swpan" type="range" min={0} max={1000} value={Math.round((vs / Math.max(1e-6, 1 - 1 / zoom)) * 1000)} aria-label="Mover la vista de la onda" onInput={(e) => setVs((+(e.target as HTMLInputElement).value / 1000) * (1 - 1 / zoom))} />}
+      <div class="chips" style={{ marginTop: '6px' }}>
+        <button class="chip" onClick={() => setZ(zoom / 2)}>Zoom −</button><button class="chip" onClick={() => setZ(zoom * 2)}>Zoom +</button>
+        <button class="chip" onClick={() => setZ(Math.min(256, 0.8 / Math.max(minGap, b0 - a0)), (a0 + b0) / 2)}>Acercar al recorte</button>
+        {zoom > 1 && <button class="chip" onClick={() => setZ(1)}>Ver todo</button>}
+      </div>
+      <div class="hint-s">Arrastrá las dos líneas sobre la onda (la más cercana al dedo). Con Zoom las movés con más precisión.{zoom > 1 ? ' Zoom ×' + (zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)) + '.' : ''}</div>
+      <div class="sub2">Ajuste fino</div>
+      <div class="nudge">{(['a', 'b'] as const).map((w) => <div class="nr"><span>{w === 'a' ? 'Inicio' : 'Final'}</span>{[-10, -1, 1, 10].map((d) => <button class="chip" onClick={() => nudge(w, d)}>{d > 0 ? '+' : '−'}{Math.abs(d)} ms</button>)}</div>)}</div>
+      <div class="sub2">Largo del recorte</div>
+      <div class="note" style={{ margin: '0 0 6px' }}>Suena {played.toFixed(played < 1 ? 3 : 2)} s = {(played / barSec).toFixed(2)} compases ({p.bpm} BPM)</div>
+      <div class="chips"><span class="note" style={{ margin: 0, alignSelf: 'center' }}>Ajustar a</span>{([[0.25, '¼'], [0.5, '½'], [1, '1'], [2, '2'], [4, '4'], [8, '8']] as const).map(([n, l]) => <button class="chip" onClick={() => fit(n)}>{l} comp.</button>)}</div>
       <div class="sub">Cómo suena</div>
       <div class="seg">{([['hit', 'En los golpes'], ['clip', 'Una vez por vuelta'], ['free', 'De largo']] as const).map(([k, l]) => <button class={mode === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, clip: k === 'clip', free: k === 'free', loop: k === 'free' ? x.vox!.loop : false, pos: x.vox!.pos ?? 0 }; })}>{l}</button>)}</div>
       {mode === 'free' && <div class="hint-s">"De largo": arranca una sola vez al darle play y sigue sonando aunque el loop dé la vuelta, hasta que termina el audio (o para siempre si activás "Repetir"). No depende de los compases.</div>}
