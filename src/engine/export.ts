@@ -1,13 +1,13 @@
 /* Exportación: renderiza el loop con el mismo motor (worklet) dentro de un OfflineAudioContext
    y lo codifica a WAV, MP3 o un paquete para Ableton (stems WAV + MIDI). */
 import workletUrl from './worklet.js?url';
-import { compile, switchScene, sceneUsed, SCENES, type Project } from '../model';
+import { compile, switchScene, sceneUsed, sceneBars, SCENES, type Project } from '../model';
 import type { Engine } from './engine';
 
 export type Progress = (msg: string) => void;
 type Audio = { L: Float32Array; R: Float32Array; sr: number };
 
-const loopSamples = (p: Project, sr: number) => sr * 60 / p.bpm / 4 * 64;
+const loopSamples = (p: Project, sr: number) => sr * 60 / p.bpm / 4 * 16 * sceneBars(p);
 
 /* Renderiza `loops` vueltas después de `warm` vueltas de "calentamiento" (así las colas de reverb y delay
    ya están sonando y la vuelta exportada empalma perfecto consigo misma). stemId = renderizar solo esa pista. */
@@ -34,10 +34,11 @@ export async function renderAudio(engine: Engine, p: Project, loops: number, ste
 export const defaultArrangement = (p: Project) => { const used = SCENES.filter((k) => sceneUsed(p, k)); return used.flatMap((k) => [k, k]); };
 export async function renderArrangement(engine: Engine, p: Project, seq: string[]): Promise<Audio> {
   await engine.init();
-  const sr = engine.ctx!.sampleRate, L1 = loopSamples(p, sr), start = Math.round(L1), len = Math.round((1 + seq.length) * L1);
+  const sr = engine.ctx!.sampleRate, B1 = sr * 60 / p.bpm / 4 * 16;
   const comp: Record<string, any> = {}, live: Record<string, number> = {};
   for (const k of new Set(seq)) { const d: Project = JSON.parse(JSON.stringify(p)); switchScene(d, k); const c: any = compile(d); comp[k] = c; live[k] = c.tracks.filter((t: any) => !t.mute).length; }
   const warmK = Object.keys(comp).sort((a, b) => live[b] - live[a])[0];
+  const start = Math.round(comp[warmK].bars * B1), len = Math.round(start + seq.reduce((n, k) => n + comp[k].bars * B1, 0)); // cada escena dura sus compases
   const ctx = new OfflineAudioContext(2, len, sr);
   await ctx.audioWorklet.addModule(workletUrl);
   const node = new AudioWorkletNode(ctx, 'loop-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { export: true, project: comp[warmK], arr: seq.map((k) => comp[k]), samples: engine.sampleData, freezeAt: start } });
@@ -144,7 +145,7 @@ export async function abletonZip(engine: Engine, p: Project, loops: number, prog
   const drumsOnly = { ...p, tracks: p.tracks.map((t) => (t.type === 'drum' ? t : { ...t, mute: true })) };
   files['MIDI/Batería.mid'] = midi(drumsOnly);
   files['LEEME.txt'] = new TextEncoder().encode([
-    `Loop: ${p.title || p.name || 'sin nombre'}`, `Tempo: ${p.bpm} BPM · 4/4 · ${loops * 4} compases`, `Tonalidad: ${p.key ?? '-'}`, `Acordes: ${p.chords.map((c) => c.name).join(' – ')}`, '',
+    `Loop: ${p.title || p.name || 'sin nombre'}`, `Tempo: ${p.bpm} BPM · 4/4 · ${loops * sceneBars(p)} compases`, `Tonalidad: ${p.key ?? '-'}`, `Acordes: ${p.chords.map((c) => c.name).join(' – ')}`, '',
     'Cómo usarlo en Ableton Live:',
     `1. Poné el tempo del set en ${p.bpm} BPM.`,
     '2. Arrastrá los WAV de la carpeta Stems a pistas de audio, todos en el compás 1. Están en el mismo largo y suenan juntos como la mezcla.',

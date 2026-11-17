@@ -649,3 +649,8 @@ img,svg{-webkit-user-drag:none}
 .vb i{position:absolute;left:0;right:0;bottom:0;background:var(--c);opacity:.85}
 .vb.off{background:#1f1f1f}
 .vread{font-size:12px;color:var(--mut);margin-top:8px;min-height:16px;font-family:'JetBrains Mono',monospace}
+/* duración de la escena (1 a 4 compases): ocupa su propia fila si no entra */
+.scenebar{flex-wrap:wrap;row-gap:6px}
+.sbars{flex:none}
+.sbars button{min-width:30px;height:26px;padding:0 6px;font-family:'JetBrains Mono',monospace;font-size:12px}
+.sbw{display:flex;align-items:center;gap:6px;flex:none}

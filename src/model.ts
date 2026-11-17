@@ -173,9 +173,10 @@ export function switchScene(p: Project, to: string) {
   p.scenes = { ...p.scenes, [cur]: snapScene(p) };
   const s = p.scenes[to]; if (s) loadScene(p, s); p.scene = to;
 }
+export const sceneBars = (p: Project, k: string = p.scene ?? 'A') => Math.max(1, Math.min(4, Math.round(p.bars?.[k] ?? 4)));
 export const sceneUsed = (p: Project, k: string) => k === (p.scene ?? 'A') || !!p.scenes?.[k];
 export function nextScene(p: Project) { const cur = SCENES.indexOf(p.scene ?? 'A'); for (let i = 1; i <= 4; i++) { const k = SCENES[(cur + i) % 4]; if (sceneUsed(p, k)) return k; } return p.scene ?? 'A'; }
-export function clearScene(p: Project, k: string) { if (k === (p.scene ?? 'A')) return; const sc = { ...p.scenes }; delete sc[k]; p.scenes = sc; }
+export function clearScene(p: Project, k: string) { if (k === (p.scene ?? 'A')) return; const sc = { ...p.scenes }; delete sc[k]; p.scenes = sc; if (p.bars) { const b = { ...p.bars }; delete b[k]; p.bars = b; } }
 
 /* ---------- variación: otro patrón para la pista, de las variantes del género o cambiando unos golpes ---------- */
 export function varyTrack(p: Project, t: Track): string {
@@ -254,6 +255,7 @@ export type Project = {
   seed?: number;
   id?: string; title?: string; // lugar donde se guarda y nombre que se muestra en Mis loops (el nombre musical es `name`)
   edited?: boolean;
+  bars?: Record<string, number>; // compases de cada escena (1..4; si falta, 4)
   scene?: string; scenes?: Record<string, SceneSnap>; // escenas A..D: variaciones del patrón que cambian al terminar la vuelta
   chain?: boolean; // encadenar escenas: al terminar cada vuelta pasa a la siguiente que tenga algo
   fill?: boolean;
@@ -768,6 +770,7 @@ export function compile(p: Project) {
   // un grupo muteado apaga a todos sus instrumentos; un grupo en solo los pone en solo (sin tocar el estado propio de cada pista)
   const G = new Map((p.groups ?? []).map((g) => [g.id, g]));
   const offOf = (t: Track) => t.mute || !!(t.group && G.get(t.group)?.mute), soloOf = (t: Track) => t.solo || !!(t.group && G.get(t.group)?.solo);
+  const NB = sceneBars(p);
   const fillId = p.fill ? (FILL_SOUNDS.map((snd) => p.tracks.find((t) => t.type === 'drum' && t.sound === snd && !offOf(t))).find(Boolean) ?? p.tracks.find((t) => t.type === 'drum' && t.sound !== 'kick' && !offOf(t)))?.id : undefined;
   const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !offOf(t)) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
@@ -822,8 +825,8 @@ export function compile(p: Project) {
       else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05), pro: base.pro && { ...base.pro, env1: { ...base.pro.env1, a: Math.min(base.pro.env1.a, 0.004), r: Math.min(base.pro.env1.r, 0.05) } } }; for (const { s, o, x } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: x ?? 0.8, l: t.chordLen ?? 0.8, o })); }
       else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
     }
-    if (t.id === fillId) for (let s = 56; s < 64; s++) ev[s] = [{ v: 0.3 + 0.7 * ((s - 56) / 7) ** 1.3 }]; // redoble: semicorcheas que crecen en los últimos 2 tiempos
-    if (p.fill && t.type === 'drum' && t.sound !== 'kick' && t.id !== fillId && ['hat', 'open'].includes(t.sound)) for (let s = 60; s < 64; s++) ev[s] = [];
+    if (t.id === fillId) for (let s = NB * 16 - 8; s < NB * 16; s++) ev[s] = [{ v: 0.3 + 0.7 * ((s - (NB * 16 - 8)) / 7) ** 1.3 }]; // redoble: semicorcheas que crecen en los últimos 2 tiempos
+    if (p.fill && t.type === 'drum' && t.sound !== 'kick' && t.id !== fillId && ['hat', 'open'].includes(t.sound)) for (let s = NB * 16 - 4; s < NB * 16; s++) ev[s] = [];
     if (t.type !== 'drum') synth = shape(synth, t.type === 'bass' ? 0.5 : 1);
     const fx = t.type !== 'drum' && e > 0 ? { ...t.fx, drive: clamp((t.fx?.drive ?? 0) + e * 0.6, 0, 1) } : t.fx;
     let groove: number[] | undefined;
@@ -843,5 +846,5 @@ export function compile(p: Project) {
     };
   });
   const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;
-  return { bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8) }, master: p.master, tracks };
+  return { bars: NB, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8) }, master: p.master, tracks };
 }

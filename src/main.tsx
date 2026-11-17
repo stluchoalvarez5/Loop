@@ -17,7 +17,7 @@ import { migrate, listProjects, loadProject, saveProject, deleteProject, renameP
 import { registerSW } from 'virtual:pwa-register';
 import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
-  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   FX_SOUNDS, FX_GROUPS, type FxP, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -311,6 +311,8 @@ function SceneBar({ p, go, queued, up, adv }: { p: Project; go: (k: string) => v
   return <div class="scenebar">
     <span class="sb-l">Escena</span>
     {SCENES.map((k) => <button class={'scn' + (k === cur ? ' on' : '') + (sceneUsed(p, k) ? ' used' : '') + (queued === k ? ' q' : '')} aria-label={'Escena ' + k} {...tap(() => go(k))}>{k}</button>)}
+    <div class="sbw"><span class="sb-l">Compases</span>
+    <div class="seg sbars">{[1, 2, 3, 4].map((n) => <button class={sceneBars(p) === n ? 'on' : ''} aria-label={`Escena ${cur} de ${n} compás${n > 1 ? 'es' : ''}`} onClick={() => up((d) => { d.bars = { ...d.bars, [cur]: n }; })}>{n}</button>)}</div></div>
     <div class="sp" />
     {adv && <button class={'ib sm' + (p.chain ? ' on' : '')} onClick={() => up((d) => { d.chain = !d.chain; })} aria-label="Cadena: pasar solas las escenas" aria-pressed={!!p.chain} title="Cadena">{Ic.chain}</button>}
     <button class={'ib sm' + (p.fill ? ' on' : '')} onClick={() => up((d) => { d.fill = !d.fill; })} aria-label="Redoble al final" aria-pressed={!!p.fill} title="Redoble">{Ic.fill}</button>
@@ -400,7 +402,7 @@ function App() {
       if (barRef.current) barRef.current.textContent = String(Math.floor(s / 16) + 1);
       if (s === 0 && queuedRef.current) { queuedRef.current = null; setQueued(null); }
       // cadena: en el último compás se pone en cola la escena siguiente
-      if (s === 48 && pRef.current.chain && !queuedRef.current) { const nx = nextScene(pRef.current); if (nx !== (pRef.current.scene ?? 'A')) goSceneRef.current(nx, true); }
+      if (s === (sceneBars(pRef.current) - 1) * 16 && pRef.current.chain && !queuedRef.current) { const nx = nextScene(pRef.current); if (nx !== (pRef.current.scene ?? 'A')) goSceneRef.current(nx, true); }
     };
     engine.onMeter = (m) => {
       const db = 20 * Math.log10(Math.max(1e-5, m.peak));
@@ -505,7 +507,7 @@ function App() {
           <button class={'playbtn' + (playing ? ' on' : '')} onClick={toggle} aria-label={playing ? 'Parar' : 'Reproducir'}>{playing ? Icon.stop : Icon.play}</button>
           <button class={'recbtn' + (rec ? ' on' : '')} onClick={toggleRec} aria-label={rec ? 'Terminar de grabar la sesión' : 'Grabar sesión'}><i /></button>
           <div class="lcd">
-            <div class="l1">{rec ? <span class="rec-t">● <b>{fmtT(recSecs)}</b></span> : <span>BAR <b ref={barRef as any}>1</b>/4</span>}<span class="chs"><b>{p.chords[0]?.name}</b> · {p.chords.slice(1).map((c) => c.name).join(' · ')}</span><span><b ref={lufsRef as any}>–</b> LUFS</span></div>
+            <div class="l1">{rec ? <span class="rec-t">● <b>{fmtT(recSecs)}</b></span> : <span>BAR <b ref={barRef as any}>1</b>/{sceneBars(p)}</span>}<span class="chs"><b>{p.chords[0]?.name}</b> · {p.chords.slice(1).map((c) => c.name).join(' · ')}</span><span><b ref={lufsRef as any}>–</b> LUFS</span></div>
             <div class="leds">{Array.from({ length: 16 }, (_, i) => <span class={i % 4 === 0 ? 'q' : ''} />)}</div>
             <div class="meter"><i ref={meterRef as any} /></div>
           </div>
@@ -1171,7 +1173,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
   ],
   scene: [
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
-    { title: 'Escenas', body: 'Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
+    { title: 'Escenas', body: 'Cada escena puede durar 1, 2, 3 o 4 compases: elegilo en "Compases", al lado de las letras A–D. La escena repite solo esos compases (los demás quedan guardados, por si la alargás después), el redoble cae en su último compás y la Cadena y el tema exportado respetan cada duración. Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
     { title: 'Tonalidad, acordes y loop nuevo', body: 'Lo que cambiás en Armar (tonalidad, acordes y color: tríadas, séptimas o novenas) suena al instante en el loop abierto, y el bajo, el arpegio y los acordes lo siguen solos. "Crear loop nuevo" arma otro con los sonidos, el kit y la mezcla del género que elijas; si el anterior estaba editado, queda guardado en Mis loops.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
     { title: 'Mis loops', body: 'Todo se guarda solo en el celu. La carpeta de arriba (con el nombre del loop) abre Mis loops: abrís cualquier loop anterior, lo duplicás, lo renombrás o lo borrás. Si creás un loop nuevo sin haber tocado el abierto, lo reemplaza; si lo editaste, queda guardado y el nuevo va aparte. "Guardar en un archivo" te lo llevás a otro celu, con tu voz incluida.', art: <div class="art-chips"><span class="on">Luciano · deep</span><span>Noche · techno</span><span>Fiesta · house</span></div> },
     { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí. Con "Automatizar macros" dibujás cómo cambian en los 4 compases, y con "Grabar movimientos" las grabás moviendo los faders mientras suena.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },

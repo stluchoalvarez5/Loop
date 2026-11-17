@@ -461,6 +461,9 @@ class LoopEngine extends AudioWorkletProcessor {
         if (t.synth && t.synth.pro) { ensureWT('basic'); ensureWT(t.synth.pro.a.table); ensureWT(t.synth.pro.b.table); }
         return nt;
       });
+      // escena de 1 a 4 compases: si el cursor quedó más allá del nuevo final, se enrolla adentro del bucle
+      this.len = Math.max(1, Math.min(4, m.project.bars || 4));
+      if (this.playing) { const sl2 = this.stepLen(), ll = sl2 * this.len * 16; if (this.pos >= ll || this.next >= this.len * 16) { this.pos %= ll; this.next = Math.ceil(this.pos / sl2 - 1e-9) % (this.len * 16); this.nextT = this.next * sl2; } }
       const s16 = 60 / this.bpm / 4; this.dly.setTime(s16 * 3, s16 * 4); this.dly.fb = m.project.fx.dlyFb;
       this.rev.room = m.project.fx.revSize; this.rev.damp = m.project.fx.revDamp; this.revRet = m.project.fx.revRet; this.dlyRet = m.project.fx.dlyRet;
       this.target = m.project.master.target; this.autoOn = m.project.master.auto; this.ceil = dbToGain(m.project.master.ceiling);
@@ -515,7 +518,7 @@ class LoopEngine extends AudioWorkletProcessor {
     // secuenciador: disparos dentro de este bloque
     this.duckHit = -1; this.stepAt = -1; this.anySolo = tracks.some((t) => t.solo);
     if (this.playing && this.compiled) {
-      const sl = this.stepLen(), loopLen = sl * STEPS, swA = this.swingA, swOff = (st) => (st % 2 ? (swA ? swA[st] : this.swing) * sl * 0.33 : 0);
+      const sl = this.stepLen(), LEN = (this.len || 4) * 16, loopLen = sl * LEN, swA = this.swingA, swOff = (st) => (st % 2 ? (swA ? swA[st] : this.swing) * sl * 0.33 : 0);
       for (let i = 0; i < N; i++) {
         while (this.pos >= this.nextT) {
           const st = this.next; this.step = st;
@@ -524,7 +527,7 @@ class LoopEngine extends AudioWorkletProcessor {
           for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off + (ev.o ? Math.round(ev.o * sl) : 0)); } // ev.o: desfase dentro del paso (grilla fina)
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
-          if (this.next >= STEPS) { this.next = 0; this.pos -= loopLen; if (this.arr) { const np = this.arr[++this.arrI]; if (np) { this.onMsg({ type: 'project', project: np }); tracks = this.tracks; } } }
+          if (this.next >= LEN) { this.next = 0; this.pos -= loopLen; if (this.arr) { const np = this.arr[++this.arrI]; if (np) { this.onMsg({ type: 'project', project: np }); tracks = this.tracks; } } }
           this.nextT = this.next * sl + swOff(this.next);
         }
         this.pos++;
