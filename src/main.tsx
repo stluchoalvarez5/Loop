@@ -17,7 +17,7 @@ import { migrate, listProjects, loadProject, saveProject, deleteProject, renameP
 import { registerSW } from 'virtual:pwa-register';
 import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
-  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   FX_SOUNDS, FX_GROUPS, type FxP, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -306,8 +306,8 @@ function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }
   );
 }
 /* escenas A..D en el transporte (siempre a mano); con modo Avanzado, también cadena y redoble */
-function SceneBar({ p, go, queued, up, adv }: { p: Project; go: (k: string) => void; queued: string | null; up: (fn: (d: Project) => void) => void; adv: boolean }) {
-  const cur = p.scene ?? 'A';
+function SceneBar({ p, go, queued, up, adv, onCopy }: { p: Project; go: (k: string) => void; queued: string | null; up: (fn: (d: Project) => void) => void; adv: boolean; onCopy: (from: string, to: string) => void }) {
+  const cur = p.scene ?? 'A', [cp, setCp] = useState(false);
   return <div class="scenebar">
     <span class="sb-l">Escena</span>
     {SCENES.map((k) => <button class={'scn' + (k === cur ? ' on' : '') + (sceneUsed(p, k) ? ' used' : '') + (queued === k ? ' q' : '')} aria-label={'Escena ' + k} {...tap(() => go(k))}>{k}</button>)}
@@ -316,6 +316,11 @@ function SceneBar({ p, go, queued, up, adv }: { p: Project; go: (k: string) => v
     <div class="sp" />
     {adv && <button class={'ib sm' + (p.chain ? ' on' : '')} onClick={() => up((d) => { d.chain = !d.chain; })} aria-label="Cadena: pasar solas las escenas" aria-pressed={!!p.chain} title="Cadena">{Ic.chain}</button>}
     <button class={'ib sm' + (p.fill ? ' on' : '')} onClick={() => up((d) => { d.fill = !d.fill; })} aria-label="Redoble al final" aria-pressed={!!p.fill} title="Redoble">{Ic.fill}</button>
+    <button class={'ib sm' + (cp ? ' on' : '')} onClick={() => setCp(!cp)} aria-label="Copiar escenas" aria-pressed={cp} title="Copiar escenas">{Ic.copy ?? 'Cop'}</button>
+    {cp && <div class="sbcopy">
+      <div class="sbw"><span class="sb-l">Copiar {cur} en</span><div class="seg">{SCENES.filter((k) => k !== cur).map((k) => <button class={sceneUsed(p, k) ? 'used' : ''} aria-label={`Copiar la escena ${cur} sobre la ${k}`} onClick={() => { onCopy(cur, k); setCp(false); }}>{k}</button>)}</div></div>
+      {SCENES.some((k) => k !== cur && sceneUsed(p, k)) && <div class="sbw"><span class="sb-l">Traer a {cur} desde</span><div class="seg">{SCENES.filter((k) => k !== cur && sceneUsed(p, k)).map((k) => <button aria-label={`Traer la escena ${k} sobre la ${cur}`} onClick={() => { onCopy(k, cur); setCp(false); }}>{k}</button>)}</div></div>}
+    </div>}
   </div>;
 }
 
@@ -514,7 +519,7 @@ function App() {
           <div class="tr-undo"><button class="undo" disabled={!hist.current.past.length} onClick={undo} aria-label="Deshacer (transporte)">{Ic.undo}</button><button class="undo" disabled={!hist.current.future.length} onClick={redo} aria-label="Rehacer (transporte)">{Ic.redo}</button></div>
           <Bpm bpm={p.bpm} set={(v) => up((d) => { d.bpm = Math.max(60, Math.min(200, Math.round(v))); })} />
         </div>
-        <SceneBar p={p} go={goScene} queued={queued} up={up} adv={adv} />
+        <SceneBar p={p} go={goScene} queued={queued} up={up} adv={adv} onCopy={(from, to) => { const cur = pRef.current.scene ?? 'A'; up((d) => copyScene(d, from, to), engine.playing && to === cur); flash(`Escena ${from} copiada sobre la ${to}` + (engine.playing && to === cur ? ' (entra al terminar la vuelta)' : '')); }} />
       </div>
 
       {tab === 'scene' && <div class="page scene">
@@ -1173,7 +1178,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
   ],
   scene: [
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
-    { title: 'Escenas', body: 'Cada escena puede durar 1, 2, 3 o 4 compases: elegilo en "Compases", al lado de las letras A–D. La escena repite solo esos compases (los demás quedan guardados, por si la alargás después), el redoble cae en su último compás y la Cadena y el tema exportado respetan cada duración. Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
+    { title: 'Escenas', body: 'El botón de copiar (junto al redoble) copia la escena abierta sobre otra letra, o trae a la escena abierta el contenido de otra: sirve para armar variaciones a partir de una escena o repetir una parte; lo que había en el destino se reemplaza (se puede deshacer). Cada escena puede durar 1, 2, 3 o 4 compases: elegilo en "Compases", al lado de las letras A–D. La escena repite solo esos compases (los demás quedan guardados, por si la alargás después), el redoble cae en su último compás y la Cadena y el tema exportado respetan cada duración. Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
     { title: 'Tonalidad, acordes y loop nuevo', body: 'Lo que cambiás en Armar (tonalidad, acordes y color: tríadas, séptimas o novenas) suena al instante en el loop abierto, y el bajo, el arpegio y los acordes lo siguen solos. "Crear loop nuevo" arma otro con los sonidos, el kit y la mezcla del género que elijas; si el anterior estaba editado, queda guardado en Mis loops.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
     { title: 'Mis loops', body: 'Todo se guarda solo en el celu. La carpeta de arriba (con el nombre del loop) abre Mis loops: abrís cualquier loop anterior, lo duplicás, lo renombrás o lo borrás. Si creás un loop nuevo sin haber tocado el abierto, lo reemplaza; si lo editaste, queda guardado y el nuevo va aparte. "Guardar en un archivo" te lo llevás a otro celu, con tu voz incluida.', art: <div class="art-chips"><span class="on">Luciano · deep</span><span>Noche · techno</span><span>Fiesta · house</span></div> },
     { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí. Con "Automatizar macros" dibujás cómo cambian en los 4 compases, y con "Grabar movimientos" las grabás moviendo los faders mientras suena.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },

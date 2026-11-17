@@ -173,6 +173,15 @@ export function switchScene(p: Project, to: string) {
   p.scenes = { ...p.scenes, [cur]: snapScene(p) };
   const s = p.scenes[to]; if (s) loadScene(p, s); p.scene = to;
 }
+/* copia la escena `from` sobre la escena `to` (patrones, notas, encendido, automatización, macros, redoble y duración); la mezcla es común */
+export function copyScene(p: Project, from: string, to: string) {
+  if (from === to) return;
+  const cur = p.scene ?? 'A', bars = sceneBars(p, from);
+  const src = from === cur ? snapScene(p) : cl(p.scenes?.[from]);
+  if (!src) return;
+  p.bars = { ...p.bars, [to]: bars };
+  if (to === cur) loadScene(p, src); else p.scenes = { ...p.scenes, [to]: cl(src) };
+}
 export const sceneBars = (p: Project, k: string = p.scene ?? 'A') => Math.max(1, Math.min(4, Math.round(p.bars?.[k] ?? 4)));
 export const sceneUsed = (p: Project, k: string) => k === (p.scene ?? 'A') || !!p.scenes?.[k];
 export function nextScene(p: Project) { const cur = SCENES.indexOf(p.scene ?? 'A'); for (let i = 1; i <= 4; i++) { const k = SCENES[(cur + i) % 4]; if (sceneUsed(p, k)) return k; } return p.scene ?? 'A'; }

@@ -654,3 +654,4 @@ img,svg{-webkit-user-drag:none}
 .sbars{flex:none}
 .sbars button{min-width:30px;height:26px;padding:0 6px;font-family:'JetBrains Mono',monospace;font-size:12px}
 .sbw{display:flex;align-items:center;gap:6px;flex:none}
+.sbcopy{flex-basis:100%;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
