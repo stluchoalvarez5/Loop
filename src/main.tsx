@@ -821,6 +821,19 @@ function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) =
     setBusy(false);
   };
   const has = !!t.vox?.has, vx = t.vox ?? { from: 0, rev: false, has: false };
+  // recorte con líneas táctiles: el inicio es `from` y el final `to` (fracciones de 0 a 1 del audio); arrastra la línea más cercana al dedo
+  const waveRef = useRef<HTMLDivElement>(null), drag = useRef('');
+  const a0 = vx.from ?? 0, b0 = vx.to && vx.to > a0 ? vx.to : 1, ms = (f: number) => ((vx.sec ?? 0) * f).toFixed(2) + ' s';
+  const trim = (e: PointerEvent, down: boolean) => {
+    const el = waveRef.current; if (!el) return;
+    if (!down && !drag.current) return;
+    const r = el.getBoundingClientRect(), f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    if (down) { el.setPointerCapture(e.pointerId); drag.current = Math.abs(f - a0) <= Math.abs(f - b0) ? 'a' : 'b'; }
+    const w = drag.current;
+    upT(t.id, (x) => { const v = x.vox!, from = v.from ?? 0, to = v.to && v.to > from ? v.to : 1;
+      if (w === 'a') v.from = +Math.max(0, Math.min(to - 0.03, f)).toFixed(3); else v.to = +Math.max(from + 0.03, Math.min(1, f)).toFixed(3);
+      if (v.to !== undefined && v.to >= 0.999) v.to = undefined; });
+  };
   return <>
     <LevelRow t={t} upT={upT} />
     <PitchRow t={t} upT={upT} />
@@ -832,19 +845,24 @@ function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) =
     {err && <div class="err">{err}</div>}
     {has ? <>
       <div class="note" style={{ margin: '8px 0 0' }}>{vx.name || 'Sample'} · {vx.sec ? vx.sec + ' s' : ''}</div>
-      <div class="swave" style={{ '--c': t.color } as any}>{wave.map((h) => <i style={{ height: Math.max(3, h * 100) + '%' }} />)}</div>
+      <div class="swave" style={{ '--c': t.color, touchAction: 'none' } as any} ref={waveRef} onPointerDown={(e) => trim(e, true)} onPointerMove={(e) => trim(e, false)} onPointerUp={() => { drag.current = ''; }} onPointerCancel={() => { drag.current = ''; }}>
+        {(vx.rev ? [...wave].reverse() : wave).map((h) => <i style={{ height: Math.max(3, h * 100) + '%' }} />)}
+        <div class="shade" style={{ left: 0, width: a0 * 100 + '%' }} /><div class="shade" style={{ left: b0 * 100 + '%', right: 0 }} />
+        <div class="tline" style={{ left: a0 * 100 + '%' }}><b>{ms(a0)}</b></div><div class="tline e" style={{ left: b0 * 100 + '%' }}><b>{ms(b0)}</b></div>
+      </div>
+      <div class="hint-s">Arrastrá las dos líneas sobre la onda para elegir dónde arranca y dónde termina el sample.</div>
       <div class="sub">Ajustes</div>
       <div class="knobs">
         <Knob label="Afinación" value={t.pitch} min={-24} max={24} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
         <Knob label="Largo" value={t.decay} min={0.05} max={1} def={1} color={t.color} fmt={(v) => (v >= 0.99 ? 'todo' : pct(v))} onChange={(v) => upT(t.id, (x) => { x.decay = v; })} />
-        <Knob label="Recorte inicio" value={vx.from} min={0} max={0.9} def={0} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.vox = { ...x.vox!, from: v }; })} />
       </div>
       <div class="chips" style={{ marginTop: '8px' }}>
+        {(a0 > 0 || b0 < 1) && <button class="chip" onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, from: 0, to: undefined }; })}>Sin recorte</button>}
         <button class={'chip' + (vx.rev ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, rev: !x.vox!.rev }; })}>Al revés</button>
         <button class={'chip' + (vx.one ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, one: !x.vox!.one }; })}>Cada golpe corta el anterior</button>
       </div>
     </> : <div class="note" style={{ marginTop: '8px' }}>Todavía no hay audio: subí un archivo y suena en los golpes de la grilla (pestaña Ritmo).</div>}
-    <div class="hint">Subí cualquier audio corto (un golpe, un grito, un loop) y suena como una percusión: cada casillero de la grilla lo dispara. Se le recorta el silencio del principio y se normaliza; queda guardado en este celu junto con el loop. Con Afinación lo subís o bajás, con Largo lo cortás antes, con Recorte inicio le sacás el arranque y "Al revés" lo da vuelta. Activá "Cada golpe corta el anterior" si es un sample largo o un loop. Para que un loop largo suene una sola vez por vuelta, poné el golpe en el primer paso y desactivá los demás.</div>
+    <div class="hint">Subí cualquier audio corto (un golpe, un grito, un loop) y suena como una percusión: cada casillero de la grilla lo dispara. Se le recorta el silencio del principio y se normaliza; queda guardado en este celu junto con el loop. Con Afinación lo subís o bajás, con Largo lo cortás antes, con las líneas de la onda elegís dónde arranca y dónde termina y "Al revés" lo da vuelta. Activá "Cada golpe corta el anterior" si es un sample largo o un loop. Para que un loop largo suene una sola vez por vuelta, poné el golpe en el primer paso y desactivá los demás.</div>
   </>;
 }
 /* canal de efectos de sonido: elegís el efecto y lo modificás con las perillas (todo suena sincronizado al tempo) */
@@ -1242,7 +1260,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Arpegiador', body: 'La pista de arpegio sigue sola los acordes del loop: arriba ves los 4 acordes y las notas que va a tocar en cada compás. Elegís el patrón (Sube, Baja, Sube y baja, Pulgar, Al azar, Acorde entero o Acid 303), la velocidad (1/4, 1/8, 1/16 o Galope), cuántas octavas recorre, el registro, el largo de las notas y un ritmo listo (Sincopado, Contratiempo, Galope…). Si cambiás los acordes en Escena → Armar, el arpegio cambia con ellos.', art: artChips(['Sube', 'Pulgar', '1/8', 'Sincopado'], 0) },
     { title: 'Piano roll', body: 'La melodía son 4 compases que dibujás en el piano roll, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
     { title: 'Automatización', body: 'En modo Avanzado, la pestaña Movimiento de cada instrumento es su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
-    { title: 'Tus propios samples', body: '"+ Agregar pista" → "Sample propio" y en el editor tocá "Subir un audio": podés usar cualquier audio corto (WAV, MP3, M4A…), un golpe, un grito o un loop. Suena como una percusión en los golpes de la grilla (pestaña Ritmo, con fuerza y divisiones). Afinación lo sube o baja, Largo lo corta, Recorte inicio le saca el arranque y "Al revés" lo da vuelta; "Cada golpe corta el anterior" sirve para samples largos. El audio queda guardado en el celu con el loop (también va en el archivo de respaldo y en los stems), no se sube a ningún lado.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[8, 22, 40, 56, 30, 18, 46, 60, 34, 14, 24, 10].map((h, k) => <line x1={14 + k * 15} y1={40 - h / 2 - 4} x2={14 + k * 15} y2={40 + h / 2 + 4} stroke={k % 3 === 0 ? Y : G} stroke-width="5" stroke-linecap="round" />)}</svg> },
+    { title: 'Tus propios samples', body: '"+ Agregar pista" → "Sample propio" y en el editor tocá "Subir un audio": podés usar cualquier audio corto (WAV, MP3, M4A…), un golpe, un grito o un loop. Suena como una percusión en los golpes de la grilla (pestaña Ritmo, con fuerza y divisiones). Afinación lo sube o baja, Largo lo corta, las dos líneas sobre la onda marcan dónde arranca y dónde termina (se arrastran con el dedo) y "Al revés" lo da vuelta; "Cada golpe corta el anterior" sirve para samples largos. El audio queda guardado en el celu con el loop (también va en el archivo de respaldo y en los stems), no se sube a ningún lado.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[8, 22, 40, 56, 30, 18, 46, 60, 34, 14, 24, 10].map((h, k) => <line x1={14 + k * 15} y1={40 - h / 2 - 4} x2={14 + k * 15} y2={40 + h / 2 + 4} stroke={k % 3 === 0 ? Y : G} stroke-width="5" stroke-linecap="round" />)}</svg> },
     { title: 'Efectos de sonido (FX)', body: '"+ Agregar pista" → "Efectos (risers, impactos…)" suma un canal de efectos: subidas (riser), bajadas (downlifter), impactos, crash, láser, whoosh, viento, sirena, wobble y más. Cada golpe de la grilla lo dispara y dura "Largo" pasos, siempre al tempo: poné un riser en el paso donde arranca el último compás y llega a su punto más fuerte justo al empezar el siguiente. En el editor elegís el efecto y lo modificás: cómo sube o baja el volumen, la mezcla de ruido y tono, el barrido del tono y del filtro (tipo, resonancia, curva), el LFO (pulsos, wobble, sirena) y la saturación. "Probar" lo escucha ya.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M10 68 Q100 64 152 12" fill="none" stroke={Y} stroke-width="3" stroke-linecap="round" /><line x1="152" y1="8" x2="152" y2="72" stroke={R} stroke-width="2" /><path d="M156 40q12-18 14 0t14 0" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
   ],

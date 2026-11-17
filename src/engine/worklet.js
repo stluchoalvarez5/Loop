@@ -51,8 +51,10 @@ function fastRelease(v, sr) {
 }
 class SampleVoice {
   constructor() { this.on = false; }
-  start(buf, rate, vel, dec, pan, sr, from) {
+  start(buf, rate, vel, dec, pan, sr, from, to) {
     this.buf = buf; this.pos = from ? Math.floor(from * buf.length) : 0; this.rate = rate; this.g = vel; this.on = true;
+    this.end = to && to < 1 ? Math.max(this.pos + 64, Math.floor(to * buf.length)) : buf.length; // final del recorte (sample propio)
+    this.fi = from ? 1 : 0; // con recorte al inicio, un fundido cortito para que no haga clic
     this.hold = dec >= 0.99 ? 1e12 : buf.length * (0.15 + dec * 0.8) / rate;
     this.fade = Math.exp(-1 / (sr * 0.02)); this.n = 0;
     this.pl = Math.cos((pan + 1) * Math.PI / 4); this.pr = Math.sin((pan + 1) * Math.PI / 4);
@@ -61,8 +63,10 @@ class SampleVoice {
     const d = this.buf, len = d.length, rt = this.rate * (pm || 1);
     for (let i = a; i < b; i++) {
       const p = this.pos, ip = p | 0;
-      if (ip + 1 >= len) { this.on = false; return; }
-      const s = (d[ip] + (d[ip + 1] - d[ip]) * (p - ip)) * this.g;
+      if (ip + 1 >= len || ip + 1 >= this.end) { this.on = false; return; }
+      let s = (d[ip] + (d[ip + 1] - d[ip]) * (p - ip)) * this.g;
+      if (this.end < len) { const rem = this.end - ip; if (rem < 192) s *= rem / 192; } // fundido corto antes del final recortado
+      if (this.fi && this.n < 96) s *= this.n / 96;
       L[i] += s * this.pl; R[i] += s * this.pr;
       this.pos += rt;
       if (++this.n > this.hold) { this.g *= this.fade; if (this.g < 1e-4) { this.on = false; return; } }
@@ -500,7 +504,7 @@ class LoopEngine extends AudioWorkletProcessor {
       // voz: corta la anterior (choke) para que una palabra no se pise con la siguiente
       if (t.choke) for (const x of t.voices) if (x.on && x !== v) x.hold = Math.min(x.hold, x.n + offset);
       const hum = 1 + (Math.random() * 2 - 1) * (t.human || 0);
-      v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0);
+      v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0, t.to || 0);
       v.delay = offset;
     } else if (fxv) {
       if (!t.fxp) return; const sl = this.stepLen();
