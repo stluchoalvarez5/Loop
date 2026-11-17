@@ -5,7 +5,7 @@ const DB = 'loop-vox', STORE = 'vox';
 const open = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open(DB, 1); r.onupgradeneeded = () => r.result.createObjectStore(STORE); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 const tx = async <T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>) => { const db = await open(); return new Promise<T>((res, rej) => { const q = fn(db.transaction(STORE, mode).objectStore(STORE)); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); };
 
-export type Vox = { sr: number; data: Float32Array };
+export type Vox = { sr: number; data: Float32Array; pk?: number }; // pk: pico original (solo al subir un sample, para avisar si es muy bajito)
 export const saveVox = (id: string, v: Vox) => tx('readwrite', (s) => s.put({ sr: v.sr, data: v.data }, id));
 export const loadVox = (id: string) => tx<Vox | undefined>('readonly', (s) => s.get(id));
 export const deleteVox = (id: string) => tx('readwrite', (s) => s.delete(id));
@@ -72,8 +72,9 @@ export function cleanSample(buf: AudioBuffer, maxSec = 30): Vox {
   if (!(pk > 1e-5)) throw new Error('silencio');
   let a = 0; const th = pk * 0.01; while (a < n - 1 && Math.abs(mono[a]) < th) a++;
   a = Math.max(0, a - Math.round(sr * 0.002));
-  const out = mono.slice(a), g = 0.9 / pk, f = Math.min(out.length >> 2, Math.round(sr * 0.004));
+  // la ganancia está limitada (×32): un audio que es casi silencio no se infla hasta que el ruido de fondo suene a todo volumen
+  const out = mono.slice(a), g = Math.min(0.9 / pk, 32), f = Math.min(out.length >> 2, Math.round(sr * 0.004));
   for (let i = 0; i < out.length; i++) out[i] *= g;
   for (let i = 0; i < f; i++) { out[i] *= i / f; out[out.length - 1 - i] *= i / f; }
-  return { sr, data: out };
+  return { sr, data: out, pk };
 }

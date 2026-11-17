@@ -149,7 +149,7 @@ export type Track = {
   group?: string; // id del grupo al que pertenece
   roll?: boolean; // bajo, arpegio o acordes editados a mano en el piano roll: suenan las notas de `notes` en vez de lo generado
   auto?: Partial<Record<AutoKey, number[]>>; // automatización: 64 valores 0..1 (uno por paso de los 4 compases)
-  vox?: { from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number; to?: number }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
+  vox?: { from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number; to?: number; db?: number }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
   // // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)

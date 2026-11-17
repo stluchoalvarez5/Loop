@@ -815,7 +815,7 @@ function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) =
       await engine.init(); const v = cleanSample(await engine.ctx!.decodeAudioData(await file.arrayBuffer()));
       engine.setVox(t.id, v.data, v.sr); await saveVox(t.id, v).catch(() => {});
       const nm = file.name.replace(/\.[^.]+$/, '').slice(0, 24);
-      upT(t.id, (x) => { x.vox = { ...(x.vox ?? { from: 0, rev: false, has: false }), has: true, from: 0, name: nm, sec: +(v.data.length / v.sr).toFixed(2) }; x.mute = false; if (x.name === 'Sample') x.name = nm.slice(0, 14) || 'Sample'; });
+      upT(t.id, (x) => { x.vox = { ...(x.vox ?? { from: 0, rev: false, has: false }), has: true, from: 0, name: nm, sec: +(v.data.length / v.sr).toFixed(2), db: v.pk ? Math.round(20 * Math.log10(v.pk)) : undefined }; x.mute = false; if (x.name === 'Sample') x.name = nm.slice(0, 14) || 'Sample'; });
       refresh();
     } catch (e: any) { setErr(e?.message === 'silencio' ? 'Ese audio está en silencio (o casi): no tiene nada para escuchar.' : 'No se pudo leer ese audio (el formato puede no ser compatible con este celu). Probá con un WAV o MP3.'); }
     setBusy(false);
@@ -844,7 +844,8 @@ function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) =
     </div>
     {err && <div class="err">{err}</div>}
     {has ? <>
-      <div class="note" style={{ margin: '8px 0 0' }}>{vx.name || 'Sample'} · {vx.sec ? vx.sec + ' s' : ''}</div>
+      <div class="note" style={{ margin: '8px 0 0' }}>{vx.name || 'Sample'} · {vx.sec ? vx.sec + ' s' : ''}{vx.db !== undefined ? ' · nivel original ' + vx.db + ' dB' : ''}</div>
+      {vx.db !== undefined && vx.db < -36 && <div class="err">Este audio es muy bajito ({vx.db} dB): lo más probable es que sea solo ruido de fondo y no un sonido. Si la onda de abajo se ve como un bloque parejo, el archivo es ruido.</div>}
       <div class="swave" style={{ '--c': t.color, touchAction: 'none' } as any} ref={waveRef} onPointerDown={(e) => trim(e, true)} onPointerMove={(e) => trim(e, false)} onPointerUp={() => { drag.current = ''; }} onPointerCancel={() => { drag.current = ''; }}>
         {(vx.rev ? [...wave].reverse() : wave).map((h) => <i style={{ height: Math.max(3, h * 100) + '%' }} />)}
         <div class="shade" style={{ left: 0, width: a0 * 100 + '%' }} /><div class="shade" style={{ left: b0 * 100 + '%', right: 0 }} />
