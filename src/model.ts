@@ -154,7 +154,8 @@ export type Track = {
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
 /* ---------- escenas: lo que cambia entre A, B, C y D (patrones, notas, encendido y automatización; la mezcla es la misma) ---------- */
-export const SCENES = ['A', 'B', 'C', 'D'];
+export const SCENES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']; // las 8 escenas posibles; se ven las primeras 4 y las que se sumen con "+" (`p.nScenes`) o ya estén usadas
+export const sceneList = (p: Project) => { let n = Math.max(4, Math.min(SCENES.length, p.nScenes ?? 4)); SCENES.forEach((k, i) => { if (i >= n && sceneUsed(p, k)) n = i + 1; }); return SCENES.slice(0, n); };
 const SK = ['steps', 'vel', 'velG', 'div', 'grid', 'mute', 'arp', 'notes', 'roll', 'rollEdited', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto', 'autoMelody'] as const;
 export type SceneSnap = { t: Record<string, Partial<Track>>; macros?: Project['macros']; macroAuto?: Project['macroAuto']; fill?: boolean };
 const cl = <T,>(o: T): T => (o === undefined ? o : JSON.parse(JSON.stringify(o)));
@@ -184,7 +185,7 @@ export function copyScene(p: Project, from: string, to: string) {
 }
 export const sceneBars = (p: Project, k: string = p.scene ?? 'A') => Math.max(1, Math.min(4, Math.round(p.bars?.[k] ?? 4)));
 export const sceneUsed = (p: Project, k: string) => k === (p.scene ?? 'A') || !!p.scenes?.[k];
-export function nextScene(p: Project) { const cur = SCENES.indexOf(p.scene ?? 'A'); for (let i = 1; i <= 4; i++) { const k = SCENES[(cur + i) % 4]; if (sceneUsed(p, k)) return k; } return p.scene ?? 'A'; }
+export function nextScene(p: Project) { const cur = SCENES.indexOf(p.scene ?? 'A'), n = SCENES.length; for (let i = 1; i <= n; i++) { const k = SCENES[(cur + i) % n]; if (sceneUsed(p, k)) return k; } return p.scene ?? 'A'; }
 export function clearScene(p: Project, k: string) { if (k === (p.scene ?? 'A')) return; const sc = { ...p.scenes }; delete sc[k]; p.scenes = sc; if (p.bars) { const b = { ...p.bars }; delete b[k]; p.bars = b; } }
 
 /* ---------- variación: otro patrón para la pista, de las variantes del género o cambiando unos golpes ---------- */
@@ -264,6 +265,7 @@ export type Project = {
   seed?: number;
   id?: string; title?: string; // lugar donde se guarda y nombre que se muestra en Mis loops (el nombre musical es `name`)
   edited?: boolean;
+  nScenes?: number; // cuántas escenas se muestran (4 a 8)
   bars?: Record<string, number>; // compases de cada escena (1..4; si falta, 4)
   scene?: string; scenes?: Record<string, SceneSnap>; // escenas A..D: variaciones del patrón que cambian al terminar la vuelta
   chain?: boolean; // encadenar escenas: al terminar cada vuelta pasa a la siguiente que tenga algo
