@@ -275,7 +275,7 @@ type DTab = 'snd' | 'rit' | 'notes' | 'eq' | 'move' | 'more';
 function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; adv: boolean; playing: boolean; onClose: () => void; onDelete: () => void; init?: DTab }) {
   const [tab, setTab] = useState<DTab>(init), [help, setHelp] = useState(false);
   const hasNotes = t.type === 'melody' || t.type === 'bass' || t.type === 'arp' || t.type === 'chords';
-  const canGrid = t.type === 'drum' || t.type === 'bass' || t.type === 'fx' || (t.type === 'sample' && !t.vox?.clip) || (t.type === 'chords' && (t.chordMode ?? 'pad') !== 'pad');
+  const canGrid = t.type === 'drum' || t.type === 'bass' || t.type === 'fx' || (t.type === 'sample' && !t.vox?.clip && !t.vox?.free) || (t.type === 'chords' && (t.chordMode ?? 'pad') !== 'pad');
   const tabs: [DTab, string, any][] = [['snd', 'Sonido', Ic.wave], ...(canGrid ? [['rit', 'Ritmo', Ic.grid] as [DTab, string, any]] : []), ...(hasNotes ? [['notes', 'Notas', Ic.notes] as [DTab, string, any]] : []), ['eq', 'EQ', Ic.eq], ...(adv && t.type !== 'vocal' ? [['move', 'Movimiento', Ic.curve] as [DTab, string, any]] : []), ['more', 'Más', Ic.more]];
   const cur = tabs.some((x) => x[0] === tab) ? tab : 'snd';
   const canVary = t.type !== 'vocal' && t.type !== 'fx' && t.type !== 'sample' && !(t.roll && t.type !== 'melody');
@@ -573,9 +573,9 @@ function App() {
                 <button class="btn" disabled={ti === 0} aria-label={'Subir ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k > 0) [d.tracks[k - 1], d.tracks[k]] = [d.tracks[k], d.tracks[k - 1]]; }))}>▲ Subir</button>
                 <button class="btn" disabled={ti === p.tracks.length - 1} aria-label={'Bajar ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k >= 0 && k < d.tracks.length - 1) [d.tracks[k + 1], d.tracks[k]] = [d.tracks[k], d.tracks[k + 1]]; }))}>▼ Bajar</button>
                 {t.group && <span class="gtag">{p.groups?.find((g) => g.id === t.group)?.name}</span>}
-              </div> : t.type === 'vocal' || (t.type === 'sample' && t.vox?.clip) ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => { setSel(t.id); setDetail(true); }}>
+              </div> : t.type === 'vocal' || (t.type === 'sample' && (t.vox?.clip || t.vox?.free)) ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => { setSel(t.id); setDetail(true); }}>
                 {[0, 1, 2, 3].map((b) => <i style={{ left: b * 25 + '%' }} />)}
-                {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.type === 'sample' ? (t.vox.name || 'sample') + ' · una vez por vuelta' : t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
+                {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.type === 'sample' ? (t.vox.name || 'sample') + (t.vox.free ? ' · de largo' : ' · una vez por vuelta') : t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
               </button> : <div class={'pads' + (narrow ? ' p8' : '')}>
                 {Array.from({ length: narrow ? 8 : 16 }, (_, j) => {
                   const i = (narrow ? half * 8 : 0) + j;
@@ -821,7 +821,7 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
     } catch (e: any) { setErr(e?.message === 'silencio' ? 'Ese audio está en silencio (o casi): no tiene nada para escuchar.' : 'No se pudo leer ese audio (el formato puede no ser compatible con este celu). Probá con un WAV o MP3.'); }
     setBusy(false);
   };
-  const has = !!t.vox?.has, vx = t.vox ?? { from: 0, rev: false, has: false };
+  const has = !!t.vox?.has, vx = t.vox ?? { from: 0, rev: false, has: false }, mode: 'hit' | 'clip' | 'free' = vx.free ? 'free' : vx.clip ? 'clip' : 'hit';
   // recorte con líneas táctiles: el inicio es `from` y el final `to` (fracciones de 0 a 1 del audio); arrastra la línea más cercana al dedo
   const waveRef = useRef<HTMLDivElement>(null), drag = useRef('');
   const a0 = vx.from ?? 0, b0 = vx.to && vx.to > a0 ? vx.to : 1, ms = (f: number) => ((vx.sec ?? 0) * f).toFixed(2) + ' s';
@@ -855,12 +855,24 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
       </div>
       <div class="hint-s">Arrastrá las dos líneas sobre la onda para elegir dónde arranca y dónde termina el sample.</div>
       <div class="sub">Cómo suena</div>
-      <div class="seg">{([[false, 'En los golpes'], [true, 'Una vez por vuelta']] as const).map(([k, l]) => <button class={!!vx.clip === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, clip: k, pos: x.vox!.pos ?? 0 }; })}>{l}</button>)}</div>
-      {vx.clip ? <>
+      <div class="seg">{([['hit', 'En los golpes'], ['clip', 'Una vez por vuelta'], ['free', 'De largo']] as const).map(([k, l]) => <button class={mode === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, clip: k === 'clip', free: k === 'free', loop: k === 'free' ? x.vox!.loop : false, pos: x.vox!.pos ?? 0 }; })}>{l}</button>)}</div>
+      {mode === 'free' && <div class="hint-s">"De largo": arranca una sola vez al darle play y sigue sonando aunque el loop dé la vuelta, hasta que termina el audio (o para siempre si activás "Repetir"). No depende de los compases.</div>}
+      {mode === 'free' && <div class="chips" style={{ marginTop: '6px' }}><button class={'chip' + (vx.loop ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, loop: !x.vox!.loop }; })}>Repetir al terminar</button></div>}
+      {mode !== 'hit' ? <>
         <div class="sub2">Arranca en el compás</div>
         <div class="seg">{[0, 1, 2, 3].map((b) => <button class={Math.floor((vx.pos ?? 0) / 16) === b && (vx.pos ?? 0) % 16 === 0 ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, pos: b * 16 }; })}>{b + 1}</button>)}</div>
-        <div class="hint-s">{loopSec ? `El loop dura ${loopSec.toFixed(1)} s y el audio ${(((vx.sec ?? 0) * (b0 - a0))).toFixed(1)} s (con el recorte). ${(vx.sec ?? 0) * (b0 - a0) > loopSec + 0.05 ? 'Es más largo que el loop: se corta al empezar la vuelta siguiente; recortalo con las líneas para que dure justo lo mismo.' : (vx.sec ?? 0) * (b0 - a0) < loopSec - 0.05 ? 'Es más corto que el loop: termina antes de que vuelva a empezar.' : 'Dura lo mismo que el loop.'}` : ''}</div>
+        <div class="hint-s">{mode === 'clip' && loopSec ? `El loop dura ${loopSec.toFixed(1)} s y el audio ${(((vx.sec ?? 0) * (b0 - a0))).toFixed(1)} s (con el recorte). ${(vx.sec ?? 0) * (b0 - a0) > loopSec + 0.05 ? 'Es más largo que el loop: se corta al empezar la vuelta siguiente; recortalo con las líneas para que dure justo lo mismo.' : (vx.sec ?? 0) * (b0 - a0) < loopSec - 0.05 ? 'Es más corto que el loop: termina antes de que vuelva a empezar.' : 'Dura lo mismo que el loop.'}` : ''}</div>
       </> : null}
+      <div class="sub">Tempo del audio</div>
+      <div class="knobs">
+        <Knob label="BPM del audio" value={vx.bpm ?? 0} min={0} max={480} step={0.5} def={0} color={t.color} fmt={(v) => (v ? v + ' BPM' : 'sin ajuste')} onChange={(v) => upT(t.id, (x) => { x.vox = { ...x.vox!, bpm: v || undefined }; })} />
+      </div>
+      <div class="chips" style={{ marginTop: '6px' }}>
+        <span class="note" style={{ margin: 0, alignSelf: 'center' }}>Si dura</span>
+        {[1, 2, 4, 8, 16].map((n) => <button class="chip" onClick={() => { const sec = (vx.sec ?? 0) * (b0 - a0); if (sec > 0.2) upT(t.id, (x) => { x.vox = { ...x.vox!, bpm: Math.round((n * 4 * 60 / sec) * 2) / 2 }; }); }}>{n} comp.</button>)}
+        <button class={'chip' + (vx.keep ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, keep: !x.vox!.keep }; })}>Mantener el tono</button>
+      </div>
+      <div class="hint-s">{vx.bpm ? `El audio va a ${((p.bpm / vx.bpm) * 100).toFixed(0)} % de su velocidad para seguir el tempo del loop (${p.bpm} BPM)${vx.keep ? ', sin cambiar el tono (estirado granular: mejor con cambios chicos)' : ' (cambia también el tono; activá "Mantener el tono" para evitarlo)'}.` : 'Poné el BPM original del audio (o tocá cuántos compases dura) y va a seguir el tempo del loop, también si lo cambiás.'}</div>
       <div class="sub">Ajustes</div>
       <div class="knobs">
         <Knob label="Afinación" value={t.pitch} min={-24} max={24} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
