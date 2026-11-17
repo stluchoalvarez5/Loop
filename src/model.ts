@@ -97,6 +97,7 @@ export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal';
 export type Note = { s: number; n: number; l: number; o?: number }; // o = desfase dentro del paso de 16 (0..1): notas de 1/32 o tresillos; l en pasos de 16 (puede ser fraccionario)
 export type Track = {
   id: string; name: string; color: string; type: TrackType;
+  kit?: string; // kit propio de este instrumento de batería (si falta, el del loop)
   vel?: number[]; velG?: Record<number, number[]>; // fuerza de cada golpe (0..1; 0 = la de siempre): vel sigue a steps (16 o 64), velG a grid[div] (div o 4*div)
   steps: number[]; // 16 pasos: 0 apagado, 1 golpe, 2 acento
   sound: string; // sample (batería) o preset (sintes)
@@ -557,7 +558,7 @@ export function applyGenre(p: Project, g: string, variant = 0) {
   const r = seeded(clean(p.name || 'Loop') + '#g:' + g + '#' + variant);
   const T = (id: string) => p.tracks.find((t) => t.id === id);
   p.bpm = Math.round(G.bpm[0] + r() * (G.bpm[1] - G.bpm[0])); p.swing = +(G.swing[0] + r() * (G.swing[1] - G.swing[0])).toFixed(2);
-  p.kit = pick(r, G.kit); p.fx = { ...G.fx };
+  p.kit = pick(r, G.kit); p.fx = { ...G.fx }; p.tracks.forEach((t) => { t.kit = undefined; });
   // batería
   const d = pick(r, G.drums);
   (['kick', 'clap', 'hat', 'open', 'perc'] as const).forEach((id) => { const t = T(id); if (t) { t.steps = parseDrum(d[id]); t.mute = !t.steps.some(Boolean); } });
@@ -586,7 +587,7 @@ export function applyGenre(p: Project, g: string, variant = 0) {
 export function applyGenreSound(p: Project, g: string) {
   const G = GENRES[g]; if (!G) return; p.genre = g;
   const r = seeded('snd:' + g), T = (id: string) => p.tracks.find((t) => t.id === id);
-  p.kit = pick(r, G.kit); p.fx = { ...G.fx };
+  p.kit = pick(r, G.kit); p.fx = { ...G.fx }; p.tracks.forEach((t) => { t.kit = undefined; });
   const kick = T('kick'); if (kick) { kick.pitch = G.kick.pitch; kick.decay = G.kick.decay; }
   const set = (t: Track | undefined, sound: string, m: { vol: number; rev: number; dly: number; duck: number }) => { if (!t) return; t.vol = m.vol; t.rev = m.rev; t.dly = m.dly; t.duck = m.duck; if (!t.synth?.pro) { t.sound = sound; t.synth = undefined; } };
   set(T('bass'), pick(r, G.bassSound), G.mix.bass); set(T('chords'), pick(r, G.chordSound), G.mix.chords); set(T('arp'), pick(r, G.arpSound), G.mix.arp); set(T('melody'), pick(r, G.mel.sound), G.mix.melody);
@@ -751,7 +752,7 @@ export function compile(p: Project) {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? (t.type === 'bass' ? SYNTHS.bassSaw.p : t.type === 'arp' ? SYNTHS.pluck.p : SYNTHS.strings.p);
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(Math.min(0.5, nt.l), nt.l - (t.type === 'chords' ? 0.05 : 0.15)), ...(nt.o ? { o: nt.o } : {}) }); });
     } else if (t.type === 'drum') {
-      kind = 'sample'; sample = sampleKey(p.kit, t.sound);
+      kind = 'sample'; sample = sampleKey(t.kit && KITS[t.kit] ? t.kit : p.kit, t.sound);
       if (fineArr(t)) stepHits(t).forEach((h) => { const ghost = clamp(0.38 * (1 + mAt('energy', h.s) * 1.2), 0.15, 0.7); ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : h.v === 3 ? ghost : 0.72), o: h.o }); });
       else for (let s = 0; s < 64; s++) {
         const es = mAt('energy', s), ghost = clamp(0.38 * (1 + es * 1.2), 0.15, 0.7), v = t.steps[s % t.steps.length], xv = t.vel?.length ? t.vel[s % t.vel.length] : 0;

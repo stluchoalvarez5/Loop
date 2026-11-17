@@ -806,9 +806,11 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
         <Knob label="Afinación" value={t.pitch} min={-12} max={12} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
         <Knob label="Largo" value={t.decay} min={0.05} max={1} def={1} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.decay = v; })} />
       </div>
-      <div class="sub">Kit (bombo, clap, hats y snare)</div>
+      <div class="sub">Kit de este instrumento</div>
+      <label class="sel-w"><select class="sel" value={t.kit && KITS[t.kit] ? t.kit : ''} onChange={(e) => { const v = (e.target as HTMLSelectElement).value; upT(t.id, (x) => { x.kit = v || undefined; }); }}><option value="">Del loop ({KITS[p.kit]?.label})</option>{Object.keys(KITS).map((k) => <option value={k}>{KITS[k].label}</option>)}</select></label>
+      <div class="sub">Kit del loop (todos los instrumentos)</div>
       <label class="sel-w"><select class="sel" value={p.kit} onChange={(e) => up((d) => { d.kit = (e.target as HTMLSelectElement).value; })}>{Object.keys(KITS).map((k) => <option value={k}>{KITS[k].label}</option>)}</select></label>
-      <div class="hint">Elegí qué golpe suena en esta fila. Afinación lo sube o baja; Largo lo corta antes. El kit cambia el sonido de toda la batería.</div>
+      <div class="hint">Elegí qué golpe suena en esta fila. Afinación lo sube o baja; Largo lo corta antes. El kit del loop cambia toda la batería; el kit de este instrumento solo cambia esta fila, así podés mezclar, por ejemplo, el hi-hat de un género con el bombo de otro.</div>
     </>;
   }
   if (part === 'notes') return <>
