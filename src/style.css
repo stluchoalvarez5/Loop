@@ -641,3 +641,11 @@ img,svg{-webkit-user-drag:none}
 /* las notas se pintan también en los casilleros del inicio de cada tiempo (antes .rc.q las pisaba) */
 .roll .rc.st{background:var(--c)}
 .roll .rc.tl{background:color-mix(in srgb,var(--c) 45%,#2b2b2b)}
+
+/* fuerza de cada golpe (pestaña Ritmo): una barra por casillero, se arrastra con el dedo */
+.frw{display:flex;flex-direction:column;gap:3px}
+.vlane{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:4px;height:60px;touch-action:none;cursor:ns-resize}
+.vb{position:relative;background:#222;border-radius:2px;overflow:hidden}
+.vb i{position:absolute;left:0;right:0;bottom:0;background:var(--c);opacity:.85}
+.vb.off{background:#1f1f1f}
+.vread{font-size:12px;color:var(--mut);margin-top:8px;min-height:16px;font-family:'JetBrains Mono',monospace}

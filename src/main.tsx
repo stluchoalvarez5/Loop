@@ -104,7 +104,7 @@ function applyMacro(d: Project, k: MacroKey, x: number) {
 }
 /* portapapeles de patrones: queda guardado, así se puede pegar en otro loop */
 type Clip = { type: TrackType; name: string; data: Partial<Track> };
-const CLIP_KEYS = ['steps', 'div', 'grid', 'arp', 'notes', 'roll', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto'] as const;
+const CLIP_KEYS = ['steps', 'vel', 'velG', 'div', 'grid', 'arp', 'notes', 'roll', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto'] as const;
 const getClip = (): Clip | null => { try { return JSON.parse(localStorage.getItem('loop.clip') ?? 'null'); } catch { return null; } };
 const setClip = (t: Track) => { const data: any = {}; CLIP_KEYS.forEach((k) => { if (t[k] !== undefined) data[k] = clone(t[k]); }); try { localStorage.setItem('loop.clip', JSON.stringify({ type: t.type, name: t.name, data })); } catch { /* */ } };
 /* pega en x lo copiado: mismo tipo = todo; batería ⇄ bajo o acordes = los golpes; notas (melodía o piano roll) = las notas */
@@ -726,16 +726,43 @@ function FineEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => 
     if (dd === 16) x.steps = a; else x.grid = { ...x.grid, [dd]: a };
     if (x.mute) x.mute = false;
   }); };
+  // fuerza de cada golpe: la guardada (vel / velG) o la de siempre según el tipo de golpe
+  const [vtxt, setVtxt] = useState('');
+  const vArr = d === 16 ? t.vel : t.velG?.[d];
+  const defV = (v: number) => (v === 2 ? 1 : v === 3 ? 0.38 : t.type === 'drum' ? 0.72 : 0.8);
+  const effV = (j: number) => { const k = bar ? (bar - 1) * d + j : j, x = vArr?.length ? vArr[k % vArr.length] : 0; return x || defV(val(j)); };
+  const writeVel = (cells: [number, number][]) => upT(t.id, (x) => {
+    const dd = x.div ?? 16; let a = (dd === 16 ? x.vel : x.velG?.[dd])?.slice() ?? Array(dd === 16 ? (x.steps.length === 64 ? 64 : 16) : dd).fill(0);
+    if (bar && a.length !== 4 * dd) a = Array.from({ length: 4 * dd }, (_, i) => a[i % a.length]);
+    for (const [j, v] of cells) { if (bar) a[(bar - 1) * dd + j] = v; else if (a.length === 4 * dd) for (let b = 0; b < 4; b++) a[b * dd + j] = v; else a[j] = v; }
+    if (dd === 16) x.vel = a; else x.velG = { ...x.velG, [dd]: a };
+  });
+  const paint = (e: PointerEvent, r: number, down: boolean) => {
+    const el = e.currentTarget as HTMLElement;
+    if (down) el.setPointerCapture(e.pointerId); else if (!el.hasPointerCapture(e.pointerId)) return;
+    const b = el.getBoundingClientRect(), k = Math.max(0, Math.min(rowLen - 1, Math.floor(((e.clientX - b.left) / b.width) * rowLen))), j = r * rowLen + k;
+    if (!val(j)) return;
+    const v = Math.max(0.03, Math.min(1, Math.round((1 - (e.clientY - b.top) / b.height) * 100) / 100));
+    setVtxt(`${t.name} · posición ${j + 1}: fuerza ${Math.round(v * 127)}`); writeVel([[j, v]]);
+  };
+  const humanize = () => { const cells: [number, number][] = []; for (let j = 0; j < d; j++) if (val(j)) cells.push([j, Math.max(0.1, Math.min(1, +(effV(j) * (0.88 + Math.random() * 0.24)).toFixed(2)))]); writeVel(cells); };
   return <>
     <div class="sub">División del compás</div>
     <div class="divs">{DIVS.map(([k, l, h]) => <button class={d === k ? 'on' : ''} title={h} onClick={() => setDiv(k)}>{l}</button>)}</div>
     <div class="barsel-w" style={{ marginTop: '10px' }}><span class="sb-l">Compás</span><div class="seg barsel">{['Todos', '1', '2', '3', '4'].map((l, k) => <button class={bar === k ? 'on' : ''} onClick={() => setBar(k)}>{l}</button>)}</div></div>
     <div class="fine" style={{ '--c': t.color, '--n': rowLen } as any}>
-      {Array.from({ length: rows }, (_, r) => <div class="frow">
+      {Array.from({ length: rows }, (_, r) => <div class="frw"><div class="frow">
         {Array.from({ length: rowLen }, (_, k) => { const j = r * rowLen + k, v = val(j); return <button class={'fp' + (v === 1 ? ' v1' : v === 2 ? ' v2' : v === 3 ? ' v1 gh' : '') + (j % beat === 0 ? ' q' : '')} aria-label={`${t.name}, división ${DIVS.find((x) => x[0] === d)?.[1]}, posición ${j + 1}`} {...tap(() => edit(j))} />; })}
+      </div>
+        <div class="vlane" style={{ '--n': rowLen } as any} onPointerDown={(e) => paint(e, r, true)} onPointerMove={(e) => paint(e, r, false)}>
+          {Array.from({ length: rowLen }, (_, k) => { const j = r * rowLen + k, v = val(j); return <div class={'vb' + (v ? '' : ' off')}>{v ? <i style={{ height: Math.round(effV(j) * 100) + '%' }} /> : null}</div>; })}
+        </div>
       </div>)}
     </div>
+    <div class="vread">{vtxt || 'Fuerza de cada golpe: arrastrá las barras de abajo de cada fila (0 a 127).'}</div>
     <div class="chips" style={{ marginTop: '10px' }}>
+      <button class="chip" onClick={humanize}>Humanizar fuerza</button>
+      <button class="chip" onClick={() => { upT(t.id, (x) => { if ((x.div ?? 16) === 16) x.vel = undefined; else if (x.velG) { const g = { ...x.velG }; delete g[x.div!]; x.velG = g; } }); setVtxt('Fuerza restablecida'); }}>Fuerza de siempre</button>
       <button class="chip" onClick={() => upT(t.id, (x) => { const dd = x.div ?? 16; if (dd === 16) x.steps = Array(x.steps.length).fill(0); else x.grid = { ...x.grid, [dd]: Array(fineArr(x)?.length ?? dd).fill(0) }; })}>Vaciar</button>
       {d !== 16 && long && <span class="note" style={{ margin: 0, alignSelf: 'center' }}>Tiene los 4 compases distintos</span>}
     </div>
@@ -1102,7 +1129,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos. Arriba de la grilla elegís el compás: en "Todos" lo que tocás se repite en los 4 compases; en 1, 2, 3 o 4 cambiás solo ese compás (por ejemplo, un golpe distinto al final). "Copiar a los 4 compases" y "Vaciar compás" aplican al compás elegido, y las pistas con compases distintos muestran un 4 al lado del nombre. Con el celu parado ves 8 pasos por vez, bien grandes: con "Pasos 1 – 8 / 9 – 16" pasás a la otra mitad del compás (la que está sonando se marca en verde). Acostado ves los 16 juntos.', art: artGrid },
     { title: 'Grupos y orden', body: 'En modo Avanzado, arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando el nombre de un grupo abrís su panel para renombrarlo, sumar o sacar instrumentos o borrarlo. El botón de las flechas ordena los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
     { title: 'Editar una pista', body: 'Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo. Arriba de Sonido tenés el volumen y el pan del instrumento (los mismos del Mixer) y el tono: afinación, fino y vibrato. En Movimiento también podés automatizar el Tono para que suba o baje a lo largo de los 4 compases.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
-    { title: 'Dividir el compás', body: 'Los instrumentos con golpes (batería, bajo y acordes en stabs o gate) tienen una pestaña Ritmo en su editor donde elegís cómo se divide el compás: 1/16 (lo normal), 1/32 (el doble de casilleros, para redobles y flams) o tresillos de corchea o de semicorchea. Ahí editás una grilla más fina, por compás o en los 4 juntos, y en la grilla de Patrón la pista muestra una marca (32, T8 o T16). Melodía, piano roll y arpegio también: en la pestaña Notas el piano roll tiene su selector de división (las notas pueden caer en 1/32 o en tresillos), el arpegiador suma las velocidades 1/32 y tresillos, y a la voz le podés elegir el punto de arranque de a medio paso.', art: artChips(['1/16', '1/32', 'T 1/8', 'T 1/16'], 1) },
+    { title: 'Dividir el compás', body: 'Los instrumentos con golpes (batería, bajo y acordes en stabs o gate) tienen una pestaña Ritmo en su editor donde elegís cómo se divide el compás: 1/16 (lo normal), 1/32 (el doble de casilleros, para redobles y flams) o tresillos de corchea o de semicorchea. Ahí editás una grilla más fina, por compás o en los 4 juntos, y en la grilla de Patrón la pista muestra una marca (32, T8 o T16). Melodía, piano roll y arpegio también: en la pestaña Notas el piano roll tiene su selector de división (las notas pueden caer en 1/32 o en tresillos), el arpegiador suma las velocidades 1/32 y tresillos, y a la voz le podés elegir el punto de arranque de a medio paso. Debajo de cada fila de la pestaña Ritmo hay una barra por golpe: arrastrala para darle más o menos fuerza (0 a 127), por ejemplo para que un redoblante suene más que el otro.', art: artChips(['1/16', '1/32', 'T 1/8', 'T 1/16'], 1) },
     { title: 'Variación, copiar y pegar', body: 'El dado arriba del editor de cada instrumento le da otro patrón (de los que usa el género, o cambiando algunos golpes y notas). En la pestaña Más, "Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. Arriba de la grilla, las barritas agregan un redoble y el tacho vacía la batería.', art: artChips(['Variación', 'Copiar patrón', 'Pegar'], 0) },
     { title: 'Sinte pro', body: 'En modo Avanzado, en la pestaña Sonido del bajo, el arpegio, los acordes o la melodía, "Editar a fondo" abre un sinte completo, estilo Serum: dos osciladores con tablas de onda (Forma recorre la tabla), unísono con detune y ancho estéreo, sub y ruido, filtro de varios tipos, dos envolventes, dos LFO al ritmo del loop y una matriz para conectar todo. Hay sonidos pro listos y podés guardar los tuyos en Mis sonidos.', art: artKnobs(['Forma', 'Detune', 'Corte', 'LFO']) },
     { title: 'Ecualizador de cada instrumento', body: 'En el editor de cada instrumento, la pestaña EQ tiene un ecualizador de 4 bandas: arrastrás los puntos de la curva con el dedo (a los costados la frecuencia, arriba o abajo cuánto sube o baja) o usás las perillas y los ajustes rápidos (Menos barro, Más brillo, Radio…). En el Mixer lo abrís con el botón EQ de cada columna.', art: artKnobs(['Graves', 'Medio', 'Agudos', 'Ancho']) },
