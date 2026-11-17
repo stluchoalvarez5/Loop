@@ -1,7 +1,7 @@
 /* Varios proyectos guardados en el celu.
    localStorage: `loop.projects` = índice chico (nombre, género, fecha) y `loop.proj.<id>` = cada proyecto entero.
    Las voces grabadas siguen en IndexedDB (loop-vox, clave = id de pista): acá solo se copian o se borran con su proyecto. */
-import { GENRES, SYNTHS, applyGenre, type Project } from './model';
+import { GENRES, SYNTHS, applyGenre, hasAudio, type Project } from './model';
 import { saveVox, loadVox, deleteVox } from './vox';
 
 export type Meta = { id: string; title: string; genre: string; key?: string; updated: number };
@@ -17,7 +17,7 @@ export const titleOf = (p: Project) => p.title || p.name || 'Loop';
 export function normalize(p: Project): Project {
   if (!GENRES[p.genre]) applyGenre(p, 'prog');
   if (!p.groups) { p.groups = [{ id: 'drums', name: 'Batería' }]; p.tracks.forEach((t) => { if (t.type === 'drum') t.group = 'drums'; }); }
-  p.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal' && t.type !== 'fx' && !SYNTHS[t.sound]) t.sound = t.type === 'bass' ? 'bassSaw' : t.type === 'chords' ? 'strings' : 'pluck'; });
+  p.tracks.forEach((t) => { if (t.type !== 'drum' && t.type !== 'vocal' && t.type !== 'fx' && t.type !== 'sample' && !SYNTHS[t.sound]) t.sound = t.type === 'bass' ? 'bassSaw' : t.type === 'chords' ? 'strings' : 'pluck'; });
   return p;
 }
 
@@ -52,7 +52,7 @@ export function saveProject(p: Project): boolean {
 export async function deleteProject(id: string) {
   const p = loadProject(id);
   del(KEY(id)); writeIndex(listProjects().filter((m) => m.id !== id));
-  if (p) for (const t of p.tracks) if (t.type === 'vocal') await deleteVox(t.id).catch(() => {});
+  if (p) for (const t of p.tracks) if (hasAudio(t)) await deleteVox(t.id).catch(() => {});
 }
 export function renameProject(id: string, title: string) {
   const p = loadProject(id); if (!p) return; p.title = title; saveProject(p);
@@ -61,7 +61,7 @@ export function renameProject(id: string, title: string) {
 /* copia con id nuevo; las voces se copian con ids de pista nuevos para que cada proyecto tenga las suyas */
 export async function duplicate(p: Project, title?: string): Promise<Project> {
   const d: Project = JSON.parse(JSON.stringify(p)); d.id = newId(); d.title = title ?? titleOf(p) + ' (copia)'; d.edited = true;
-  for (const t of d.tracks) if (t.type === 'vocal') {
+  for (const t of d.tracks) if (hasAudio(t)) {
     const nid = 'vocal-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), v = await loadVox(t.id).catch(() => undefined);
     if (v) await saveVox(nid, v).catch(() => {});
     t.id = nid;
@@ -74,7 +74,7 @@ const b64 = (u: Uint8Array) => { let s = ''; for (let i = 0; i < u.length; i += 
 const unb64 = (s: string) => { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
 export async function exportFile(p: Project): Promise<Blob> {
   const vox: Record<string, { sr: number; pcm: string }> = {};
-  for (const t of p.tracks) if (t.type === 'vocal') {
+  for (const t of p.tracks) if (hasAudio(t)) {
     const v = await loadVox(t.id).catch(() => undefined); if (!v) continue;
     const i16 = new Int16Array(v.data.length); for (let i = 0; i < i16.length; i++) i16[i] = Math.max(-32768, Math.min(32767, Math.round(v.data[i] * 32767)));
     vox[t.id] = { sr: v.sr, pcm: b64(new Uint8Array(i16.buffer)) };
@@ -85,7 +85,7 @@ export async function importFile(file: File): Promise<Project> {
   const j = JSON.parse(await file.text());
   if (j?.app !== 'loop' || !j.project?.tracks) throw new Error('no es un archivo de Loop');
   const p: Project = normalize(j.project); p.id = newId(); p.edited = true;
-  for (const t of p.tracks) if (t.type === 'vocal') {
+  for (const t of p.tracks) if (hasAudio(t)) {
     const v = j.vox?.[t.id], nid = 'vocal-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     if (v) { const u = unb64(v.pcm), i16 = new Int16Array(u.buffer, 0, u.length >> 1), f = new Float32Array(i16.length); for (let i = 0; i < f.length; i++) f[i] = i16[i] / 32767; await saveVox(nid, { sr: v.sr, data: f }).catch(() => {}); }
     else if (t.vox) t.vox.has = false;

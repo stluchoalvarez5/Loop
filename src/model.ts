@@ -93,7 +93,7 @@ export function autoShape(shape: string, lo: number, hi: number): number[] {
     return +(lo + (hi - lo) * u).toFixed(3);
   });
 }
-export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal' | 'fx';
+export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal' | 'fx' | 'sample';
 /* canal de efectos de sonido (risers, impactos, barridos…): una voz generativa del worklet, sincronizada al tempo.
    env: cómo sube y baja el volumen; mode: tipo de filtro; len: largo en pasos de 16; f0→f1: barrido del filtro (Hz);
    noise: mezcla ruido (1) / tono (0); o0→o1: barrido del tono (Hz); curve: forma del barrido (−1..1);
@@ -149,7 +149,8 @@ export type Track = {
   group?: string; // id del grupo al que pertenece
   roll?: boolean; // bajo, arpegio o acordes editados a mano en el piano roll: suenan las notas de `notes` en vez de lo generado
   auto?: Partial<Record<AutoKey, number[]>>; // automatización: 64 valores 0..1 (uno por paso de los 4 compases)
-  vox?: { from: number; rev: boolean; has: boolean; pos?: number }; // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
+  vox?: { from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
+  // // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
 };
@@ -184,6 +185,7 @@ export function copyScene(p: Project, from: string, to: string) {
   if (to === cur) loadScene(p, src); else p.scenes = { ...p.scenes, [to]: cl(src) };
 }
 export const sceneBars = (p: Project, k: string = p.scene ?? 'A') => Math.max(1, Math.min(4, Math.round(p.bars?.[k] ?? 4)));
+export const hasAudio = (t: Track) => t.type === 'vocal' || t.type === 'sample'; // pistas con audio propio guardado en IndexedDB
 export const sceneUsed = (p: Project, k: string) => k === (p.scene ?? 'A') || !!p.scenes?.[k];
 export function nextScene(p: Project) { const cur = SCENES.indexOf(p.scene ?? 'A'), n = SCENES.length; for (let i = 1; i <= n; i++) { const k = SCENES[(cur + i) % n]; if (sceneUsed(p, k)) return k; } return p.scene ?? 'A'; }
 export function clearScene(p: Project, k: string) { if (k === (p.scene ?? 'A')) return; const sc = { ...p.scenes }; delete sc[k]; p.scenes = sc; if (p.bars) { const b = { ...p.bars }; delete b[k]; p.bars = b; } }
@@ -550,6 +552,7 @@ const PALETTE = ['#e5655b', '#e98a5f', '#e9c46a', '#d6cf7e', '#a7c973', '#6fbf86
 export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   const n = p.tracks.length, id = type + '-' + Date.now().toString(36), color = PALETTE[n % PALETTE.length];
   if (type === 'vocal') { const t = mkTrack(id, 'Voz', 'vocal', 'vox', { color: '#e5655b', vol: 0.8, rev: 0.25, dly: 0.3, duck: 0.2 }); t.steps = Array(16).fill(0); t.steps[0] = 2; t.fx = { hp: 110 }; t.vox = { from: 0, rev: false, has: false, pos: 0 }; return t; }
+  if (type === 'sample') { const t = mkTrack(id, 'Sample', 'sample', 'sample', { color, vol: 0.7, rev: 0.1 }); t.steps = [1, ...Array(15).fill(0)]; t.vox = { from: 0, rev: false, has: false }; return t; }
   if (type === 'fx') { const k = sound ?? 'riser'; const t = mkTrack(id, 'FX ' + (FX_SOUNDS[k]?.label ?? 'Efecto'), 'fx', k, { color, vol: 0.6, rev: 0.3, dly: 0.15, fxs: { ...FX_SOUNDS[k].p } }); t.steps = Array(64).fill(0); t.steps[48] = 1; return t; }
   if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
   if (type === 'bass') return mkTrack(id, 'Bajo 2', 'bass', sound ?? 'fmBass', { color, vol: 0.7, duck: 0.5 });
@@ -791,6 +794,10 @@ export function compile(p: Project) {
       // la voz es un clip de hasta 4 compases: suena una vez por vuelta, desde su posición
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
       { const ps = Math.max(0, Math.min(63.5, t.vox?.pos ?? 0)), s0 = Math.floor(ps + 1e-6); ev[s0].push({ v: 0.9, ...(ps - s0 > 1e-6 ? { o: ps - s0 } : {}) }); }
+    } else if (t.type === 'sample') {
+      // sample propio (audio que subió el usuario): suena como una percusión en los golpes de la grilla
+      kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
+      if (t.vox?.has) for (const h of stepHits(t)) ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : h.v === 3 ? 0.38 : 0.8), ...(h.o ? { o: h.o } : {}) });
     } else if (t.type === 'fx') {
       kind = 'fx'; fxp = { ...(FX_SOUNDS[t.sound]?.p ?? FX_SOUNDS.riser.p), ...t.fxs };
       for (const h of stepHits(t)) ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : 0.85), ...(h.o ? { o: h.o } : {}) });
@@ -851,9 +858,9 @@ export function compile(p: Project) {
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined, fine: t.fine || 0, vib: t.vib && t.vib.d > 0.001 ? t.vib : undefined,
-      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal', from: t.type === 'vocal' ? t.vox?.from ?? 0 : 0,
+      mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal' || (t.type === 'sample' && !!t.vox?.one), from: t.type === 'vocal' || t.type === 'sample' ? t.vox?.from ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' || t.type === 'fx' ? 0 : 0.05,
-      cutAmt: t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx',
+      cutAmt: t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' || t.type === 'sample' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx' && t.type !== 'sample', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx' && t.type !== 'sample',
     };
   });
   const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;

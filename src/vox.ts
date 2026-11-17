@@ -57,3 +57,16 @@ export function finishLoopVox(d: Float32Array, sr: number): Vox {
 
 /* contorno de la onda para dibujarla (picos por columna) */
 export function peaks(d: Float32Array, cols = 120) { const o: number[] = [], k = Math.max(1, Math.floor(d.length / cols)); for (let c = 0; c < cols; c++) { let m = 0; for (let i = c * k; i < Math.min(d.length, (c + 1) * k); i++) m = Math.max(m, Math.abs(d[i])); o.push(m); } return o; }
+
+/* sample propio: a mono, sin el silencio del principio, normalizado y con los bordes suavizados; hasta 30 s para no llenar la memoria */
+export function cleanSample(buf: AudioBuffer, maxSec = 30): Vox {
+  const sr = buf.sampleRate, n = Math.min(buf.length, Math.round(maxSec * sr)), mono = new Float32Array(n);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels; }
+  let pk = 0; for (let i = 0; i < n; i++) pk = Math.max(pk, Math.abs(mono[i]));
+  let a = 0; const th = Math.max(0.003, pk * 0.01); while (a < n - 1 && Math.abs(mono[a]) < th) a++;
+  a = Math.max(0, a - Math.round(sr * 0.002));
+  const out = mono.slice(a), g = pk > 0 ? 0.9 / pk : 1, f = Math.min(out.length >> 2, Math.round(sr * 0.004));
+  for (let i = 0; i < out.length; i++) out[i] *= g;
+  for (let i = 0; i < f; i++) { out[i] *= i / f; out[out.length - 1 - i] *= i / f; }
+  return { sr, data: out };
+}
