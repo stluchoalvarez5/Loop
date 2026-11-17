@@ -58,23 +58,31 @@ export function finishLoopVox(d: Float32Array, sr: number): Vox {
 /* contorno de la onda para dibujarla (picos por columna) */
 export function peaks(d: Float32Array, cols = 120) { const o: number[] = [], k = Math.max(1, Math.floor(d.length / cols)); for (let c = 0; c < cols; c++) { let m = 0; for (let i = c * k; i < Math.min(d.length, (c + 1) * k); i++) m = Math.max(m, Math.abs(d[i])); o.push(m); } return o; }
 
-/* sample propio: a mono, sin el silencio del principio, normalizado y con los bordes suavizados; hasta 30 s para no llenar la memoria */
-export function cleanSample(buf: AudioBuffer, maxSec = 30): Vox {
-  const sr = buf.sampleRate, n = Math.min(buf.length, Math.round(maxSec * sr)), mono = new Float32Array(n), nc = buf.numberOfChannels;
-  for (let ch = 0; ch < nc; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < n; i++) mono[i] += d[i] / nc; }
+/* sample propio: a mono, sin el silencio del principio (aunque dure minutos: una capela que arranca en el minuto 2 empieza ahí), normalizado y con los bordes suavizados.
+   Se guardan hasta 120 s desde donde empieza el sonido, para no llenar la memoria; con las líneas de recorte se elige la parte que suena. */
+export function cleanSample(buf: AudioBuffer, maxSec = 120): Vox {
+  const sr = buf.sampleRate, total = buf.length, nc = buf.numberOfChannels, chs = Array.from({ length: nc }, (_, c) => buf.getChannelData(c));
+  const at = (i: number) => { let v = 0; for (let c = 0; c < nc; c++) v += chs[c][i]; return v / nc; };
+  // se busca el pico y el primer sonido sobre TODO el archivo (antes solo se miraban los primeros segundos)
+  let pk = 0; for (let i = 0; i < total; i++) pk = Math.max(pk, Math.abs(at(i)));
+  if (nc > 1) for (let c = 0; c < nc; c++) { const d = chs[c]; for (let i = 0; i < total; i++) pk = Math.max(pk, Math.abs(d[i]) * 0.5); }
+  if (!(pk > 1e-5)) throw new Error('silencio');
+  const th = pk * 0.01; let a = 0;
+  while (a < total - 1) { let m = 0; for (let c = 0; c < nc; c++) m = Math.max(m, Math.abs(chs[c][a])); if (m >= th) break; a++; }
+  a = Math.max(0, a - Math.round(sr * 0.002));
+  const n = Math.min(total - a, Math.round(maxSec * sr)), mono = new Float32Array(n);
+  for (let i = 0; i < n; i++) mono[i] = at(a + i);
   // un estéreo con los canales en contrafase se anula al sumarlos a mono: en ese caso se usa el canal con más energía
   if (nc > 1) {
-    const en = (d: ArrayLike<number>) => { let e = 0; for (let i = 0; i < n; i++) e += d[i] * d[i]; return e; };
-    let best = 0, bestE = -1; for (let ch = 0; ch < nc; ch++) { const e = en(buf.getChannelData(ch)); if (e > bestE) { bestE = e; best = ch; } }
-    if (en(mono) < bestE * 0.35) mono.set(buf.getChannelData(best).subarray(0, n));
+    const en = (d: ArrayLike<number>, o = 0) => { let e = 0; for (let i = 0; i < n; i++) e += d[o + i] * d[o + i]; return e; };
+    let best = 0, bestE = -1; for (let c = 0; c < nc; c++) { const e = en(chs[c], a); if (e > bestE) { bestE = e; best = c; } }
+    if (en(mono) < bestE * 0.35) mono.set(chs[best].subarray(a, a + n));
   }
-  let pk = 0; for (let i = 0; i < n; i++) pk = Math.max(pk, Math.abs(mono[i]));
-  if (!(pk > 1e-5)) throw new Error('silencio');
-  let a = 0; const th = pk * 0.01; while (a < n - 1 && Math.abs(mono[a]) < th) a++;
-  a = Math.max(0, a - Math.round(sr * 0.002));
+  let mp = 0; for (let i = 0; i < n; i++) mp = Math.max(mp, Math.abs(mono[i]));
+  if (!(mp > 1e-5)) throw new Error('silencio');
   // la ganancia está limitada (×32): un audio que es casi silencio no se infla hasta que el ruido de fondo suene a todo volumen
-  const out = mono.slice(a), g = Math.min(0.9 / pk, 32), f = Math.min(out.length >> 2, Math.round(sr * 0.004));
-  for (let i = 0; i < out.length; i++) out[i] *= g;
-  for (let i = 0; i < f; i++) { out[i] *= i / f; out[out.length - 1 - i] *= i / f; }
-  return { sr, data: out, pk };
+  const g = Math.min(0.9 / mp, 32), f = Math.min(n >> 2, Math.round(sr * 0.004));
+  for (let i = 0; i < n; i++) mono[i] *= g;
+  for (let i = 0; i < f; i++) { mono[i] *= i / f; mono[n - 1 - i] *= i / f; }
+  return { sr, data: mono, pk: mp };
 }

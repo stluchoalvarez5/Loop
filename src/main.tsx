@@ -845,6 +845,7 @@ function SampleEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) =
     {err && <div class="err">{err}</div>}
     {has ? <>
       <div class="note" style={{ margin: '8px 0 0' }}>{vx.name || 'Sample'} · {vx.sec ? vx.sec + ' s' : ''}{vx.db !== undefined ? ' · nivel original ' + vx.db + ' dB' : ''}</div>
+      {(vx.sec ?? 0) >= 119.5 && <div class="hint-s">El audio es largo: se guardaron los primeros 2 minutos desde donde empieza el sonido.</div>}
       {vx.db !== undefined && vx.db < -36 && <div class="err">Este audio es muy bajito ({vx.db} dB): lo más probable es que sea solo ruido de fondo y no un sonido. Si la onda de abajo se ve como un bloque parejo, el archivo es ruido.</div>}
       <div class="swave" style={{ '--c': t.color, touchAction: 'none' } as any} ref={waveRef} onPointerDown={(e) => trim(e, true)} onPointerMove={(e) => trim(e, false)} onPointerUp={() => { drag.current = ''; }} onPointerCancel={() => { drag.current = ''; }}>
         {(vx.rev ? [...wave].reverse() : wave).map((h) => <i style={{ height: Math.max(3, h * 100) + '%' }} />)}
