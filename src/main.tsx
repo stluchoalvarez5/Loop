@@ -11,7 +11,7 @@ import '@fontsource/jetbrains-mono/600.css';
 import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
-import { saveVox, loadVox, deleteVox, voxKeys, cleanVox, cleanSample, startRecording, peaks, finishLoopVox } from './vox';
+import { saveVox, loadVox, deleteVox, voxKeys, cleanVox, cleanSample, detectTempo, startRecording, peaks, finishLoopVox } from './vox';
 import { renderAudio, renderArrangement, defaultArrangement, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
 import { migrate, listProjects, loadProject, saveProject, deleteProject, renameProject, duplicate, currentId, newId, titleOf, exportFile, importFile, type Meta } from './store';
 import { registerSW } from 'virtual:pwa-register';
@@ -818,16 +818,48 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
       await engine.init(); const v = cleanSample(await engine.ctx!.decodeAudioData(await file.arrayBuffer()));
       engine.setVox(t.id, v.data, v.sr); await saveVox(t.id, v).catch(() => {});
       const nm = file.name.replace(/\.[^.]+$/, '').slice(0, 24);
-      upT(t.id, (x) => { x.vox = { ...(x.vox ?? { from: 0, rev: false, has: false }), has: true, from: 0, name: nm, sec: +(v.data.length / v.sr).toFixed(2), db: v.pk ? Math.round(20 * Math.log10(v.pk)) : undefined }; x.mute = false; if (x.name === 'Sample') x.name = nm.slice(0, 14) || 'Sample'; });
+      const det = detectTempo(v.data, v.sr), ok = det.bpm > 0 && det.conf >= 0.3, dsec = v.data.length / v.sr; // warp automático: BPM, primer tiempo y arranque en el 1er tiempo
+      upT(t.id, (x) => { x.vox = { ...(x.vox ?? { from: 0, rev: false, has: false }), has: true, from: ok && det.off / dsec < 0.3 ? +(det.off / dsec).toFixed(5) : 0, to: undefined, wm: undefined, ...(ok ? { bpm: det.bpm, off: det.off, conf: det.conf, keep: true, gm: 'b' as const } : { bpm: undefined, off: undefined, conf: undefined }), name: nm, sec: +(v.data.length / v.sr).toFixed(2), db: v.pk ? Math.round(20 * Math.log10(v.pk)) : undefined }; x.mute = false; if (x.name === 'Sample') x.name = nm.slice(0, 14) || 'Sample'; });
       refresh();
     } catch (e: any) { setErr(e?.message === 'silencio' ? 'Ese audio está en silencio (o casi): no tiene nada para escuchar.' : 'No se pudo leer ese audio (el formato puede no ser compatible con este celu). Probá con un WAV o MP3.'); }
     setBusy(false);
   };
   const has = !!t.vox?.has, vx = t.vox ?? { from: 0, rev: false, has: false }, mode: 'hit' | 'clip' | 'free' = vx.free ? 'free' : vx.clip ? 'clip' : 'hit';
   // recorte con líneas táctiles: el inicio es `from` y el final `to` (fracciones de 0 a 1 del audio); arrastra la línea más cercana al dedo
-  const waveRef = useRef<HTMLDivElement>(null), drag = useRef('');
+  const waveRef = useRef<HTMLDivElement>(null), drag = useRef(''), wdrag = useRef<any>(null), [tool, setTool] = useState<'trim' | 'grid' | 'warp'>('trim');
   const sec = vx.sec ?? 0, a0 = vx.from ?? 0, b0 = vx.to && vx.to > a0 ? vx.to : 1, minGap = Math.max(0.0002, 0.002 / Math.max(0.05, sec || 1)); // el recorte puede achicarse hasta 2 ms
   const ms = (f: number) => (sec * f).toFixed(zoom >= 4 ? 3 : 2) + ' s', px = (f: number) => (f - vs) * zoom * 100;
+  // cuadrícula de pulsos y marcadores de warp: cada marcador fija un segundo del audio a un pulso; entre marcadores el tempo del audio se adapta
+  const wmk = useMemo(() => [...(vx.wm ?? [])].sort((p0, p1) => p0[1] - p1[1]), [vx.wm]), bpsB = (vx.bpm || 0) / 60, gOff = vx.off ?? 0, hasGrid = !!vx.bpm && sec > 0;
+  const beatOf = (s: number) => { const n = wmk.length; if (n >= 2) { let i = 0; while (i < n - 2 && s >= wmk[i + 1][0]) i++; return wmk[i][1] + ((s - wmk[i][0]) * (wmk[i + 1][1] - wmk[i][1])) / (wmk[i + 1][0] - wmk[i][0] || 1e-6); } if (n === 1) return wmk[0][1] + (s - wmk[0][0]) * bpsB; return (s - gOff) * bpsB; };
+  const srcOf = (b: number) => { const n = wmk.length; if (n >= 2) { let i = 0; while (i < n - 2 && b >= wmk[i + 1][1]) i++; return wmk[i][0] + ((b - wmk[i][1]) * (wmk[i + 1][0] - wmk[i][0])) / (wmk[i + 1][1] - wmk[i][1] || 1e-6); } if (n === 1) return wmk[0][0] + (b - wmk[0][1]) / Math.max(1e-6, bpsB); return gOff + b / Math.max(1e-6, bpsB); };
+  const gridLines = useMemo(() => { if (!hasGrid) return [] as { k: number; f: number }[]; const t0 = vs * sec, t1 = (vs + 1 / zoom) * sec, k0 = Math.floor(beatOf(t0)), k1 = Math.ceil(beatOf(t1)), step = k1 - k0 > 200 ? 4 : 1, out: { k: number; f: number }[] = []; for (let k = Math.ceil(k0 / step) * step; k <= k1 && out.length < 400; k += step) { const sx = srcOf(k); if (sx >= t0 && sx <= t1) out.push({ k, f: sx / sec }); } return out; }, [hasGrid, vs, zoom, sec, vx.bpm, vx.off, vx.wm]);
+  const detect = () => { const d = engine.sampleData['vox:' + t.id]; if (!d) return; const r = detectTempo(d, engine.sr); if (!(r.bpm > 0)) { setErr('No se encontró un pulso claro en este audio. Poné el BPM a mano o usá los marcadores de warp.'); return; } setErr(''); upT(t.id, (x) => { x.vox = { ...x.vox!, bpm: r.bpm, off: r.off, conf: r.conf, wm: undefined }; }); };
+  const wavePtr = (e: PointerEvent, ph: 'down' | 'move' | 'up') => {
+    const el = waveRef.current; if (!el) return;
+    if (tool === 'trim') { if (ph === 'up') { drag.current = ''; return; } trim(e, ph === 'down'); return; }
+    const r = el.getBoundingClientRect(), fOf = (xx: number) => Math.max(0, Math.min(1, vs + Math.max(0, Math.min(1, (xx - r.left) / r.width)) / zoom));
+    if (ph === 'down') {
+      el.setPointerCapture(e.pointerId); const f = fOf(e.clientX);
+      if (tool === 'grid') { wdrag.current = { kind: 'grid', f0: f, off0: gOff, moved: false }; return; }
+      let best: { k: number; f: number } | null = null, bd = 1e9; gridLines.forEach((l) => { const dd = Math.abs((px(l.f) / 100) * r.width - (e.clientX - r.left)); if (dd < bd) { bd = dd; best = l; } });
+      wdrag.current = best && bd <= 22 ? { kind: 'warp', k: (best as any).k, x0: e.clientX, moved: false, existed: wmk.some((q) => Math.abs(q[1] - (best as any).k) < 1e-6) } : null; return;
+    }
+    const d = wdrag.current; if (!d) return;
+    if (ph === 'move') {
+      const f = fOf(e.clientX);
+      if (d.kind === 'grid') { d.moved = true; upT(t.id, (x) => { x.vox!.off = +(d.off0 + (f - d.f0) * sec).toFixed(4); }); return; }
+      if (Math.abs(e.clientX - d.x0) > 4) d.moved = true;
+      if (d.moved) upT(t.id, (x) => {
+        const v = x.vox!, w = (v.wm ?? []).map((q) => [...q] as [number, number]); let q = w.find((z) => Math.abs(z[1] - d.k) < 1e-6);
+        if (!q) { q = [srcOf(d.k), d.k]; w.push(q); } w.sort((a1, b1) => a1[1] - b1[1]);
+        const i = w.indexOf(q), lo = i > 0 ? w[i - 1][0] + 0.002 : 0, hi = i < w.length - 1 ? w[i + 1][0] - 0.002 : sec; q[0] = +Math.max(lo, Math.min(hi, f * sec)).toFixed(4); v.wm = w;
+      });
+      return;
+    }
+    if (!d.moved && d.kind === 'warp') upT(t.id, (x) => { const v = x.vox!, w = (v.wm ?? []).filter((z) => Math.abs(z[1] - d.k) >= 1e-6); if (!d.existed) w.push([+srcOf(d.k).toFixed(4), d.k]); w.sort((a1, b1) => a1[1] - b1[1]); v.wm = w.length ? w : undefined; }); // un toque fija o saca el marcador de ese pulso
+    wdrag.current = null;
+  };
   const setZ = (nz: number, center?: number) => { nz = Math.max(1, Math.min(256, nz)); const c = center ?? vs + 0.5 / zoom; setZoom(nz); setVs(Math.max(0, Math.min(1 - 1 / nz, c - 0.5 / nz))); };
   const setRegion = (from: number, to: number) => upT(t.id, (x) => { const v = x.vox!; v.from = +Math.max(0, Math.min(1 - minGap, from)).toFixed(5); const tt = Math.max(v.from + minGap, Math.min(1, to)); v.to = tt >= 0.99995 ? undefined : +tt.toFixed(5); });
   const nudge = (w: 'a' | 'b', dms: number) => { if (!sec) return; const d = dms / 1000 / sec; if (w === 'a') setRegion(a0 + d, b0); else setRegion(a0, b0 + d); };
@@ -857,8 +889,10 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
       <div class="note" style={{ margin: '8px 0 0' }}>{vx.name || 'Sample'} · {vx.sec ? vx.sec + ' s' : ''}{vx.db !== undefined ? ' · nivel original ' + vx.db + ' dB' : ''}</div>
       {(vx.sec ?? 0) >= 119.5 && <div class="hint-s">El audio es largo: se guardaron los primeros 2 minutos desde donde empieza el sonido.</div>}
       {vx.db !== undefined && vx.db < -36 && <div class="err">Este audio es muy bajito ({vx.db} dB): lo más probable es que sea solo ruido de fondo y no un sonido. Si la onda de abajo se ve como un bloque parejo, el archivo es ruido.</div>}
-      <div class="swave" style={{ '--c': t.color, touchAction: 'none' } as any} ref={waveRef} onPointerDown={(e) => trim(e, true)} onPointerMove={(e) => trim(e, false)} onPointerUp={() => { drag.current = ''; }} onPointerCancel={() => { drag.current = ''; }}>
+      <div class="swave" style={{ '--c': t.color, touchAction: 'none' } as any} ref={waveRef} onPointerDown={(e) => wavePtr(e, 'down')} onPointerMove={(e) => wavePtr(e, 'move')} onPointerUp={(e) => wavePtr(e, 'up')} onPointerCancel={() => { drag.current = ''; wdrag.current = null; }}>
         {wave.map((h) => <i style={{ height: Math.max(3, h * 100) + '%' }} />)}
+        {gridLines.map((l) => <div class={'bl' + (((l.k % 4) + 4) % 4 === 0 ? ' bar' : '') + (tool === 'warp' ? ' hot' : '')} style={{ left: px(l.f) + '%' }} />)}
+        {wmk.map((q) => sec > 0 && px(q[0] / sec) >= -1 && px(q[0] / sec) <= 101 && <div class="wm" style={{ left: px(q[0] / sec) + '%' }}><b>{q[1]}</b></div>)}
         <div class="shade" style={{ left: 0, width: Math.max(0, Math.min(100, px(a0))) + '%' }} /><div class="shade" style={{ left: Math.max(0, Math.min(100, px(b0))) + '%', right: 0 }} />
         {px(a0) >= -1 && px(a0) <= 101 && <div class="tline" style={{ left: px(a0) + '%' }}><b>{ms(a0)}</b></div>}
         {px(b0) >= -1 && px(b0) <= 101 && <div class="tline e" style={{ left: px(b0) + '%' }}><b>{ms(b0)}</b></div>}
@@ -869,7 +903,9 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
         <button class="chip" onClick={() => setZ(Math.min(256, 0.8 / Math.max(minGap, b0 - a0)), (a0 + b0) / 2)}>Acercar al recorte</button>
         {zoom > 1 && <button class="chip" onClick={() => setZ(1)}>Ver todo</button>}
       </div>
-      <div class="hint-s">Arrastrá las dos líneas sobre la onda (la más cercana al dedo). Con Zoom las movés con más precisión.{zoom > 1 ? ' Zoom ×' + (zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)) + '.' : ''}</div>
+      <div class="sub2">Qué mover en la onda</div>
+      <div class="seg">{([['trim', 'Recorte'], ['grid', 'Cuadrícula'], ['warp', 'Warp']] as const).map(([k, l]) => <button class={tool === k ? 'on' : ''} onClick={() => setTool(k)}>{l}</button>)}</div>
+      <div class="hint-s">{tool === 'trim' ? 'Arrastrá las dos líneas naranjas (inicio y final); se mueve la más cercana al dedo.' : tool === 'grid' ? 'Arrastrá la onda para correr la cuadrícula de pulsos hasta que una línea gruesa (el "1" de cada compás) caiga justo en un golpe.' : 'Tocá una línea de pulso para fijar un marcador y arrastrala hasta el golpe de la onda que le corresponde: entre marcadores el audio se estira o se comprime para caer en la cuadrícula del loop. Tocá un marcador para sacarlo.'}{zoom > 1 ? ' Zoom ×' + (zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)) + '.' : ''}{!hasGrid && tool !== 'trim' ? ' Primero poné el BPM del audio (Detectar BPM).' : ''}</div>
       <div class="sub2">Ajuste fino</div>
       <div class="nudge">{(['a', 'b'] as const).map((w) => <div class="nr"><span>{w === 'a' ? 'Inicio' : 'Final'}</span>{[-10, -1, 1, 10].map((d) => <button class="chip" onClick={() => nudge(w, d)}>{d > 0 ? '+' : '−'}{Math.abs(d)} ms</button>)}</div>)}</div>
       <div class="sub2">Largo del recorte</div>
@@ -884,16 +920,22 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
         <div class="seg">{[0, 1, 2, 3].map((b) => <button class={Math.floor((vx.pos ?? 0) / 16) === b && (vx.pos ?? 0) % 16 === 0 ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, pos: b * 16 }; })}>{b + 1}</button>)}</div>
         <div class="hint-s">{mode === 'clip' && loopSec ? `El loop dura ${loopSec.toFixed(1)} s y el audio ${(((vx.sec ?? 0) * (b0 - a0))).toFixed(1)} s (con el recorte). ${(vx.sec ?? 0) * (b0 - a0) > loopSec + 0.05 ? 'Es más largo que el loop: se corta al empezar la vuelta siguiente; recortalo con las líneas para que dure justo lo mismo.' : (vx.sec ?? 0) * (b0 - a0) < loopSec - 0.05 ? 'Es más corto que el loop: termina antes de que vuelva a empezar.' : 'Dura lo mismo que el loop.'}` : ''}</div>
       </> : null}
-      <div class="sub">Tempo del audio</div>
+      <div class="sub">Tempo del audio (warp)</div>
+      <div class="chips" style={{ marginBottom: '6px' }}>
+        <button class="btn" onClick={detect}>Detectar BPM</button>
+        {vx.bpm ? <><button class="chip" onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, bpm: Math.min(480, +(x.vox!.bpm! * 2).toFixed(2)), wm: undefined }; })}>×2</button><button class="chip" onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, bpm: Math.max(20, +(x.vox!.bpm! / 2).toFixed(2)), wm: undefined }; })}>÷2</button><button class="chip" title="Pone el inicio del recorte en el primer tiempo" onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, from: Math.max(0, Math.min(0.95, +((x.vox!.off ?? 0) / Math.max(0.01, x.vox!.sec ?? 1)).toFixed(5))) }; })}>Inicio = 1er tiempo</button></> : null}
+        {(vx.wm?.length ?? 0) > 0 && <button class="chip" onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, wm: undefined }; })}>Borrar marcadores ({vx.wm!.length})</button>}
+      </div>
+      {vx.conf !== undefined && vx.bpm ? <div class="hint-s">Detectado {vx.bpm} BPM · primer tiempo en {(vx.off ?? 0).toFixed(3)} s · confianza {vx.conf > 0.6 ? 'alta' : vx.conf > 0.35 ? 'media' : 'baja'}. Si suena a la mitad o al doble, probá ×2 o ÷2.</div> : null}
       <div class="knobs">
         <Knob label="BPM del audio" value={vx.bpm ?? 0} min={0} max={480} step={0.5} def={0} color={t.color} fmt={(v) => (v ? v + ' BPM' : 'sin ajuste')} onChange={(v) => upT(t.id, (x) => { x.vox = { ...x.vox!, bpm: v || undefined }; })} />
       </div>
       <div class="chips" style={{ marginTop: '6px' }}>
         <span class="note" style={{ margin: 0, alignSelf: 'center' }}>Si dura</span>
         {[1, 2, 4, 8, 16].map((n) => <button class="chip" onClick={() => { const sec = (vx.sec ?? 0) * (b0 - a0); if (sec > 0.2) upT(t.id, (x) => { x.vox = { ...x.vox!, bpm: Math.round((n * 4 * 60 / sec) * 2) / 2 }; }); }}>{n} comp.</button>)}
-        <button class={'chip' + (vx.keep ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, keep: !x.vox!.keep }; })}>Mantener el tono</button>
+        {([['re', 'Re-pitch'], ['tones', 'Tonos'], ['beats', 'Beats']] as const).map(([k, l]) => <button class={'chip' + ((k === 're' && !vx.keep) || (k === 'tones' && vx.keep && vx.gm !== 'b') || (k === 'beats' && vx.keep && vx.gm === 'b') ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.vox = { ...x.vox!, keep: k !== 're', gm: k === 'beats' ? 'b' : undefined }; })}>{l}</button>)}
       </div>
-      <div class="hint-s">{vx.bpm ? `El audio va a ${((p.bpm / vx.bpm) * 100).toFixed(0)} % de su velocidad para seguir el tempo del loop (${p.bpm} BPM)${vx.keep ? ', sin cambiar el tono (estirado granular: mejor con cambios chicos)' : ' (cambia también el tono; activá "Mantener el tono" para evitarlo)'}.` : 'Poné el BPM original del audio (o tocá cuántos compases dura) y va a seguir el tempo del loop, también si lo cambiás.'}</div>
+      <div class="hint-s">{vx.bpm ? `El audio va a ${((p.bpm / vx.bpm) * 100).toFixed(0)} % de su velocidad para seguir el tempo del loop (${p.bpm} BPM)${vx.keep ? ', sin cambiar el tono (estirado granular: mejor con cambios chicos)' : ' (Re-pitch: cambia también el tono; elegí Tonos o Beats para mantenerlo)'}.` : 'Poné el BPM original del audio (o tocá cuántos compases dura) y va a seguir el tempo del loop, también si lo cambiás.'}</div>
       <div class="sub">Ajustes</div>
       <div class="knobs">
         <Knob label="Afinación" value={t.pitch} min={-24} max={24} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => upT(t.id, (x) => { x.pitch = v; })} />
@@ -1303,7 +1345,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Arpegiador', body: 'La pista de arpegio sigue sola los acordes del loop: arriba ves los 4 acordes y las notas que va a tocar en cada compás. Elegís el patrón (Sube, Baja, Sube y baja, Pulgar, Al azar, Acorde entero o Acid 303), la velocidad (1/4, 1/8, 1/16 o Galope), cuántas octavas recorre, el registro, el largo de las notas y un ritmo listo (Sincopado, Contratiempo, Galope…). Si cambiás los acordes en Escena → Armar, el arpegio cambia con ellos.', art: artChips(['Sube', 'Pulgar', '1/8', 'Sincopado'], 0) },
     { title: 'Piano roll', body: 'La melodía son 4 compases que dibujás en el piano roll, y el bajo, el arpegio y los acordes también se pueden pasar al piano roll con "Editar notas en piano roll". Tocás un casillero para poner una nota y de nuevo para sacarla. "Usar todas las notas" muestra el piano entero, no solo las de la tonalidad.', art: <div class="art-roll">{Array.from({ length: 5 }, (_, r) => <div>{Array.from({ length: 12 }, (_, k) => <i class={[[1, 2], [4], [0, 7, 8], [10], [5]][r].includes(k) ? 'on' : ''} />)}</div>)}</div> },
     { title: 'Automatización', body: 'En modo Avanzado, la pestaña Movimiento de cada instrumento es su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
-    { title: 'Tus propios samples', body: '"+ Agregar pista" → "Sample propio" y en el editor tocá "Subir un audio": podés usar cualquier audio corto (WAV, MP3, M4A…), un golpe, un grito o un loop. Suena como una percusión en los golpes de la grilla (pestaña Ritmo, con fuerza y divisiones). Afinación lo sube o baja, Largo lo corta, las dos líneas sobre la onda marcan dónde arranca y dónde termina (se arrastran con el dedo) y "Al revés" lo da vuelta; "Cada golpe corta el anterior" sirve para samples largos. El audio queda guardado en el celu con el loop (también va en el archivo de respaldo y en los stems), no se sube a ningún lado.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[8, 22, 40, 56, 30, 18, 46, 60, 34, 14, 24, 10].map((h, k) => <line x1={14 + k * 15} y1={40 - h / 2 - 4} x2={14 + k * 15} y2={40 + h / 2 + 4} stroke={k % 3 === 0 ? Y : G} stroke-width="5" stroke-linecap="round" />)}</svg> },
+    { title: 'Tus propios samples', body: 'Al subir un audio la app detecta solita el BPM y el primer tiempo (si hay un pulso claro) y lo ajusta al tempo del loop. Sobre la onda ves la cuadrícula de pulsos (línea gruesa = el 1 de cada compás) y con "Qué mover en la onda" elegís: Recorte (inicio y final), Cuadrícula (corrés los pulsos hasta que caigan justo en los golpes) o Warp (tocás una línea de pulso para fijar un marcador y la arrastrás al golpe que le corresponde: entre marcadores el audio se acomoda a la cuadrícula, como en Ableton). El modo de warp se elige entre Re-pitch (cambia el tono), Tonos (estira sin cambiar el tono, para voces y sintes) y Beats (corta en pulsos y no estira: ideal para loops de batería). "+ Agregar pista" → "Sample propio" y en el editor tocá "Subir un audio": podés usar cualquier audio corto (WAV, MP3, M4A…), un golpe, un grito o un loop. Suena como una percusión en los golpes de la grilla (pestaña Ritmo, con fuerza y divisiones). Afinación lo sube o baja, Largo lo corta, las dos líneas sobre la onda marcan dónde arranca y dónde termina (se arrastran con el dedo) y "Al revés" lo da vuelta; "Cada golpe corta el anterior" sirve para samples largos. El audio queda guardado en el celu con el loop (también va en el archivo de respaldo y en los stems), no se sube a ningún lado.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[8, 22, 40, 56, 30, 18, 46, 60, 34, 14, 24, 10].map((h, k) => <line x1={14 + k * 15} y1={40 - h / 2 - 4} x2={14 + k * 15} y2={40 + h / 2 + 4} stroke={k % 3 === 0 ? Y : G} stroke-width="5" stroke-linecap="round" />)}</svg> },
     { title: 'Efectos de sonido (FX)', body: '"+ Agregar pista" → "Efectos (risers, impactos…)" suma un canal de efectos: subidas (riser), bajadas (downlifter), impactos, crash, láser, whoosh, viento, sirena, wobble y más. Cada golpe de la grilla lo dispara y dura "Largo" pasos, siempre al tempo: poné un riser en el paso donde arranca el último compás y llega a su punto más fuerte justo al empezar el siguiente. En el editor elegís el efecto y lo modificás: cómo sube o baja el volumen, la mezcla de ruido y tono, el barrido del tono y del filtro (tipo, resonancia, curva), el LFO (pulsos, wobble, sirena) y la saturación. "Probar" lo escucha ya.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M10 68 Q100 64 152 12" fill="none" stroke={Y} stroke-width="3" stroke-linecap="round" /><line x1="152" y1="8" x2="152" y2="72" stroke={R} stroke-width="2" /><path d="M156 40q12-18 14 0t14 0" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
   ],

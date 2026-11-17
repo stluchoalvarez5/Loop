@@ -86,3 +86,31 @@ export function cleanSample(buf: AudioBuffer, maxSec = 120): Vox {
   for (let i = 0; i < f; i++) { mono[i] *= i / f; mono[n - 1 - i] *= i / f; }
   return { sr, data: mono, pk: mp };
 }
+
+/* detección de tempo y del primer tiempo (para "warpear" un sample como en Ableton):
+   1) fuerza de ataques (diferencia positiva de la energía por cuadros de ~6 ms, en dos bandas: graves y agudos)
+   2) autocorrelación para el período de la pulsación (60 a 200 BPM, con preferencia por 80 a 160)
+   3) afinado fino del BPM y de la fase con un peine de pulsos sobre la curva de ataques */
+export function detectTempo(data: Float32Array, sr: number, maxSec = 90): { bpm: number; off: number; conf: number } {
+  const hop = Math.round(sr * 0.006), n = Math.min(data.length, Math.round(maxSec * sr)), F = Math.floor(n / hop);
+  if (F < 100) return { bpm: 0, off: 0, conf: 0 };
+  // energía por cuadro en dos bandas (el pasa bajos de un polo separa graves; el resto son agudos)
+  const lo = new Float64Array(F), hi = new Float64Array(F); let y = 0;
+  for (let f = 0; f < F; f++) { let el = 0, eh = 0; for (let i = f * hop; i < (f + 1) * hop; i++) { const x = data[i]; y += 0.02 * (x - y); const h = x - y; el += y * y; eh += h * h; } lo[f] = el / hop; hi[f] = eh / hop; }
+  const on = new Float64Array(F);
+  for (let f = 1; f < F; f++) { const a = Math.log(1 + 400 * lo[f]) - Math.log(1 + 400 * lo[f - 1]), b = Math.log(1 + 400 * hi[f]) - Math.log(1 + 400 * hi[f - 1]); on[f] = Math.max(0, a) + Math.max(0, b); }
+  let mean = 0; for (let f = 0; f < F; f++) mean += on[f]; mean /= F; for (let f = 0; f < F; f++) on[f] = Math.max(0, on[f] - mean * 0.9);
+  const fps = sr / hop, lmin = Math.round((fps * 60) / 200), lmax = Math.round((fps * 60) / 60), ac: number[] = [];
+  let best = 0, bl = lmin, zero = 0; for (let f = 0; f < F; f++) zero += on[f] * on[f]; if (zero < 1e-9) return { bpm: 0, off: 0, conf: 0 };
+  for (let l = lmin; l <= lmax; l++) { let s = 0; for (let f = l; f < F; f++) s += on[f] * on[f - l]; s /= F - l; const bpm = (fps * 60) / l, w = bpm >= 80 && bpm <= 160 ? 1 : 0.8; ac[l] = s * w; if (ac[l] > best) { best = ac[l]; bl = l; } }
+  // candidatos: el mejor y su doble / mitad (el peine decide con más precisión cuál es el pulso)
+  const score = (bpm: number, ph: number) => { const P = (fps * 60) / bpm; let s = 0, c = 0; for (let t = ph; t < F - 1; t += P) { const i = Math.floor(t), fr = t - i; s += on[i] * (1 - fr) + on[i + 1] * fr; c++; } return c ? s / c : 0; };
+  const cands = new Set<number>(); const b0 = (fps * 60) / bl; [b0, b0 * 2, b0 / 2].forEach((b) => { if (b >= 60 && b <= 200) cands.add(b); });
+  let bb = 0, bs = -1, bph = 0;
+  for (const c of cands) {
+    for (let b = c - 3; b <= c + 3; b += 0.05) { const P = (fps * 60) / b; for (let ph = 0; ph < P; ph += 0.5) { const s = score(b, ph) * (b >= 80 && b <= 160 ? 1 : 0.9); if (s > bs) { bs = s; bb = b; bph = ph; } } }
+  }
+  const tot = on.reduce((a, v) => a + v, 0) / F, conf = Math.max(0, Math.min(1, tot > 0 ? bs / (tot * 4) : 0));
+  let off = (bph * hop) / sr; const beat = 60 / bb; if (off >= beat * 0.9) off -= beat; // el primer tiempo más cercano al principio
+  return { bpm: Math.round(bb * 100) / 100, off: Math.max(0, off), conf };
+}

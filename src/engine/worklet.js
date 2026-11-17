@@ -49,6 +49,9 @@ function fastRelease(v, sr) {
   if (v.stage !== undefined) { v.stage = 2; v.rK = k; v.len = Math.min(v.len, v.t); }
   else { v.hold = Math.min(v.hold, v.n); v.fade = k; }
 }
+/* pulsos de un sample con warp: wm = marcadores [segundo del audio, pulso] (ordenados por pulso); sin marcadores, cuadrícula pareja (primer tiempo `off`, `abps` pulsos por segundo) */
+function wBeatOf(s, bm) { const w = bm.wm, n = w ? w.length : 0; if (n >= 2) { let i = 0; while (i < n - 2 && s >= w[i + 1][0]) i++; return w[i][1] + (s - w[i][0]) * (w[i + 1][1] - w[i][1]) / (w[i + 1][0] - w[i][0] || 1e-6); } if (n === 1) return w[0][1] + (s - w[0][0]) * bm.abps; return (s - bm.off) * bm.abps; }
+function wSrcOf(b, bm) { const w = bm.wm, n = w ? w.length : 0; if (n >= 2) { let i = 0; while (i < n - 2 && b >= w[i + 1][1]) i++; return w[i][0] + (b - w[i][1]) * (w[i + 1][0] - w[i][0]) / (w[i + 1][1] - w[i][1] || 1e-6); } if (n === 1) return w[0][0] + (b - w[0][1]) / Math.max(1e-6, bm.abps); return bm.off + b / Math.max(1e-6, bm.abps); }
 class SampleVoice {
   constructor() { this.on = false; }
   start(buf, rate, vel, dec, pan, sr, from, to) {
@@ -58,11 +61,18 @@ class SampleVoice {
     this.hold = dec >= 0.99 ? 1e12 : buf.length * (0.15 + dec * 0.8) / rate;
     this.fade = Math.exp(-1 / (sr * 0.02)); this.n = 0;
     this.pl = Math.cos((pan + 1) * Math.PI / 4); this.pr = Math.sin((pan + 1) * Math.PI / 4);
-    this.tr = 1; this.keep = false; this.loop = false; this.gran = false; this.gs = Math.round(sr * 0.06); this.hop = this.gs >> 1; // granos de 60 ms para estirar sin cambiar el tono
+    this.sr0 = sr; this.slice = false; this.bm = null; this.pb = 120; this.bj = 0; this.bphase = 0; this.xn = 0; this.gate = 1; this.tr = 1; this.keep = false; this.loop = false; this.gran = false; this.gs = Math.round(sr * 0.06); this.hop = this.gs >> 1; // granos de 60 ms para estirar sin cambiar el tono
     this.gp0 = 0; this.gp1 = 0; this.ga0 = 1e9; this.ga1 = 1e9; this.gc = 0;
+  }
+  /* warp: velocidad de lectura según la posición en el audio, a partir de los marcadores [segundo del audio, tiempo (pulso)] */
+  trW(wm, pbpm, abps) {
+    const s = this.pos / this.sr0, n = wm.length; let bps = abps || 2;
+    if (n >= 2) { let i = 0; while (i < n - 2 && s >= wm[i + 1][0]) i++; const ds = wm[i + 1][0] - wm[i][0]; if (ds > 1e-4) bps = (wm[i + 1][1] - wm[i][1]) / ds; }
+    const tr = (pbpm / 60) / Math.max(0.05, bps); return tr < 0.25 ? 0.25 : tr > 4 ? 4 : tr;
   }
   render(L, R, a, b, cm, gps, pm) {
     const tr = this.tr || 1, pr = this.rate * (pm || 1);
+    if (this.slice && this.bm) { this.renderB(L, R, a, b, pr); return; }
     if (this.keep && Math.abs(tr - 1) > 0.003) { this.renderG(L, R, a, b, tr, pr); return; }
     if (this.gran) { this.gran = false; } // volvió a velocidad normal: sigue desde la posición de lectura
     const d = this.buf, len = d.length, end = this.end, rt = this.keep ? pr : pr * tr;
@@ -74,6 +84,30 @@ class SampleVoice {
       if (this.fi && this.n < 96) s *= this.n / 96;
       L[i] += s * this.pl; R[i] += s * this.pr;
       this.pos += rt;
+      if (++this.n > this.hold) { this.g *= this.fade; if (this.g < 1e-4) { this.on = false; return; } }
+    }
+  }
+  /* modo Beats: el audio se corta en pulsos y cada pulso arranca en su lugar de la cuadrícula del loop, siempre a la velocidad original (sin estirar, así los golpes quedan limpios);
+     si el pulso del audio es más largo se corta con un fundido y si es más corto se apaga antes de que llegue el siguiente */
+  renderB(L, R, a, b, pr) {
+    const d = this.buf, len = d.length, end = Math.min(this.end, len - 2), bm = this.bm, sr = this.sr0, XF = 192, OB = (sr * 60) / Math.max(20, this.pb);
+    if (!this.bInit) { this.bInit = true; this.kb0 = Math.round(wBeatOf(this.pos / sr, bm)); this.segEnd = wSrcOf(this.kb0 + 1, bm) * sr; if (!(this.segEnd > this.pos + 64)) this.segEnd = this.pos + OB * pr; }
+    for (let i = a; i < b; i++) {
+      if (this.bphase >= OB - XF) { // el pulso nuevo empieza un fundido antes (así el golpe llega entero justo en su lugar)
+        this.bphase -= OB; this.bj++;
+        let nx = wSrcOf(this.kb0 + this.bj, bm) * sr;
+        if (nx >= end - 1 || nx < 0) { if (this.loop) { this.bj = 0; nx = this.start0; } else { this.on = false; return; } }
+        this.xpos = this.pos; this.xn = XF; this.pos = Math.max(0, nx - XF * pr); this.segEnd = wSrcOf(this.kb0 + this.bj + 1, bm) * sr; if (!(this.segEnd > nx + 64)) this.segEnd = nx + OB * pr;
+      }
+      let ip = this.pos | 0; if (ip + 1 >= len) { if (this.xn <= 0) { this.on = false; return; } ip = len - 2; }
+      let s = d[ip] + (d[ip + 1] - d[ip]) * (this.pos - ip);
+      if (this.xn > 0) { const xp = this.xpos | 0; if (xp + 1 < len) { const o = d[xp] + (d[xp + 1] - d[xp]) * (this.xpos - xp), w = this.xn / XF; s = s * (1 - w) + o * w; } this.xn--; this.xpos += pr; }
+      // fundido cuando el pulso del audio se terminó (hasta que llegue el próximo del loop)
+      if (this.pos >= this.segEnd - XF * pr) this.gate = Math.max(0, this.gate - 1 / XF); else this.gate = Math.min(1, this.gate + 1 / XF);
+      s *= this.g * this.gate; if (this.fi && this.n < 96) s *= this.n / 96;
+      L[i] += s * this.pl; R[i] += s * this.pr;
+      if (this.gate > 0 || this.pos < this.segEnd) this.pos += pr;
+      this.bphase++;
       if (++this.n > this.hold) { this.g *= this.fade; if (this.g < 1e-4) { this.on = false; return; } }
     }
   }
@@ -530,6 +564,7 @@ class LoopEngine extends AudioWorkletProcessor {
       const hum = 1 + (Math.random() * 2 - 1) * (t.human || 0);
       v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0, t.to || 0);
       v.tr = t.tr || 1; v.keep = !!t.keep; v.loop = !!t.loopv;
+      if (t.slice) { v.slice = true; v.bInit = false; v.bm = { wm: t.wmB, off: t.goff || 0, abps: t.abps || 2 }; v.start0 = v.pos; }
       v.delay = offset;
     } else if (fxv) {
       if (!t.fxp) return; const sl = this.stepLen();
@@ -593,7 +628,7 @@ class LoopEngine extends AudioWorkletProcessor {
         if (!v.on) continue;
         const a = v.delay || 0;
         if (a >= N) { v.delay = a - N; continue; } // golpe atrasado por el groove: todavía no empieza
-        v.delay = 0; v.tr = t.tr || 1; v.render(B.tL, B.tR, a, N, cm, ps + a / slen, pm);
+        v.delay = 0; v.pb = this.bpm; v.tr = t.wm && v.trW ? v.trW(t.wm, this.bpm, t.abps) : (t.tr || 1); v.render(B.tL, B.tR, a, N, cm, ps + a / slen, pm);
       }
       const I = t.ins;
       // automatización: valor de cada parámetro en este momento de los 4 compases (interpolado entre pasos)

@@ -149,7 +149,7 @@ export type Track = {
   group?: string; // id del grupo al que pertenece
   roll?: boolean; // bajo, arpegio o acordes editados a mano en el piano roll: suenan las notas de `notes` en vez de lo generado
   auto?: Partial<Record<AutoKey, number[]>>; // automatización: 64 valores 0..1 (uno por paso de los 4 compases)
-  vox?: { from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number; to?: number; db?: number; clip?: boolean; free?: boolean; loop?: boolean; keep?: boolean; bpm?: number }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
+  vox?: { from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number; to?: number; db?: number; clip?: boolean; free?: boolean; loop?: boolean; keep?: boolean; bpm?: number; off?: number; wm?: [number, number][]; gm?: 'b'; conf?: number }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
   // // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
@@ -860,7 +860,7 @@ export function compile(p: Project) {
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined, fine: t.fine || 0, vib: t.vib && t.vib.d > 0.001 ? t.vib : undefined,
       mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal' || (t.type === 'sample' && !!(t.vox?.one || t.vox?.clip || t.vox?.free)),
-      tr: t.type === 'sample' && t.vox?.bpm ? p.bpm / t.vox.bpm : 1, keep: t.type === 'sample' && !!t.vox?.keep, once: t.type === 'sample' && !!t.vox?.free, loopv: t.type === 'sample' && !!t.vox?.loop, from: t.type === 'vocal' || t.type === 'sample' ? t.vox?.from ?? 0 : 0, to: t.type === 'sample' ? t.vox?.to ?? 0 : 0,
+      tr: t.type === 'sample' && t.vox?.bpm ? p.bpm / t.vox.bpm : 1, wm: t.type === 'sample' && !t.vox?.rev && (t.vox?.wm?.length ?? 0) >= 2 ? [...t.vox!.wm!].sort((a, b) => a[0] - b[0]) : undefined, abps: t.type === 'sample' ? (t.vox?.bpm ?? p.bpm) / 60 : 1, slice: t.type === 'sample' && t.vox?.gm === 'b' && !!t.vox.keep && !!t.vox.bpm && !t.vox.rev, goff: t.type === 'sample' ? t.vox?.off ?? 0 : 0, wmB: t.type === 'sample' && t.vox?.wm?.length ? [...t.vox.wm].sort((a, b) => a[1] - b[1]) : undefined, keep: t.type === 'sample' && !!t.vox?.keep, once: t.type === 'sample' && !!t.vox?.free, loopv: t.type === 'sample' && !!t.vox?.loop, from: t.type === 'vocal' || t.type === 'sample' ? t.vox?.from ?? 0 : 0, to: t.type === 'sample' ? t.vox?.to ?? 0 : 0,
       spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' || t.type === 'fx' ? 0 : 0.05,
       cutAmt: t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' || t.type === 'sample' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx' && t.type !== 'sample', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx' && t.type !== 'sample',
     };

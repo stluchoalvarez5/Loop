@@ -674,3 +674,10 @@ img,svg{-webkit-user-drag:none}
 .nudge .nr{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
 .nudge .nr span{width:48px;font-size:12px;color:var(--mut)}
 .nudge .chip{min-width:52px}
+/* cuadrícula de pulsos y marcadores de warp sobre la onda del sample */
+.swave .bl{position:absolute;top:0;bottom:0;width:0;border-left:1px solid rgba(255,255,255,.22);pointer-events:none}
+.swave .bl.bar{border-left:2px solid rgba(255,255,255,.5)}
+.swave .bl.hot{border-left-color:rgba(120,200,255,.55)}
+.swave .wm{position:absolute;top:0;bottom:0;width:0;border-left:2px solid #5bc0ff;pointer-events:none}
+.swave .wm::before{content:'';position:absolute;top:0;left:-6px;border:6px solid transparent;border-top-color:#5bc0ff}
+.swave .wm b{position:absolute;bottom:2px;left:4px;font:600 10px 'JetBrains Mono',monospace;color:#5bc0ff;text-shadow:0 0 3px #000}
