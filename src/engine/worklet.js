@@ -61,7 +61,7 @@ class SampleVoice {
     this.hold = dec >= 0.99 ? 1e12 : buf.length * (0.15 + dec * 0.8) / rate;
     this.fade = Math.exp(-1 / (sr * 0.02)); this.n = 0;
     this.pl = Math.cos((pan + 1) * Math.PI / 4); this.pr = Math.sin((pan + 1) * Math.PI / 4);
-    this.sr0 = sr; this.slice = false; this.bm = null; this.pb = 120; this.bj = 0; this.bphase = 0; this.xn = 0; this.gate = 1; this.tr = 1; this.keep = false; this.loop = false; this.gran = false; this.gs = Math.round(sr * 0.06); this.hop = this.gs >> 1; // granos de 60 ms para estirar sin cambiar el tono
+    this.tn = 0; this.at = 0; this.pe = 0; this.ls = 0; this.sr0 = sr; this.slice = false; this.bm = null; this.pb = 120; this.bj = 0; this.bphase = 0; this.xn = 0; this.gate = 1; this.tr = 1; this.keep = false; this.loop = false; this.gran = false; this.gs = Math.round(sr * 0.06); this.hop = this.gs >> 1; // granos de 60 ms para estirar sin cambiar el tono
     this.gp0 = 0; this.gp1 = 0; this.ga0 = 1e9; this.ga1 = 1e9; this.gc = 0;
   }
   /* warp: velocidad de lectura según la posición en el audio, a partir de los marcadores [segundo del audio, tiempo (pulso)] */
@@ -75,15 +75,18 @@ class SampleVoice {
     if (this.slice && this.bm) { this.renderB(L, R, a, b, pr); return; }
     if (this.keep && Math.abs(tr - 1) > 0.003) { this.renderG(L, R, a, b, tr, pr); return; }
     if (this.gran) { this.gran = false; } // volvió a velocidad normal: sigue desde la posición de lectura
-    const d = this.buf, len = d.length, end = this.end, rt = this.keep ? pr : pr * tr;
+    const d = this.buf, len = d.length, end = this.end, rt0 = this.keep ? pr : pr * tr, sr = this.sr0, tn = this.tn, at = this.at, pe = this.pe, ta = 1 - Math.exp(-TAU * 1200 / sr), tgl = tn ? Math.pow(10, -tn * 0.45) : 1, tgh = tn ? Math.pow(10, tn * 0.45) : 1, penN = sr * 0.3, tauP = sr * 0.04, tauA = sr * 0.006, attS = Math.abs(at) * sr * 0.012;
     for (let i = a; i < b; i++) {
       let p = this.pos, ip = p | 0;
       if (ip + 1 >= len || ip + 1 >= end) { if (this.loop) { this.pos = p = this.start0; ip = p | 0; } else { this.on = false; return; } }
       let s = (d[ip] + (d[ip + 1] - d[ip]) * (p - ip)) * this.g;
+      // moldeado del golpe: tono (inclina graves/agudos), ataque (marca o suaviza el arranque) y caída de tono (el golpe arranca más agudo y baja)
+      if (tn) { this.ls += ta * (s - this.ls); s = this.ls * tgl + (s - this.ls) * tgh; } // inclinación de ±9 dB (graves contra agudos)
+      if (at > 0 && this.n < sr * 0.05) s *= 1 + 2.2 * at * Math.exp(-this.n / tauA); else if (at < 0 && this.n < attS) s *= this.n / attS;
       if (end < len && !this.loop) { const rem = end - ip; if (rem < 192) s *= rem / 192; } // fundido corto antes del final recortado
       if (this.fi && this.n < 96) s *= this.n / 96;
       L[i] += s * this.pl; R[i] += s * this.pr;
-      this.pos += rt;
+      this.pos += pe && this.n < penN ? rt0 * Math.pow(2, (pe * Math.exp(-this.n / tauP)) / 12) : rt0;
       if (++this.n > this.hold) { this.g *= this.fade; if (this.g < 1e-4) { this.on = false; return; } }
     }
   }
@@ -130,6 +133,44 @@ class SampleVoice {
   }
 }
 
+/* voz de batería sintetizada: cuerpo (seno con barrido de tono), click, ruido filtrado con envolvente (o rebotes de clap) y metal de hat; todo calculado acá, sin samples */
+class DrumVoice {
+  constructor() { this.on = false; this.mph = new Float64Array(6); }
+  start(P, vel, pan, sr, pm) {
+    this.P = P; this.g = vel; this.on = true; this.n = 0; this.sr = sr; this.ph = 0; this.pm = pm || 1;
+    this.rA = ((Math.random() * 4294967295) | 0) || 1; this.rB = ((Math.random() * 4294967295) | 0) || 7;
+    this.pl = Math.cos((pan + 1) * Math.PI / 4); this.pr = Math.sin((pan + 1) * Math.PI / 4); this.hold = 1e12; this.fade = Math.exp(-1 / (sr * 0.02));
+    this.i1 = 0; this.i2 = 0; this.j1 = 0; this.j2 = 0; for (let k = 0; k < 6; k++) this.mph[k] = Math.random();
+    const gg = Math.tan(Math.PI * Math.min(P.nf, sr * 0.45) / sr); this.ng = gg; this.nk = 1 / Math.max(0.2, P.nq);
+    const gh = Math.tan(Math.PI * Math.min(7000, sr * 0.45) / sr); this.hg = gh;
+    this.endN = Math.min(sr * 4, sr * (Math.max(P.body > 0 ? P.bd : 0, P.nz > 0 ? P.nd : 0, P.mt > 0 ? P.md : 0) * 7 + 60) / 1000); this.cd = 0;
+  }
+  render(L, R, a, b, cm, gps, pm) {
+    const P = this.P, sr = this.sr, gn = this.ng, k = this.nk, a1 = 1 / (1 + gn * (gn + k)), a2 = gn * a1, a3 = gn * a2, hgn = this.hg, hk = 1.4, h1 = 1 / (1 + hgn * (hgn + hk)), h2 = hgn * h1, h3 = hgn * h2;
+    const MF = [205.3, 304.4, 369.6, 522.7, 540, 800], pmv = (this.pm || 1) * (pm || 1);
+    for (let i = a; i < b; i++) {
+      const n = this.n; if (n >= this.endN) { this.on = false; return; }
+      const ms = (n * 1000) / sr; let s = 0;
+      if (P.body > 0) { const f = (P.f1 + (P.f0 - P.f1) * Math.exp(-ms / P.pd)) * pmv; this.ph += f / sr; if (this.ph >= 1) this.ph -= 1; const att = ms < 0.4 ? ms / 0.4 : 1; s += Math.sin(6.283185307179586 * this.ph) * Math.exp(-ms / P.bd) * P.body * att; }
+      let x = this.rA; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; this.rA = x; const w = x / 2147483648;
+      if (P.ck > 0 && ms < 4) s += w * Math.exp(-ms / 1.2) * P.ck;
+      if (P.nz > 0) {
+        const v3 = w - this.i2, v1 = a1 * this.i1 + a2 * v3, v2 = this.i2 + a2 * this.i1 + a3 * v3; this.i1 = 2 * v1 - this.i1; this.i2 = 2 * v2 - this.i2;
+        const nf = P.nm === 'lp' ? v2 : P.nm === 'bp' ? v1 * k : w - k * v1 - v2;
+        let env; if (P.bursts > 1) { env = 0; const last = (P.bursts - 1) * 9; for (let q = 0; q < P.bursts - 1; q++) { const t0 = q * 9; if (ms >= t0) env = Math.max(env, Math.exp(-(ms - t0) / 3.2)); } if (ms >= last) env = Math.max(env, Math.exp(-(ms - last) / P.nd)); } else env = Math.exp(-ms / P.nd);
+        s += nf * env * P.nz;
+      }
+      if (P.mt > 0) {
+        let m = 0; for (let q = 0; q < 6; q++) { this.mph[q] += (MF[q] * pmv) / sr; if (this.mph[q] >= 1) this.mph[q] -= 1; m += this.mph[q] < 0.5 ? 1 : -1; }
+        m /= 6; const v3 = m - this.j2, v1 = h1 * this.j1 + h2 * v3, v2 = this.j2 + h2 * this.j1 + h3 * v3; this.j1 = 2 * v1 - this.j1; this.j2 = 2 * v2 - this.j2;
+        s += (m - hk * v1 - v2) * Math.exp(-ms / P.md) * P.mt * 0.8;
+      }
+      if (P.drive > 0) { const dk = 1 + P.drive * 6; s = Math.tanh(s * dk) / Math.sqrt(dk); }
+      s *= this.g * P.lvl; L[i] += s * this.pl; R[i] += s * this.pr; this.n++;
+      if (this.n > this.hold) { this.g *= this.fade; if (this.g < 1e-4) { this.on = false; return; } }
+    }
+  }
+}
 /* voz de efectos: ruido y/o tono con un barrido de filtro y de tono, sincronizada al tempo (risers, impactos, barridos…).
    Todo se calcula acá adentro: nada de nodos por golpe. Se apaga con un fundido corto al final y al soltarla (sin clics). */
 class FxVoice {
@@ -588,8 +629,10 @@ class LoopEngine extends AudioWorkletProcessor {
       if (cur && (ev.g || (t.synth.pro && t.synth.pro.legato)) && !!cur.pro === !!t.synth.pro) { cur.glideTo(t.synth, ev.n, ev.v, ev.l * this.stepLen()); return; }
       for (const x of t.voices) if (x.on && x.stage < 2) { x.len = Math.min(x.len, x.t + offset); if (x.stage === 0) x.stage = 2; }
     }
+    // grupo de corte (hat cerrado corta al abierto): un golpe apaga con un fundido corto lo que suena de las pistas del mismo grupo
+    if (t.cg) for (const x of this.tracks) if (x.cg === t.cg) for (const v0 of x.voices) if (v0.on) fastRelease(v0, this.sr);
     // la voz tiene que ser del tipo de la pista: sampler, sinte clásico o sinte pro
-    const fxv = t.kind === 'fx', pro = !fxv && t.kind !== 'sample' && !!(t.synth && t.synth.pro), mk = () => (fxv ? new FxVoice() : t.kind === 'sample' ? new SampleVoice() : pro ? new ProVoice() : new SynthVoice());
+    const fxv = t.kind === 'fx', dsv = t.kind === 'dsyn', pro = !fxv && !dsv && t.kind !== 'sample' && !!(t.synth && t.synth.pro), mk = () => (fxv ? new FxVoice() : dsv ? new DrumVoice() : t.kind === 'sample' ? new SampleVoice() : pro ? new ProVoice() : new SynthVoice());
     let v = t.voices.find((x) => !x.on && !!x.pro === pro);
     if (!v) {
       if (t.voices.length < MAXV) { v = mk(); t.voices.push(v); }
@@ -607,9 +650,12 @@ class LoopEngine extends AudioWorkletProcessor {
       if (t.choke) for (const x of t.voices) if (x.on && x !== v) x.hold = Math.min(x.hold, x.n + offset);
       const hum = 1 + (Math.random() * 2 - 1) * (t.human || 0);
       v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0, t.to || 0);
-      v.tr = t.tr || 1; v.keep = !!t.keep; v.loop = !!t.loopv;
+      v.tr = t.tr || 1; v.keep = !!t.keep; v.loop = !!t.loopv; v.tn = Math.max(-0.9, Math.min(0.9, t.tn || 0)); v.at = t.at || 0; v.pe = t.pe || 0;
       if (t.slice) { v.slice = true; v.bInit = false; v.bm = { wm: t.wmB, off: t.goff || 0, abps: t.abps || 2 }; v.start0 = v.pos; }
       v.delay = offset;
+    } else if (dsv) {
+      if (!t.dsp) return;
+      v.start(t.dsp, ev.v * (1 + (Math.random() * 2 - 1) * (t.human || 0)), pan, this.sr, 1); v.delay = offset;
     } else if (fxv) {
       if (!t.fxp) return; const sl = this.stepLen();
       v.start(t.fxp, ev.v, t.fxp.len * sl, this.sr, pan, sl); v.delay = offset;

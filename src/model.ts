@@ -119,6 +119,27 @@ export const DLY_TYPES: Record<string, { label: string; p: Partial<DlyP> }> = {
   long: { label: 'Eco largo', p: { mode: 'pp', sync: true, tm: 4, ratio: 1.5, fb: 0.6, tone: 2600, lo: 250, mod: 0.1, rate: 0.4, drive: 0.1, width: 1 } },
 };
 export const DLY_TIMES: [string, number][] = [['1/16', 1], ['1/8T', 4 / 3], ['1/8', 2], ['1/8·', 3], ['1/4T', 8 / 3], ['1/4', 4], ['1/4·', 6], ['1/2', 8], ['1 comp.', 16]];
+/* batería sintetizada: sonidos de percusión armados desde cero (cuerpo con barrido de tono, ruido filtrado, click, metal de hat y rebotes de clap) por una voz del worklet.
+   f0 → f1: tono del cuerpo (Hz) y pd = lo rápido que cae (ms); bd = duración del cuerpo (ms); body = nivel; ck = click; nz / nf / nq / nm / nd = ruido (nivel, filtro, resonancia, tipo, duración);
+   mt / md = metal de hat (nivel y duración); bursts = rebotes del clap; drive = saturación; lvl = nivel de este sonido. */
+export type DrumP = { kind: 'kick' | 'snare' | 'hat' | 'clap' | 'tom' | 'rim'; f0: number; f1: number; pd: number; bd: number; body: number; ck: number; nz: number; nf: number; nq: number; nm: 'lp' | 'bp' | 'hp'; nd: number; mt: number; md: number; bursts: number; drive: number; lvl: number };
+const dsp = (o: Partial<DrumP>): DrumP => ({ kind: 'kick', f0: 150, f1: 50, pd: 40, bd: 300, body: 1, ck: 0.2, nz: 0, nf: 3000, nq: 0.7, nm: 'bp', nd: 100, mt: 0, md: 80, bursts: 1, drive: 0, lvl: 1, ...o });
+export const DRUM_SYNTHS: Record<string, { label: string; group: string; sound: string; p: DrumP }> = {
+  k808: { label: '808 profundo', group: 'Bombo', sound: 'kick', p: dsp({ lvl: 1.21, f0: 110, f1: 42, pd: 55, bd: 650, ck: 0.12, drive: 0.15 }) },
+  k909: { label: '909 con pegada', group: 'Bombo', sound: 'kick', p: dsp({ lvl: 1.32, f0: 190, f1: 52, pd: 30, bd: 380, ck: 0.35, drive: 0.3 }) },
+  kTechno: { label: 'Techno duro', group: 'Bombo', sound: 'kick', p: dsp({ lvl: 2.03, f0: 230, f1: 48, pd: 22, bd: 300, ck: 0.45, drive: 0.6 }) },
+  kDeep: { label: 'Sub redondo', group: 'Bombo', sound: 'kick', p: dsp({ lvl: 1.15, f0: 95, f1: 38, pd: 70, bd: 520, ck: 0.1, drive: 0.05 }) },
+  kHard: { label: 'Hard / hardstyle', group: 'Bombo', sound: 'kick', p: dsp({ lvl: 2.37, f0: 260, f1: 55, pd: 18, bd: 260, ck: 0.6, drive: 0.95 }) },
+  s909: { label: 'Caja 909', group: 'Caja', sound: 'snare', p: dsp({ lvl: 1.04, kind: 'snare', f0: 220, f1: 180, pd: 20, bd: 90, body: 0.55, ck: 0.3, nz: 1, nf: 1800, nq: 0.8, nm: 'hp', nd: 160, drive: 0.2 }) },
+  s808: { label: 'Caja 808', group: 'Caja', sound: 'snare808', p: dsp({ lvl: 0.72, kind: 'snare', f0: 190, f1: 160, pd: 25, bd: 120, body: 0.7, ck: 0.15, nz: 0.7, nf: 3200, nq: 0.9, nm: 'bp', nd: 130 }) },
+  sLofi: { label: 'Caja lo-fi', group: 'Caja', sound: 'snare', p: dsp({ lvl: 1.25, kind: 'snare', f0: 170, f1: 130, pd: 30, bd: 70, body: 0.6, ck: 0.1, nz: 0.9, nf: 4500, nq: 0.6, nm: 'lp', nd: 220, drive: 0.4 }) },
+  clap: { label: 'Clap', group: 'Clap y rim', sound: 'clap', p: dsp({ lvl: 0.93, kind: 'clap', body: 0, ck: 0, nz: 1, nf: 1500, nq: 1.2, nm: 'bp', nd: 190, bursts: 4 }) },
+  rim: { label: 'Rim', group: 'Clap y rim', sound: 'rim', p: dsp({ lvl: 0.68, kind: 'rim', f0: 1700, f1: 900, pd: 6, bd: 25, body: 0.6, ck: 0.4, nz: 0.5, nf: 3000, nq: 1, nm: 'bp', nd: 25 }) },
+  hatC: { label: 'Hat cerrado', group: 'Platillos', sound: 'hat', p: dsp({ lvl: 0.96, kind: 'hat', body: 0, ck: 0, nz: 0.35, nf: 8000, nq: 0.7, nm: 'hp', nd: 40, mt: 1, md: 45 }) },
+  hatO: { label: 'Hat abierto', group: 'Platillos', sound: 'open', p: dsp({ lvl: 0.89, kind: 'hat', body: 0, ck: 0, nz: 0.3, nf: 8000, nq: 0.7, nm: 'hp', nd: 300, mt: 1, md: 300 }) },
+  tom: { label: 'Tom', group: 'Toms', sound: 'tomM', p: dsp({ lvl: 0.76, kind: 'tom', f0: 210, f1: 110, pd: 45, bd: 320, ck: 0.2 }) },
+};
+export const DRUM_SYNTH_GROUPS: [string, string[]][] = [['Bombo', ['k808', 'k909', 'kTechno', 'kDeep', 'kHard']], ['Caja', ['s909', 's808', 'sLofi']], ['Clap y rim', ['clap', 'rim']], ['Platillos', ['hatC', 'hatO']], ['Toms', ['tom']]];
 export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal' | 'fx' | 'sample';
 /* canal de efectos de sonido (risers, impactos, barridos…): una voz generativa del worklet, sincronizada al tempo.
    env: cómo sube y baja el volumen; mode: tipo de filtro; len: largo en pasos de 16; f0→f1: barrido del filtro (Hz);
@@ -153,6 +174,9 @@ export type Track = {
   id: string; name: string; color: string; type: TrackType;
   fxs?: FxP; // canal de efectos: parámetros del sonido (se parte del preset `sound`)
   rvx?: Partial<RevP>; dlx?: Partial<DlyP>; // reverb y delay propios de la pista (si faltan, la pista manda al reverb y delay del master); `rev` y `dly` siguen siendo cuánto manda
+  src?: 'sample' | 'synth'; dsyn?: DrumP; // batería: sonido de sample (por defecto) o sintetizado desde cero (dsyn)
+  cg?: string; // grupo de corte de la batería ('A', 'B', 'C' o '' = ninguno): un golpe corta lo que suena de las pistas del mismo grupo (por defecto hat y open hat comparten el A)
+  tone?: number; att?: number; pe?: number; // moldeado del golpe (batería y samples): tono oscuro..brillante (−1..1), ataque suave..marcado (−1..1) y caída de tono inicial en semitonos (0..24)
   kit?: string; // kit propio de este instrumento de batería (si falta, el del loop)
   vel?: number[]; velG?: Record<number, number[]>; // fuerza de cada golpe (0..1; 0 = la de siempre): vel sigue a steps (16 o 64), velG a grid[div] (div o 4*div)
   steps: number[]; // 16 pasos: 0 apagado, 1 golpe, 2 acento
@@ -816,7 +840,7 @@ export function compile(p: Project) {
   const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !offOf(t)) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
-    let kind = 'synth', synth: Synth | undefined, sample: string | undefined, fxp: FxP | undefined;
+    let kind = 'synth', synth: Synth | undefined, sample: string | undefined, fxp: FxP | undefined, dsynP: DrumP | undefined;
     if (t.type === 'vocal') {
       // la voz es un clip de hasta 4 compases: suena una vez por vuelta, desde su posición
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
@@ -835,6 +859,7 @@ export function compile(p: Project) {
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(Math.min(0.5, nt.l), nt.l - (t.type === 'chords' ? 0.05 : 0.15)), ...(nt.o ? { o: nt.o } : {}) }); });
     } else if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(t.kit && KITS[t.kit] ? t.kit : p.kit, t.sound);
+      if (t.src === 'synth' && t.dsyn) { kind = 'dsyn'; sample = undefined; fxp = undefined; dsynP = { ...DRUM_SYNTHS.k909.p, ...t.dsyn }; } // sonido sintetizado: los eventos son los mismos
       if (fineArr(t)) stepHits(t).forEach((h) => { const ghost = clamp(0.38 * (1 + mAt('energy', h.s) * 1.2), 0.15, 0.7); ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : h.v === 3 ? ghost : 0.72), o: h.o }); });
       else for (let s = 0; s < 64; s++) {
         const es = mAt('energy', s), ghost = clamp(0.38 * (1 + es * 1.2), 0.15, 0.7), v = t.steps[s % t.steps.length], xv = t.vel?.length ? t.vel[s % t.vel.length] : 0;
@@ -882,8 +907,9 @@ export function compile(p: Project) {
       groove = g64.some((x) => x > 0) ? g64 : undefined;
     } else groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
     return {
+      cg: t.type === 'drum' ? (t.cg === undefined ? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '') : t.cg) : '', tn: t.type === 'drum' || t.type === 'sample' ? t.tone || 0 : 0, at: t.type === 'drum' || t.type === 'sample' ? t.att || 0 : 0, pe: t.type === 'drum' || t.type === 'sample' ? t.pe || 0 : 0,
       rvx: t.rvx ? { ...REV_DEF, ret: 1, ...t.rvx } : undefined, dlx: t.dlx ? { ...DLY_DEF, ret: 1, ...t.dlx } : undefined,
-      id: t.id, kind, sample, synth, fxp, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
+      id: t.id, kind, sample, synth, fxp, dsp: dsynP, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined, fine: t.fine || 0, vib: t.vib && t.vib.d > 0.001 ? t.vib : undefined,
