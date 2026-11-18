@@ -93,6 +93,32 @@ export function autoShape(shape: string, lo: number, hi: number): number[] {
     return +(lo + (hi - lo) * u).toFixed(3);
   });
 }
+/* Reverb y delay completos: los del master (retornos compartidos) y, si una pista los pide, uno propio de la pista (`track.rvx` / `track.dlx`).
+   Reverb: size = tamaño del espacio (0..1), decay = duración de la cola, damp = amortiguación de agudos, pre = pre-delay (ms), lo / hi = cortes de graves y agudos (Hz), width = ancho, ret = nivel de retorno.
+   Delay: mode = ping-pong, estéreo o mono; sync = tiempo en pasos de 1/16 (`tm`) o libre en ms; ratio = desfase entre izquierda y derecha; fb = repeticiones; tone / lo = filtros de las repeticiones;
+   mod / rate = vibración de cinta (profundidad y velocidad en Hz); drive = saturación de las repeticiones; width = ancho; ret = nivel de retorno. */
+export type RevP = { type: string; size: number; decay: number; damp: number; pre: number; lo: number; hi: number; width: number; ret: number };
+export type DlyP = { type: string; mode: 'pp' | 'st' | 'mo'; sync: boolean; tm: number; ms: number; ratio: number; fb: number; tone: number; lo: number; mod: number; rate: number; drive: number; width: number; ret: number };
+export const REV_DEF: RevP = { type: 'room', size: 0.5, decay: 0.8, damp: 0.35, pre: 20, lo: 250, hi: 7000, width: 1, ret: 0.9 };
+export const DLY_DEF: DlyP = { type: 'pingpong', mode: 'pp', sync: true, tm: 3, ms: 300, ratio: 4 / 3, fb: 0.42, tone: 3200, lo: 300, mod: 0, rate: 0.5, drive: 0, width: 1, ret: 0.7 };
+export const REV_TYPES: Record<string, { label: string; p: Partial<RevP> }> = {
+  room: { label: 'Sala', p: { size: 0.5, decay: 0.8, damp: 0.35, pre: 20, lo: 250, hi: 7000, width: 1 } },
+  small: { label: 'Cuarto', p: { size: 0.2, decay: 0.55, damp: 0.5, pre: 4, lo: 160, hi: 9000, width: 0.8 } },
+  hall: { label: 'Hall', p: { size: 0.72, decay: 0.88, damp: 0.4, pre: 28, lo: 200, hi: 8000, width: 1 } },
+  cathedral: { label: 'Catedral', p: { size: 1, decay: 0.95, damp: 0.45, pre: 45, lo: 180, hi: 6500, width: 1 } },
+  plate: { label: 'Plate', p: { size: 0.38, decay: 0.84, damp: 0.12, pre: 0, lo: 300, hi: 12000, width: 1 } },
+  dark: { label: 'Oscuro', p: { size: 0.6, decay: 0.85, damp: 0.75, pre: 18, lo: 150, hi: 3500, width: 0.9 } },
+};
+export const DLY_TYPES: Record<string, { label: string; p: Partial<DlyP> }> = {
+  pingpong: { label: 'Ping-pong', p: { mode: 'pp', sync: true, tm: 3, ratio: 4 / 3, fb: 0.42, tone: 3200, lo: 300, mod: 0, drive: 0, width: 1 } },
+  stereo: { label: 'Estéreo', p: { mode: 'st', sync: true, tm: 2, ratio: 1.5, fb: 0.4, tone: 4000, lo: 250, mod: 0, drive: 0, width: 1 } },
+  mono: { label: 'Mono', p: { mode: 'mo', sync: true, tm: 2, ratio: 1, fb: 0.38, tone: 4500, lo: 200, mod: 0, drive: 0, width: 0 } },
+  dub: { label: 'Dub', p: { mode: 'mo', sync: true, tm: 3, ratio: 1, fb: 0.68, tone: 1700, lo: 220, mod: 0.35, rate: 0.35, drive: 0.4, width: 0.3 } },
+  tape: { label: 'Cinta', p: { mode: 'st', sync: true, tm: 2, ratio: 1.25, fb: 0.5, tone: 2800, lo: 200, mod: 0.5, rate: 0.8, drive: 0.2, width: 0.8 } },
+  slap: { label: 'Slapback', p: { mode: 'mo', sync: false, ms: 95, tm: 1, ratio: 1, fb: 0.1, tone: 5500, lo: 250, mod: 0, drive: 0, width: 0 } },
+  long: { label: 'Eco largo', p: { mode: 'pp', sync: true, tm: 4, ratio: 1.5, fb: 0.6, tone: 2600, lo: 250, mod: 0.1, rate: 0.4, drive: 0.1, width: 1 } },
+};
+export const DLY_TIMES: [string, number][] = [['1/16', 1], ['1/8T', 4 / 3], ['1/8', 2], ['1/8·', 3], ['1/4T', 8 / 3], ['1/4', 4], ['1/4·', 6], ['1/2', 8], ['1 comp.', 16]];
 export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal' | 'fx' | 'sample';
 /* canal de efectos de sonido (risers, impactos, barridos…): una voz generativa del worklet, sincronizada al tempo.
    env: cómo sube y baja el volumen; mode: tipo de filtro; len: largo en pasos de 16; f0→f1: barrido del filtro (Hz);
@@ -126,6 +152,7 @@ export type Note = { s: number; n: number; l: number; o?: number }; // o = desfa
 export type Track = {
   id: string; name: string; color: string; type: TrackType;
   fxs?: FxP; // canal de efectos: parámetros del sonido (se parte del preset `sound`)
+  rvx?: Partial<RevP>; dlx?: Partial<DlyP>; // reverb y delay propios de la pista (si faltan, la pista manda al reverb y delay del master); `rev` y `dly` siguen siendo cuánto manda
   kit?: string; // kit propio de este instrumento de batería (si falta, el del loop)
   vel?: number[]; velG?: Record<number, number[]>; // fuerza de cada golpe (0..1; 0 = la de siempre): vel sigue a steps (16 o 64), velG a grid[div] (div o 4*div)
   steps: number[]; // 16 pasos: 0 apagado, 1 golpe, 2 acento
@@ -262,7 +289,7 @@ export type Project = {
   groups?: Group[]; // grupos de instrumentos: se mutean o se ponen en solo todos juntos
   seq: number[]; chords: { name: string; tones: string[]; midi: number[] }[];
   tracks: Track[];
-  fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number };
+  fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number; rv?: Partial<RevP>; dl?: Partial<DlyP> }; // revSize = duración (decay), revDamp, revRet, dlyFb y dlyRet son los de siempre; rv y dl guardan el resto de los parámetros del reverb y del delay
   master: { eq: number[]; target: number; auto: boolean; ceiling: number };
   seed?: number;
   id?: string; title?: string; // lugar donde se guarda y nombre que se muestra en Mis loops (el nombre musical es `name`)
@@ -604,7 +631,7 @@ export function applyGenre(p: Project, g: string, variant = 0) {
   const r = seeded(clean(p.name || 'Loop') + '#g:' + g + '#' + variant);
   const T = (id: string) => p.tracks.find((t) => t.id === id);
   p.bpm = Math.round(G.bpm[0] + r() * (G.bpm[1] - G.bpm[0])); p.swing = +(G.swing[0] + r() * (G.swing[1] - G.swing[0])).toFixed(2);
-  p.kit = pick(r, G.kit); p.fx = { ...G.fx }; p.tracks.forEach((t) => { t.kit = undefined; });
+  p.kit = pick(r, G.kit); p.fx = { ...G.fx, rv: p.fx?.rv, dl: p.fx?.dl }; p.tracks.forEach((t) => { t.kit = undefined; });
   // batería
   const d = pick(r, G.drums);
   (['kick', 'clap', 'hat', 'open', 'perc'] as const).forEach((id) => { const t = T(id); if (t) { t.steps = parseDrum(d[id]); t.mute = !t.steps.some(Boolean); } });
@@ -633,7 +660,7 @@ export function applyGenre(p: Project, g: string, variant = 0) {
 export function applyGenreSound(p: Project, g: string) {
   const G = GENRES[g]; if (!G) return; p.genre = g;
   const r = seeded('snd:' + g), T = (id: string) => p.tracks.find((t) => t.id === id);
-  p.kit = pick(r, G.kit); p.fx = { ...G.fx }; p.tracks.forEach((t) => { t.kit = undefined; });
+  p.kit = pick(r, G.kit); p.fx = { ...G.fx, rv: p.fx?.rv, dl: p.fx?.dl }; p.tracks.forEach((t) => { t.kit = undefined; });
   const kick = T('kick'); if (kick) { kick.pitch = G.kick.pitch; kick.decay = G.kick.decay; }
   const set = (t: Track | undefined, sound: string, m: { vol: number; rev: number; dly: number; duck: number }) => { if (!t) return; t.vol = m.vol; t.rev = m.rev; t.dly = m.dly; t.duck = m.duck; if (!t.synth?.pro) { t.sound = sound; t.synth = undefined; } };
   set(T('bass'), pick(r, G.bassSound), G.mix.bass); set(T('chords'), pick(r, G.chordSound), G.mix.chords); set(T('arp'), pick(r, G.arpSound), G.mix.arp); set(T('melody'), pick(r, G.mel.sound), G.mix.melody);
@@ -855,6 +882,7 @@ export function compile(p: Project) {
       groove = g64.some((x) => x > 0) ? g64 : undefined;
     } else groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
     return {
+      rvx: t.rvx ? { ...REV_DEF, ret: 1, ...t.rvx } : undefined, dlx: t.dlx ? { ...DLY_DEF, ret: 1, ...t.dlx } : undefined,
       id: t.id, kind, sample, synth, fxp, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
@@ -866,5 +894,5 @@ export function compile(p: Project) {
     };
   });
   const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;
-  return { scene: p.scene ?? 'A', bars: NB, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8) }, master: p.master, tracks };
+  return { scene: p.scene ?? 'A', bars: NB, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8), rv: { ...REV_DEF, ...p.fx.rv, decay: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), damp: p.fx.revDamp, ret: p.fx.revRet }, dl: { ...DLY_DEF, ...p.fx.dl, fb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.92), ret: p.fx.dlyRet } }, master: p.master, tracks };
 }

@@ -19,7 +19,7 @@ import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
   type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, sceneList, hasAudio, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  FX_SOUNDS, FX_GROUPS, type FxP, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
+  FX_SOUNDS, FX_GROUPS, type FxP, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
@@ -292,6 +292,7 @@ function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }
       <div class="db">
         {cur === 'rit' && <FineEditor t={t} upT={upT} />}
         {cur === 'snd' && (t.type === 'vocal' ? <><VocalEditor p={p} t={t} upT={upT} power={null} onDelete={onDelete} bare /><PitchRow t={t} upT={upT} /></> : <TrackEditor p={p} t={t} upT={upT} up={up} part="snd" adv={adv} />)}
+        {cur === 'snd' && <TrackFxPanel t={t} upT={upT} />}
         {cur === 'notes' && <TrackEditor p={p} t={t} upT={upT} up={up} part="notes" adv={adv} />}
         {cur === 'eq' && <EqEditor t={t} upT={upT} />}
         {cur === 'move' && <AutoEditor key={t.id} t={t} upT={upT} playing={playing} bare />}
@@ -1369,7 +1370,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
   ],
   mix: [
     { title: 'Faders y botones', body: 'Cada columna es una pista: el fader es su volumen, M la silencia, S la deja sonando sola y abajo está el pan. Podés apretar varios M o S al mismo tiempo. Deslizá de costado para ver todas. En modo Avanzado, "Efectos" abre el resto de sus perillas (el número dice cuántos tiene en uso) y arriba aparecen los grupos.', art: artBars([R, Y, G, '#e98a5f', '#8fc7a0'], [0.75, 0.5, 0.62, 0.35, 0.8]) },
-    { title: 'Pan, efectos y sidechain', body: '(Modo Avanzado) Pan la manda a la izquierda o a la derecha. Reverb y Delay le suman ambiente y eco. Sidechain es cuánto se "agacha" la pista cuando pega el bombo: es lo que hace que el loop bombee.', art: artKnobs(['Pan', 'Reverb', 'Delay', 'Sidechain']) },
+    { title: 'Pan, efectos y sidechain', body: 'En el editor de cada instrumento (pestaña Sonido, al final) elegís cuánto manda al reverb y al delay y, si querés, le das un reverb o delay PROPIO con todos sus parámetros en vez de usar los del master. (Modo Avanzado) Pan la manda a la izquierda o a la derecha. Reverb y Delay le suman ambiente y eco. Sidechain es cuánto se "agacha" la pista cuando pega el bombo: es lo que hace que el loop bombee.', art: artKnobs(['Pan', 'Reverb', 'Delay', 'Sidechain']) },
     { title: 'El inserto de cada pista', body: '(Modo Avanzado) Abajo de cada columna: Saturación (calienta o ensucia), Chorus (la abre y la engorda), Corta graves y Corta agudos (filtros), Bitcrusher (sonido digital roto, de consola vieja) y Phaser (un barrido que gira cada 2 compases). Cada género trae los suyos armados; los podés ajustar a gusto.', art: artKnobs(['Saturación', 'Chorus', 'Bitcrusher', 'Phaser']) },
     { title: 'Grabar movimientos', body: '(Modo Avanzado) Tocá "Grabar movimientos" y, mientras suena, mové el volumen, el pan, la reverb, el delay, la saturación o los filtros: cada movimiento queda grabado en la automatización de esa pista, en el paso exacto. Al soltar, queda lo grabado y se repite en cada vuelta. Las perillas con una A ya tienen automatización. Para corregir, grabás encima o la editás en Patrón.', art: <div class="art-vox"><span class="dot" />Grabar movimientos<svg viewBox="0 0 160 30" aria-hidden="true"><path d="M0 24 C 30 24, 40 6, 70 8 S 120 26, 160 12" fill="none" stroke={Y} stroke-width="2" /></svg></div> },
   ],
@@ -1379,7 +1380,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Salida y volumen', body: '(Modo Avanzado) El volumen se mantiene parejo solo: la ganancia automática lleva el loop al nivel elegido (en LUFS) y el limitador evita que sature. Los medidores te muestran cuánto está trabajando cada uno.', art: <div class="art-meter"><div><i style={{ width: '72%' }} /></div><small>-14 LUFS · limitador -1 dB</small></div> },
     { title: 'Controlador MIDI', body: '(Modo Avanzado) Con Chrome (Android o compu) podés enchufar un controlador MIDI: "Conectar controlador", tocás lo que querés manejar (una macro, un volumen, una escena, play…) y movés la perilla o el pad. Las teclas sin asignar tocan la pista elegida. En iPhone no hay MIDI en el navegador.', art: artKnobs(['Energía', 'Espacio', 'Bajo', 'Kick']) },
     { title: 'La app en tu celu', body: 'El panel App muestra la versión, si Loop está instalada y si ya funciona sin conexión, y ahí también elegís modo Simple o Avanzado. "Instalar Loop" la pone en tu pantalla de inicio (en iPhone: Compartir → Agregar a inicio). "Proteger mis loops" le pide al navegador que no borre lo guardado. Cuando hay una versión nueva aparece un aviso arriba.', art: artChips(['Instalada', 'Sin conexión', 'Protegida'], 1) },
-    { title: 'Ecualizador y efectos', body: '(Modo Avanzado) El EQ de 8 bandas sube o baja graves, medios y agudos de todo el loop. En Efectos ajustás el tamaño de la reverb y cuánto se repite el delay, para todas las pistas a la vez.', art: artBars([G, G, Y, Y, Y, R, R, R], [0.6, 0.55, 0.45, 0.4, 0.5, 0.55, 0.62, 0.5]) },
+    { title: 'Ecualizador y efectos', body: 'En Master hay un panel para el Reverb y otro para el Delay, cada uno con tipos (Sala, Cuarto, Hall, Catedral, Plate, Oscuro; Ping-pong, Estéreo, Mono, Dub, Cinta, Slapback, Eco largo) y todos sus controles: tamaño, duración, amortiguación, pre-delay y cortes de graves y agudos en el reverb; tiempo (sincronizado al tempo o libre en milisegundos), repeticiones, tono, modulación de cinta, saturación, desfase izquierda-derecha y ancho en el delay. (Modo Avanzado) El EQ de 8 bandas sube o baja graves, medios y agudos de todo el loop. En Efectos ajustás el tamaño de la reverb y cuánto se repite el delay, para todas las pistas a la vez.', art: artBars([G, G, Y, Y, Y, R, R, R], [0.6, 0.55, 0.45, 0.4, 0.5, 0.55, 0.62, 0.5]) },
   ],
 };
 const TUT_NAME: Record<TutKey, string> = { intro: 'Intro', scene: 'Escena', pat: 'Patrón', mix: 'Mixer', master: 'Master' };
@@ -1978,6 +1979,62 @@ function Export({ p, up }: { p: Project; up: (fn: (d: Project) => void) => void 
 
 const EQF = ['63', '160', '400', '1k', '2.5k', '6.3k', '10k', '16k'];
 const EQPRE: Record<string, number[]> = { Plano: [0, 0, 0, 0, 0, 0, 0, 0], 'Más graves': [5, 3, 0, -1, 0, 0, 0, 0], Brillo: [0, 0, -1, 0, 1, 3, 4, 3], Club: [4, 2, -2, -2, 0, 2, 3, 2], 'Cálido': [2, 3, 1, 0, -1, -2, -3, -3], 'Lo-fi': [-12, -4, 2, 3, 2, -4, -10, -12], 'Sin barro': [0, -1, -4, -1, 1, 1, 0, 0] };
+/* ---------- reverb y delay completos (los mismos controles para el master y para cada instrumento) ---------- */
+function RevEditor({ v, set, color }: { v: RevP; set: (patch: Partial<RevP>) => void; color: string }) {
+  return <>
+    <div class="chips">{Object.entries(REV_TYPES).map(([k, r]) => <button class={'chip' + (v.type === k ? ' on' : '')} style={{ '--c': color } as any} onClick={() => set({ type: k, ...r.p })}>{r.label}</button>)}</div>
+    <div class="knobs" style={{ marginTop: '8px' }}>
+      <Knob label="Tamaño" value={v.size} min={0} max={1} def={0.5} color={color} fmt={pct} onChange={(x) => set({ size: x })} />
+      <Knob label="Duración" value={v.decay} min={0.3} max={0.98} def={0.8} color={color} fmt={pct} onChange={(x) => set({ decay: x })} />
+      <Knob label="Amortiguación" value={v.damp} min={0} max={1} def={0.35} color={color} fmt={pct} onChange={(x) => set({ damp: x })} />
+      <Knob label="Pre-delay" value={v.pre} min={0} max={200} step={1} def={20} color={color} fmt={(x) => Math.round(x) + ' ms'} onChange={(x) => set({ pre: x })} />
+      <Knob label="Corta graves" value={v.lo} min={20} max={1000} log def={250} color={color} fmt={(x) => hz(x) + 'Hz'} onChange={(x) => set({ lo: x })} />
+      <Knob label="Corta agudos" value={v.hi} min={1500} max={16000} log def={7000} color={color} fmt={(x) => hz(x) + 'Hz'} onChange={(x) => set({ hi: x })} />
+      <Knob label="Ancho" value={v.width} min={0} max={1} def={1} color={color} fmt={pct} onChange={(x) => set({ width: x })} />
+      <Knob label="Retorno" value={v.ret} min={0} max={1.5} def={0.9} color={color} fmt={pct} onChange={(x) => set({ ret: x })} />
+    </div>
+  </>;
+}
+function DlyEditor({ v, set, color }: { v: DlyP; set: (patch: Partial<DlyP>) => void; color: string }) {
+  return <>
+    <div class="chips">{Object.entries(DLY_TYPES).map(([k, r]) => <button class={'chip' + (v.type === k ? ' on' : '')} style={{ '--c': color } as any} onClick={() => set({ type: k, ...r.p })}>{r.label}</button>)}</div>
+    <div class="sub2">Modo</div>
+    <div class="seg">{([['pp', 'Ping-pong'], ['st', 'Estéreo'], ['mo', 'Mono']] as const).map(([k, l]) => <button class={v.mode === k ? 'on' : ''} onClick={() => set({ mode: k, ...(k === 'mo' ? { width: 0 } : {}) })}>{l}</button>)}</div>
+    <div class="sub2">Tiempo (velocidad)</div>
+    <div class="seg">{([[true, 'Sincronizado'], [false, 'Libre']] as const).map(([k, l]) => <button class={v.sync === k ? 'on' : ''} onClick={() => set({ sync: k })}>{l}</button>)}</div>
+    {v.sync ? <div class="chips" style={{ marginTop: '6px' }}>{DLY_TIMES.map(([l, n]) => <button class={'chip' + (Math.abs(v.tm - n) < 0.01 ? ' on' : '')} style={{ '--c': color } as any} onClick={() => set({ tm: n })}>{l}</button>)}</div> : null}
+    <div class="knobs" style={{ marginTop: '8px' }}>
+      {!v.sync && <Knob label="Tiempo" value={v.ms} min={10} max={2000} log def={300} color={color} fmt={(x) => Math.round(x) + ' ms'} onChange={(x) => set({ ms: x })} />}
+      <Knob label="Repeticiones" value={v.fb} min={0} max={0.95} def={0.42} color={color} fmt={pct} onChange={(x) => set({ fb: x })} />
+      <Knob label="Tono" value={v.tone} min={400} max={12000} log def={3200} color={color} fmt={(x) => hz(x) + 'Hz'} onChange={(x) => set({ tone: x })} />
+      <Knob label="Corta graves" value={v.lo} min={20} max={1500} log def={300} color={color} fmt={(x) => hz(x) + 'Hz'} onChange={(x) => set({ lo: x })} />
+      <Knob label="Modulación" value={v.mod} min={0} max={1} def={0} color={color} fmt={(x) => (x < 0.01 ? 'no' : pct(x))} onChange={(x) => set({ mod: x })} />
+      <Knob label="Vel. modulación" value={v.rate} min={0.05} max={8} log def={0.5} color={color} fmt={(x) => x.toFixed(2) + ' Hz'} onChange={(x) => set({ rate: x })} />
+      <Knob label="Saturación" value={v.drive} min={0} max={1} def={0} color={color} fmt={(x) => (x < 0.01 ? 'no' : pct(x))} onChange={(x) => set({ drive: x })} />
+      {v.mode !== 'mo' && <Knob label="Desfase L/R" value={v.ratio} min={0.5} max={2} def={4 / 3} color={color} fmt={(x) => '×' + x.toFixed(2)} onChange={(x) => set({ ratio: x })} />}
+      <Knob label="Ancho" value={v.width} min={0} max={1} def={1} color={color} fmt={pct} onChange={(x) => set({ width: x })} />
+      <Knob label="Retorno" value={v.ret} min={0} max={1.5} def={0.7} color={color} fmt={pct} onChange={(x) => set({ ret: x })} />
+    </div>
+  </>;
+}
+/* reverb y delay propios de cada instrumento: "Master" manda al reverb / delay compartido; "Propio" le da al instrumento los suyos, con todos sus parámetros */
+function TrackFxPanel({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const rvOwn = !!t.rvx, dlOwn = !!t.dlx;
+  const rv: RevP = { ...REV_DEF, ret: 1, ...t.rvx }, dl: DlyP = { ...DLY_DEF, ret: 1, ...t.dlx };
+  return <>
+    <div class="sub">Reverb y delay de este instrumento</div>
+    <div class="knobs">
+      <Knob label="Manda al reverb" value={t.rev} min={0} max={1} def={0.25} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.rev = v; })} />
+      <Knob label="Manda al delay" value={t.dly} min={0} max={1} def={0.3} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.dly = v; })} />
+    </div>
+    <div class="sub2">Reverb</div>
+    <div class="seg">{([[false, 'Del master'], [true, 'Propio']] as const).map(([k, l]) => <button class={rvOwn === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.rvx = k ? { ...(x.rvx ?? {}) } : undefined; })}>{l}</button>)}</div>
+    {rvOwn ? <div style={{ marginTop: '8px' }}><RevEditor v={rv} color={t.color} set={(patch) => upT(t.id, (x) => { x.rvx = { ...x.rvx, ...patch }; })} /></div> : <div class="hint-s">Usa el reverb del master (Master → Reverb). Elegí "Propio" para darle a este instrumento su propio tipo, tamaño y duración.</div>}
+    <div class="sub2">Delay</div>
+    <div class="seg">{([[false, 'Del master'], [true, 'Propio']] as const).map(([k, l]) => <button class={dlOwn === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.dlx = k ? { ...(x.dlx ?? {}) } : undefined; })}>{l}</button>)}</div>
+    {dlOwn ? <div style={{ marginTop: '8px' }}><DlyEditor v={dl} color={t.color} set={(patch) => upT(t.id, (x) => { x.dlx = { ...x.dlx, ...patch }; })} /></div> : <div class="hint-s">Usa el delay del master (Master → Delay). Elegí "Propio" para darle a este instrumento su propio tipo, tiempo y repeticiones.</div>}
+  </>;
+}
 function Master({ p, up, stats }: { p: Project; up: (fn: (d: Project) => void) => void; stats: { lufs: number; auto: number; gr: number } }) {
   const curve = useMemo(() => {
     const F = [63, 160, 400, 1000, 2500, 6300, 10000, 16000]; let d = '';
@@ -2006,16 +2063,14 @@ function Master({ p, up, stats }: { p: Project; up: (fn: (d: Project) => void) =
       <div class="faders8">{p.master.eq.map((g, k) => <div><Fader h={120} label={'EQ ' + EQF[k]} value={g} min={-12} max={12} def={0} color="#2fd8b4" onChange={(v) => up((d) => { d.master.eq[k] = Math.round(v * 2) / 2; })} /><div class="lab">{g > 0 ? '+' : ''}{g}</div><div class="lab">{EQF[k]}</div></div>)}</div>
       <div class="chips" style={{ marginTop: '10px' }}>{Object.keys(EQPRE).map((k) => <button class="chip" onClick={() => up((d) => { d.master.eq = [...EQPRE[k]]; })}>{k}</button>)}</div>
     </Panel>
-    <Panel id="fx" title="Reverb y delay" icon={Ic.space} def={false}>
-
-      <div class="knobs">
-        <Knob label="Tamaño" value={p.fx.revSize} min={0.3} max={0.98} def={0.8} color="var(--mint)" fmt={pct} onChange={(v) => up((d) => { d.fx.revSize = v; })} />
-        <Knob label="Brillo rev." value={1 - p.fx.revDamp} min={0} max={1} def={0.65} color="var(--mint)" fmt={pct} onChange={(v) => up((d) => { d.fx.revDamp = 1 - v; })} />
-        <Knob label="Retorno rev." value={p.fx.revRet} min={0} max={1.5} def={0.9} color="var(--mint)" fmt={pct} onChange={(v) => up((d) => { d.fx.revRet = v; })} />
-        <Knob label="Repeticiones" value={p.fx.dlyFb} min={0} max={0.8} def={0.42} color="var(--mint)" fmt={pct} onChange={(v) => up((d) => { d.fx.dlyFb = v; })} />
-        <Knob label="Retorno delay" value={p.fx.dlyRet} min={0} max={1.5} def={0.7} color="var(--mint)" fmt={pct} onChange={(v) => up((d) => { d.fx.dlyRet = v; })} />
-        <Knob label="Swing" value={p.swing} min={0} max={0.6} def={0} color="var(--sun)" fmt={pct} onChange={(v) => up((d) => { d.swing = v; })} />
-      </div>
+    <Panel id="rev" title="Reverb" icon={Ic.space} def={false}>
+      <RevEditor color="var(--mint)" v={{ ...REV_DEF, ...p.fx.rv, decay: p.fx.revSize, damp: p.fx.revDamp, ret: p.fx.revRet }} set={(patch) => up((d) => { const { decay, damp, ret, ...rest } = patch; if (decay !== undefined) d.fx.revSize = decay; if (damp !== undefined) d.fx.revDamp = damp; if (ret !== undefined) d.fx.revRet = ret; if (Object.keys(rest).length) d.fx.rv = { ...d.fx.rv, ...rest }; })} />
+    </Panel>
+    <Panel id="dly" title="Delay" icon={Ic.space} def={false}>
+      <DlyEditor color="var(--mint)" v={{ ...DLY_DEF, ...p.fx.dl, fb: p.fx.dlyFb, ret: p.fx.dlyRet }} set={(patch) => up((d) => { const { fb, ret, ...rest } = patch; if (fb !== undefined) d.fx.dlyFb = fb; if (ret !== undefined) d.fx.dlyRet = ret; if (Object.keys(rest).length) d.fx.dl = { ...d.fx.dl, ...rest }; })} />
+    </Panel>
+    <Panel id="swing" title="Swing" icon={Ic.space} def={false}>
+      <div class="knobs"><Knob label="Swing" value={p.swing} min={0} max={0.6} def={0} color="var(--sun)" fmt={pct} onChange={(v) => up((d) => { d.swing = v; })} /></div>
     </Panel>
   </>;
 }
