@@ -140,6 +140,13 @@ export const DRUM_SYNTHS: Record<string, { label: string; group: string; sound: 
   tom: { label: 'Tom', group: 'Toms', sound: 'tomM', p: dsp({ lvl: 0.76, kind: 'tom', f0: 210, f1: 110, pd: 45, bd: 320, ck: 0.2 }) },
 };
 export const DRUM_SYNTH_GROUPS: [string, string[]][] = [['Bombo', ['k808', 'k909', 'kTechno', 'kDeep', 'kHard']], ['Caja', ['s909', 's808', 'sLofi']], ['Clap y rim', ['clap', 'rim']], ['Platillos', ['hatC', 'hatO']], ['Toms', ['tom']]];
+export const DBUS_DEF = { on: false, mix: 0.4, thr: -26, ratio: 6, atk: 8, rel: 90, makeup: 8 };
+export const DBUS_PRESETS: Record<string, { label: string; p: Partial<typeof DBUS_DEF> }> = {
+  punch: { label: 'Pegada', p: { mix: 0.4, thr: -26, ratio: 6, atk: 12, rel: 90, makeup: 8 } },
+  glue: { label: 'Pegamento', p: { mix: 0.3, thr: -20, ratio: 3, atk: 25, rel: 160, makeup: 5 } },
+  smash: { label: 'Aplastada', p: { mix: 0.55, thr: -34, ratio: 12, atk: 3, rel: 60, makeup: 12 } },
+  room: { label: 'Sala', p: { mix: 0.35, thr: -30, ratio: 8, atk: 6, rel: 250, makeup: 10 } },
+};
 export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal' | 'fx' | 'sample';
 /* canal de efectos de sonido (risers, impactos, barridos…): una voz generativa del worklet, sincronizada al tempo.
    env: cómo sube y baja el volumen; mode: tipo de filtro; len: largo en pasos de 16; f0→f1: barrido del filtro (Hz);
@@ -174,10 +181,12 @@ export type Track = {
   id: string; name: string; color: string; type: TrackType;
   fxs?: FxP; // canal de efectos: parámetros del sonido (se parte del preset `sound`)
   rvx?: Partial<RevP>; dlx?: Partial<DlyP>; // reverb y delay propios de la pista (si faltan, la pista manda al reverb y delay del master); `rev` y `dly` siguen siendo cuánto manda
+  lay?: { on: boolean; src?: 'sample' | 'synth'; sound: string; kit?: string; dsyn?: DrumP; vol: number; pitch: number; decay?: number }; // capa extra de la batería: un segundo sonido que suena con cada golpe (por ejemplo, sub + click en un bombo)
   src?: 'sample' | 'synth'; dsyn?: DrumP; // batería: sonido de sample (por defecto) o sintetizado desde cero (dsyn)
   cg?: string; // grupo de corte de la batería ('A', 'B', 'C' o '' = ninguno): un golpe corta lo que suena de las pistas del mismo grupo (por defecto hat y open hat comparten el A)
   tone?: number; att?: number; pe?: number; // moldeado del golpe (batería y samples): tono oscuro..brillante (−1..1), ataque suave..marcado (−1..1) y caída de tono inicial en semitonos (0..24)
   kit?: string; // kit propio de este instrumento de batería (si falta, el del loop)
+  prob?: number[]; probG?: Record<number, number[]>; rat?: number[]; ratG?: Record<number, number[]>; nud?: number[]; nudG?: Record<number, number[]>; // probabilidad de cada golpe (0 = siempre), rebotes (1 = uno, 2 a 4) y retraso en fracción de paso (−0,5 a 0,5): mismas formas que vel / velG
   vel?: number[]; velG?: Record<number, number[]>; // fuerza de cada golpe (0..1; 0 = la de siempre): vel sigue a steps (16 o 64), velG a grid[div] (div o 4*div)
   steps: number[]; // 16 pasos: 0 apagado, 1 golpe, 2 acento
   sound: string; // sample (batería) o preset (sintes)
@@ -208,7 +217,7 @@ export type Track = {
 /* ---------- escenas: lo que cambia entre A, B, C y D (patrones, notas, encendido y automatización; la mezcla es la misma) ---------- */
 export const SCENES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']; // las 8 escenas posibles; se ven las primeras 4 y las que se sumen con "+" (`p.nScenes`) o ya estén usadas
 export const sceneList = (p: Project) => { let n = Math.max(4, Math.min(SCENES.length, p.nScenes ?? 4)); SCENES.forEach((k, i) => { if (i >= n && sceneUsed(p, k)) n = i + 1; }); return SCENES.slice(0, n); };
-const SK = ['steps', 'vel', 'velG', 'div', 'grid', 'mute', 'arp', 'notes', 'roll', 'rollEdited', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto', 'autoMelody'] as const;
+const SK = ['steps', 'vel', 'velG', 'prob', 'probG', 'rat', 'ratG', 'nud', 'nudG', 'div', 'grid', 'mute', 'arp', 'notes', 'roll', 'rollEdited', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto', 'autoMelody'] as const;
 export type SceneSnap = { t: Record<string, Partial<Track>>; macros?: Project['macros']; macroAuto?: Project['macroAuto']; fill?: boolean };
 const cl = <T,>(o: T): T => (o === undefined ? o : JSON.parse(JSON.stringify(o)));
 export function snapScene(p: Project): SceneSnap {
@@ -297,10 +306,20 @@ export function initFine(t: Track, d: number): number[] {
   return out;
 }
 /* golpes de una pista como { paso de 16, desfase dentro del paso (0..1), valor }: de la grilla fina si la tiene, y si no, de sus pasos */
-export function stepHits(t: Track): { s: number; o: number; v: number; x?: number }[] {
-  const out: { s: number; o: number; v: number; x?: number }[] = [], a = fineArr(t), d = t.div ?? 16, va = a ? t.velG?.[d] : t.vel;
-  if (a) { const long = a.length === 4 * d; for (let b = 0; b < 4; b++) for (let j = 0; j < d; j++) { const v = a[long ? b * d + j : j]; if (!v) continue; const f = b * 16 + (j * 16) / d, s = Math.min(63, Math.floor(f + 1e-9)); const xv = va?.length ? va[long ? b * d + j : j % va.length] : 0; out.push({ s, o: Math.max(0, f - s), v, ...(xv ? { x: xv } : {}) }); } return out; }
-  for (let s = 0; s < 64; s++) { const v = t.steps[s % t.steps.length]; if (v) { const xv = va?.length ? va[s % va.length] : 0; out.push({ s, o: 0, v, ...(xv ? { x: xv } : {}) }); } }
+/* golpes de una pista con todo lo que traen: fuerza (x), probabilidad (p), retraso (se suma a la posición) y rebotes (un golpe se repite n veces dentro de su casillero, con la fuerza bajando: m) */
+export type Hit = { s: number; o: number; v: number; x?: number; p?: number; m?: number };
+export function stepHits(t: Track): Hit[] {
+  const out: Hit[] = [], a = fineArr(t), d = t.div ?? 16, L = 16 / d;
+  const rd = (n: number[] | undefined, g: Record<number, number[]> | undefined, k: number) => { const arr = a ? g?.[d] : n; return arr?.length ? arr[k % arr.length] : 0; };
+  const add = (f0: number, k: number, v: number) => {
+    const x = rd(t.vel, t.velG, k), pr = rd(t.prob, t.probG, k), rt = Math.max(1, Math.min(4, Math.round(rd(t.rat, t.ratG, k) || 1))), nd = rd(t.nud, t.nudG, k) * L;
+    for (let q = 0; q < rt; q++) {
+      const f = ((f0 + nd + (q * L) / rt) % 64 + 64) % 64, s = Math.min(63, Math.floor(f + 1e-9));
+      out.push({ s, o: Math.max(0, f - s), v, ...(x ? { x } : {}), ...(pr > 0 && pr < 0.999 ? { p: pr } : {}), ...(q ? { m: Math.pow(0.82, q) } : {}) });
+    }
+  };
+  if (a) { const long = a.length === 4 * d; for (let b = 0; b < 4; b++) for (let j = 0; j < d; j++) { const k = long ? b * d + j : j, v = a[k]; if (v) add(b * 16 + (j * 16) / d, k, v); } return out; }
+  for (let s = 0; s < 64; s++) { const v = t.steps[s % t.steps.length]; if (v) add(s, s, v); }
   return out;
 }
 
@@ -313,6 +332,7 @@ export type Project = {
   groups?: Group[]; // grupos de instrumentos: se mutean o se ponen en solo todos juntos
   seq: number[]; chords: { name: string; tones: string[]; midi: number[] }[];
   tracks: Track[];
+  drumBus?: { on: boolean; mix: number; thr: number; ratio: number; atk: number; rel: number; makeup: number }; // compresión paralela de toda la batería (se mezcla abajo de la original)
   fx: { revSize: number; revDamp: number; revRet: number; dlyFb: number; dlyRet: number; duck: number; rv?: Partial<RevP>; dl?: Partial<DlyP> }; // revSize = duración (decay), revDamp, revRet, dlyFb y dlyRet son los de siempre; rv y dl guardan el resto de los parámetros del reverb y del delay
   master: { eq: number[]; target: number; auto: boolean; ceiling: number };
   seed?: number;
@@ -849,10 +869,10 @@ export function compile(p: Project) {
       // sample propio (audio que subió el usuario): suena como una percusión en los golpes de la grilla
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
       if (t.vox?.has && (t.vox.clip || t.vox.free)) { const ps = Math.max(0, Math.min(63.5, t.vox.pos ?? 0)), s0 = Math.floor(ps + 1e-6); ev[s0].push({ v: 0.9, ...(ps - s0 > 1e-6 ? { o: ps - s0 } : {}) }); } // capela / loop largo: suena una sola vez por vuelta
-      else if (t.vox?.has) for (const h of stepHits(t)) ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : h.v === 3 ? 0.38 : 0.8), ...(h.o ? { o: h.o } : {}) });
+      else if (t.vox?.has) for (const h of stepHits(t)) ev[h.s].push({ v: (h.x ?? (h.v === 2 ? 1 : h.v === 3 ? 0.38 : 0.8)) * (h.m ?? 1), ...(h.p !== undefined ? { p: h.p } : {}), ...(h.o ? { o: h.o } : {}) });
     } else if (t.type === 'fx') {
       kind = 'fx'; fxp = { ...(FX_SOUNDS[t.sound]?.p ?? FX_SOUNDS.riser.p), ...t.fxs };
-      for (const h of stepHits(t)) ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : 0.85), ...(h.o ? { o: h.o } : {}) });
+      for (const h of stepHits(t)) ev[h.s].push({ v: (h.x ?? (h.v === 2 ? 1 : 0.85)) * (h.m ?? 1), ...(h.p !== undefined ? { p: h.p } : {}), ...(h.o ? { o: h.o } : {}) });
     } else if (t.roll && (t.type === 'bass' || t.type === 'arp' || t.type === 'chords')) {
       // editada a mano en el piano roll
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? (t.type === 'bass' ? SYNTHS.bassSaw.p : t.type === 'arp' ? SYNTHS.pluck.p : SYNTHS.strings.p);
@@ -860,16 +880,13 @@ export function compile(p: Project) {
     } else if (t.type === 'drum') {
       kind = 'sample'; sample = sampleKey(t.kit && KITS[t.kit] ? t.kit : p.kit, t.sound);
       if (t.src === 'synth' && t.dsyn) { kind = 'dsyn'; sample = undefined; fxp = undefined; dsynP = { ...DRUM_SYNTHS.k909.p, ...t.dsyn }; } // sonido sintetizado: los eventos son los mismos
-      if (fineArr(t)) stepHits(t).forEach((h) => { const ghost = clamp(0.38 * (1 + mAt('energy', h.s) * 1.2), 0.15, 0.7); ev[h.s].push({ v: h.x ?? (h.v === 2 ? 1 : h.v === 3 ? ghost : 0.72), o: h.o }); });
-      else for (let s = 0; s < 64; s++) {
-        const es = mAt('energy', s), ghost = clamp(0.38 * (1 + es * 1.2), 0.15, 0.7), v = t.steps[s % t.steps.length], xv = t.vel?.length ? t.vel[s % t.vel.length] : 0;
-        if (v) ev[s].push({ v: xv || (v === 2 ? 1 : v === 3 ? ghost : 0.72) }); else if (t.id === 'hat' && es > 0.22 && s % 2 === 1) ev[s].push({ v: 0.22 + es * 0.3 });
-      }
+      stepHits(t).forEach((h) => { const ghost = clamp(0.38 * (1 + mAt('energy', h.s) * 1.2), 0.15, 0.7); ev[h.s].push({ v: (h.x ?? (h.v === 2 ? 1 : h.v === 3 ? ghost : 0.72)) * (h.m ?? 1), ...(h.p !== undefined ? { p: h.p } : {}), ...(h.o ? { o: h.o } : {}) }); });
+      if (!fineArr(t) && t.id === 'hat') for (let s = 0; s < 64; s++) { const es = mAt('energy', s); if (!t.steps[s % t.steps.length] && es > 0.22 && s % 2 === 1) ev[s].push({ v: 0.22 + es * 0.3 }); } // hats de relleno de la macro Energía
     } else if (t.type === 'bass') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.bassSaw.p;
-      for (const { s, o, v, x } of stepHits(t)) {
+      for (const { s, o, v, x, p: pp, m: mm } of stepHits(t)) {
         let m = p.chords[Math.floor(s / 16)].midi[0]; while (m > 47) m -= 12; while (m < 36) m += 12;
-        ev[s].push({ n: m - 12 + (t.bassLine ? t.bassLine[s % t.bassLine.length] ?? 0 : 0), v: x ?? (v === 2 ? 1 : 0.8), l: t.bassLen ?? 0.85, o });
+        ev[s].push({ n: m - 12 + (t.bassLine ? t.bassLine[s % t.bassLine.length] ?? 0 : 0), v: (x ?? (v === 2 ? 1 : 0.8)) * (mm ?? 1), l: t.bassLen ?? 0.85, o, ...(pp !== undefined ? { p: pp } : {}) });
       }
     } else if (t.type === 'arp') {
       synth = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.pluck.p; const f = arpNotes(p, t);
@@ -892,8 +909,8 @@ export function compile(p: Project) {
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(Math.min(0.5, nt.l), nt.l - 0.1), ...(nt.o ? { o: nt.o } : {}) }); });
     } else {
       const base = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.strings.p;
-      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); if (synth.pro && synth !== base) synth.pro = { ...base.pro!, env1: { a: 0.004, d: Math.min(base.pro!.env1.d, 0.4), s: 0, r: 0.15 } }; for (const { s, o, x } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: x ?? 0.8, l: t.chordLen ?? 1, o })); }
-      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05), pro: base.pro && { ...base.pro, env1: { ...base.pro.env1, a: Math.min(base.pro.env1.a, 0.004), r: Math.min(base.pro.env1.r, 0.05) } } }; for (const { s, o, x } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: x ?? 0.8, l: t.chordLen ?? 0.8, o })); }
+      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); if (synth.pro && synth !== base) synth.pro = { ...base.pro!, env1: { a: 0.004, d: Math.min(base.pro!.env1.d, 0.4), s: 0, r: 0.15 } }; for (const { s, o, x, p: pp, m: mm } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: (x ?? 0.8) * (mm ?? 1), l: t.chordLen ?? 1, o, ...(pp !== undefined ? { p: pp } : {}) })); }
+      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05), pro: base.pro && { ...base.pro, env1: { ...base.pro.env1, a: Math.min(base.pro.env1.a, 0.004), r: Math.min(base.pro.env1.r, 0.05) } } }; for (const { s, o, x, p: pp, m: mm } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: (x ?? 0.8) * (mm ?? 1), l: t.chordLen ?? 0.8, o, ...(pp !== undefined ? { p: pp } : {}) })); }
       else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
     }
     if (t.id === fillId) for (let s = NB * 16 - 8; s < NB * 16; s++) ev[s] = [{ v: 0.3 + 0.7 * ((s - (NB * 16 - 8)) / 7) ** 1.3 }]; // redoble: semicorcheas que crecen en los últimos 2 tiempos
@@ -908,6 +925,7 @@ export function compile(p: Project) {
     } else groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
     return {
       cg: t.type === 'drum' ? (t.cg === undefined ? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '') : t.cg) : '', tn: t.type === 'drum' || t.type === 'sample' ? t.tone || 0 : 0, at: t.type === 'drum' || t.type === 'sample' ? t.att || 0 : 0, pe: t.type === 'drum' || t.type === 'sample' ? t.pe || 0 : 0,
+      drm: t.type === 'drum',
       rvx: t.rvx ? { ...REV_DEF, ret: 1, ...t.rvx } : undefined, dlx: t.dlx ? { ...DLY_DEF, ret: 1, ...t.dlx } : undefined,
       id: t.id, kind, sample, synth, fxp, dsp: dsynP, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
@@ -919,6 +937,15 @@ export function compile(p: Project) {
       cutAmt: t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' || t.type === 'sample' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx' && t.type !== 'sample', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx' && t.type !== 'sample',
     };
   });
+  // capas: la pista con capa extra manda a la mezcla una segunda pista compilada con los mismos golpes y su propio sonido
+  const withLayers: any[] = [];
+  tracks.forEach((c: any, i: number) => {
+    withLayers.push(c); const t = p.tracks[i], L = t.lay;
+    if (t.type === 'drum' && L?.on) {
+      const syn = L.src === 'synth';
+      withLayers.push({ ...c, id: c.id + ':L', isKick: false, kind: syn ? 'dsyn' : 'sample', sample: syn ? undefined : sampleKey(L.kit && KITS[L.kit] ? L.kit : t.kit && KITS[t.kit] ? t.kit : p.kit, L.sound), dsp: syn ? { ...DRUM_SYNTHS.k909.p, ...L.dsyn } : undefined, gain: anyGain(t.vol) * L.vol, pitch: L.pitch, decay: L.decay ?? 1, rvx: undefined, dlx: undefined });
+    }
+  });
   const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;
-  return { scene: p.scene ?? 'A', bars: NB, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8), rv: { ...REV_DEF, ...p.fx.rv, decay: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), damp: p.fx.revDamp, ret: p.fx.revRet }, dl: { ...DLY_DEF, ...p.fx.dl, fb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.92), ret: p.fx.dlyRet } }, master: p.master, tracks };
+  return { scene: p.scene ?? 'A', bars: NB, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8), rv: { ...REV_DEF, ...p.fx.rv, decay: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), damp: p.fx.revDamp, ret: p.fx.revRet }, dl: { ...DLY_DEF, ...p.fx.dl, fb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.92), ret: p.fx.dlyRet } }, master: p.master, drumBus: p.drumBus?.on ? { ...DBUS_DEF, ...p.drumBus } : undefined, tracks: withLayers };
 }

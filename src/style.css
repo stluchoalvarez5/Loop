@@ -681,3 +681,7 @@ img,svg{-webkit-user-drag:none}
 .swave .wm{position:absolute;top:0;bottom:0;width:0;border-left:2px solid #5bc0ff;pointer-events:none}
 .swave .wm::before{content:'';position:absolute;top:0;left:-6px;border:6px solid transparent;border-top-color:#5bc0ff}
 .swave .wm b{position:absolute;bottom:2px;left:4px;font:600 10px 'JetBrains Mono',monospace;color:#5bc0ff;text-shadow:0 0 3px #000}
+.seg.lanes{margin-top:8px}
+.vb .mid{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(255,255,255,.25);pointer-events:none}
+.mychip{display:inline-flex}
+.mychip .chip.x{padding:0 9px;margin-left:-1px;color:var(--mut)}

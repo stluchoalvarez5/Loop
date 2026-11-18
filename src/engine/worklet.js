@@ -547,7 +547,7 @@ class LoopEngine extends AudioWorkletProcessor {
     this.compEnv = 0; this.limG = 1; this.LA = 64; this.laL = new Float32Array(this.LA); this.laR = new Float32Array(this.LA); this.laI = 0;
     this.pkWin = new Float32Array(this.LA); this.pkBlk = new Float32Array(this.LA >> 3); this.ceil = dbToGain(-1); this.limAtk = 1 - Math.exp(-5 / this.LA);
     this.duck = 1; this.duckTarget = 1; this.meterN = 0; this.peak = 0; this.revRet = 0.8; this.dlyRet = 0.6;
-    this.buf = { L: new Float32Array(128), R: new Float32Array(128), rL: new Float32Array(128), rR: new Float32Array(128), dL: new Float32Array(128), dR: new Float32Array(128), tL: new Float32Array(128), tR: new Float32Array(128), kd: new Float32Array(128) };
+    this.buf = { L: new Float32Array(128), R: new Float32Array(128), rL: new Float32Array(128), rR: new Float32Array(128), dL: new Float32Array(128), dR: new Float32Array(128), tL: new Float32Array(128), tR: new Float32Array(128), bL: new Float32Array(128), bR: new Float32Array(128), kd: new Float32Array(128) };
     this.stepAt = -1; this.clock = 0; this.freezeAt = 0; this.quiet = false;
     this.port.onmessage = (e) => this.onMsg(e.data);
     // modo exportación (OfflineAudioContext): el proyecto y los samples llegan en el constructor y arranca a sonar en la muestra 0
@@ -619,7 +619,7 @@ class LoopEngine extends AudioWorkletProcessor {
     }
     if (m.type === 'play') { const f = m.from | 0, sl = this.stepLen(); this.playing = true; this.done = {}; this.pos = f * sl; this.next = f; this.nextT = f * sl; this.step = -1; return; }
     if (m.type === 'stop') { this.playing = false; this.tracks.forEach((t) => t.voices.forEach((v) => { if (v.stage !== undefined) v.stage = 2; else fastRelease(v, this.sr); })); return; }
-    if (m.type === 'preview') { const t = this.tracks.find((x) => x.id === m.id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); }
+    if (m.type === 'preview') { for (const id of [m.id, m.id + ':L']) { const t = this.tracks.find((x) => x.id === id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); } }
   }
   stepLen() { return this.sr * 60 / this.bpm / 4; }
   trigger(t, ev, offset) {
@@ -679,7 +679,8 @@ class LoopEngine extends AudioWorkletProcessor {
           // escena en cola: entra justo en el paso 0 (antes se cambiaba al empezar el paso 63 y un toque en el último paso esperaba otra vuelta entera)
           if (st === 0 && this.pendingProj) { const pp = this.pendingProj; this.pendingProj = null; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; }
           for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; if (t.once) { const dn = this.done || (this.done = {}); if (dn[t.id]) continue; dn[t.id] = 1; } // sample "de largo": suena una vez y sigue, no vuelve a arrancar en cada vuelta
-          const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; for (const ev of evs) this.trigger(t, ev, i + off + (ev.o ? Math.round(ev.o * sl) : 0)); } // ev.o: desfase dentro del paso (grilla fina)
+          const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; { let roll = -1; for (const ev of evs) { if (ev.p !== undefined) { if (roll < 0) roll = Math.random(); if (roll > ev.p) continue; } this.trigger(t, ev, i + off + (ev.o ? Math.round(ev.o * sl) : 0)); } } // ev.p: probabilidad del golpe (una tirada por pista y paso: un acorde entra o no entero)
+          } // ev.o: desfase dentro del paso (grilla fina)
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
           if (this.next >= LEN) { this.next = 0; this.pos -= loopLen; if (this.arr) { const np = this.arr[++this.arrI]; if (np) { this.onMsg({ type: 'project', project: np }); tracks = this.tracks; } } }
@@ -785,6 +786,7 @@ class LoopEngine extends AudioWorkletProcessor {
         const dk = 1 - (t.duck || 0) * kickDuck[i], q = i * inv;
         const l = B.tL[i] * (gl0 + (gl - gl0) * q) * dk, r = B.tR[i] * (gr0 + (gr - gr0) * q) * dk;
         B.L[i] += l; B.R[i] += r; const sm = (l + r) * 0.5;
+        if (t.drm) { B.bL[i] += l; B.bR[i] += r; } // bus de batería (compresión paralela)
         // reverb y delay: si la pista tiene los suyos (rv / dl) los procesa acá con sus parámetros; si no, manda al reverb y delay del master
         if (t.rv || t.dl) {
           const dkf = 1 - this.fxDuckNow * kickDuck[i];
@@ -794,6 +796,17 @@ class LoopEngine extends AudioWorkletProcessor {
         const a = Math.abs(l) + Math.abs(r); if (a > pk) pk = a;
       }
       t.meter = Math.max(pk * 0.5, t.meter * 0.92);
+    }
+    // bus de batería: compresión paralela (la batería se comprime fuerte y se mezcla abajo de la original, así gana cuerpo sin perder los golpes)
+    const DBUS = this.compiled && this.compiled.drumBus;
+    if (DBUS) {
+      const atkC = Math.exp(-1 / (sr * Math.max(0.1, DBUS.atk) / 1000)), relC = Math.exp(-1 / (sr * Math.max(5, DBUS.rel) / 1000)), thr = DBUS.thr, sl2 = 1 - 1 / Math.max(1, DBUS.ratio), mk = Math.pow(10, DBUS.makeup / 20), mx = DBUS.mix; let env = this.dbEnv || 0, grMin = 0;
+      for (let i = 0; i < N; i++) {
+        const l = B.bL[i], r = B.bR[i], lv = Math.max(Math.abs(l), Math.abs(r)); env = lv > env ? atkC * env + (1 - atkC) * lv : relC * env + (1 - relC) * lv;
+        const db = 20 * Math.log10(env + 1e-9), gr = db > thr ? -(db - thr) * sl2 : 0; if (gr < grMin) grMin = gr;
+        const gg = Math.pow(10, gr / 20) * mk * mx; B.L[i] += l * gg; B.R[i] += r * gg;
+      }
+      this.dbEnv = env; this.dbGr = grMin;
     }
     // FX + master
     const rr = this.revRet, dr = this.dlyRet, fxDuck = this.compiled ? this.compiled.fx.duck : 0;

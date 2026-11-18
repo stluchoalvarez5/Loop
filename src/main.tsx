@@ -19,7 +19,7 @@ import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
   type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, sceneList, hasAudio, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  FX_SOUNDS, FX_GROUPS, type FxP, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
+  FX_SOUNDS, FX_GROUPS, type FxP, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
@@ -104,7 +104,7 @@ function applyMacro(d: Project, k: MacroKey, x: number) {
 }
 /* portapapeles de patrones: queda guardado, así se puede pegar en otro loop */
 type Clip = { type: TrackType; name: string; data: Partial<Track> };
-const CLIP_KEYS = ['steps', 'vel', 'velG', 'div', 'grid', 'arp', 'notes', 'roll', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto'] as const;
+const CLIP_KEYS = ['steps', 'vel', 'velG', 'prob', 'probG', 'rat', 'ratG', 'nud', 'nudG', 'div', 'grid', 'arp', 'notes', 'roll', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto'] as const;
 const getClip = (): Clip | null => { try { return JSON.parse(localStorage.getItem('loop.clip') ?? 'null'); } catch { return null; } };
 const setClip = (t: Track) => { const data: any = {}; CLIP_KEYS.forEach((k) => { if (t[k] !== undefined) data[k] = clone(t[k]); }); try { localStorage.setItem('loop.clip', JSON.stringify({ type: t.type, name: t.name, data })); } catch { /* */ } };
 /* pega en x lo copiado: mismo tipo = todo; batería ⇄ bajo o acordes = los golpes; notas (melodía o piano roll) = las notas */
@@ -737,24 +737,30 @@ function FineEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => 
     if (dd === 16) x.steps = a; else x.grid = { ...x.grid, [dd]: a };
     if (x.mute) x.mute = false;
   }); };
-  // fuerza de cada golpe: la guardada (vel / velG) o la de siempre según el tipo de golpe
-  const [vtxt, setVtxt] = useState('');
-  const vArr = d === 16 ? t.vel : t.velG?.[d];
+  // líneas de barras debajo de cada fila: fuerza, probabilidad, rebotes y retraso de cada golpe (se elige cuál con los botones de arriba)
+  const [lm, setLm] = useState<'vel' | 'prob' | 'rat' | 'nud'>('vel'), [vtxt, setVtxt] = useState('');
+  const KEYS = { vel: ['vel', 'velG'], prob: ['prob', 'probG'], rat: ['rat', 'ratG'], nud: ['nud', 'nudG'] } as const;
+  const arrOf = (tt: Track, key: keyof typeof KEYS) => (d === 16 ? (tt as any)[KEYS[key][0]] : (tt as any)[KEYS[key][1]]?.[d]) as number[] | undefined;
   const defV = (v: number) => (v === 2 ? 1 : v === 3 ? 0.38 : t.type === 'drum' ? 0.72 : 0.8);
-  const effV = (j: number) => { const k = bar ? (bar - 1) * d + j : j, x = vArr?.length ? vArr[k % vArr.length] : 0; return x || defV(val(j)); };
-  const writeVel = (cells: [number, number][]) => upT(t.id, (x) => {
-    const dd = x.div ?? 16; let a = (dd === 16 ? x.vel : x.velG?.[dd])?.slice() ?? Array(dd === 16 ? (x.steps.length === 64 ? 64 : 16) : dd).fill(0);
+  const effL = (j: number) => { const k = bar ? (bar - 1) * d + j : j, ar = arrOf(t, lm), x = ar?.length ? ar[k % ar.length] : 0; return lm === 'vel' ? x || defV(val(j)) : lm === 'nud' ? x : x || (lm === 'prob' ? 1 : 1); };
+  const writeL = (key: keyof typeof KEYS, cells: [number, number][]) => upT(t.id, (x) => {
+    const dd = x.div ?? 16; let a = arrOf(x, key)?.slice() ?? Array(dd === 16 ? (x.steps.length === 64 ? 64 : 16) : dd).fill(0);
     if (bar && a.length !== 4 * dd) a = Array.from({ length: 4 * dd }, (_, i) => a[i % a.length]);
     for (const [j, v] of cells) { if (bar) a[(bar - 1) * dd + j] = v; else if (a.length === 4 * dd) for (let b = 0; b < 4; b++) a[b * dd + j] = v; else a[j] = v; }
-    if (dd === 16) x.vel = a; else x.velG = { ...x.velG, [dd]: a };
+    if (dd === 16) (x as any)[KEYS[key][0]] = a; else (x as any)[KEYS[key][1]] = { ...(x as any)[KEYS[key][1]], [dd]: a };
   });
   const paint = (e: PointerEvent, r: number, down: boolean) => {
     const el = e.currentTarget as HTMLElement;
     if (down) el.setPointerCapture(e.pointerId); else if (!el.hasPointerCapture(e.pointerId)) return;
     const b = el.getBoundingClientRect(), k = Math.max(0, Math.min(rowLen - 1, Math.floor(((e.clientX - b.left) / b.width) * rowLen))), j = r * rowLen + k;
     if (!val(j)) return;
-    const v = Math.max(0.03, Math.min(1, Math.round((1 - (e.clientY - b.top) / b.height) * 100) / 100));
-    setVtxt(`${t.name} · posición ${j + 1}: fuerza ${Math.round(v * 127)}`); writeVel([[j, v]]);
+    const f = Math.max(0, Math.min(1, 1 - (e.clientY - b.top) / b.height));
+    let v: number, txt: string;
+    if (lm === 'vel') { v = Math.max(0.03, Math.round(f * 100) / 100); txt = `fuerza ${Math.round(v * 127)}`; }
+    else if (lm === 'prob') { v = Math.max(0.05, Math.round(f * 20) / 20); txt = v > 0.97 ? 'probabilidad 100 % (siempre)' : `probabilidad ${Math.round(v * 100)} %`; if (v > 0.97) v = 0; }
+    else if (lm === 'rat') { v = Math.max(1, Math.min(4, 1 + Math.floor(f * 4 - 0.001))); txt = v === 1 ? 'un golpe' : `rebotes ×${v}`; }
+    else { v = Math.round((f - 0.5) * 100) / 100; if (Math.abs(v) < 0.04) v = 0; txt = v === 0 ? 'en su lugar' : `retraso ${v > 0 ? '+' : ''}${Math.round(v * 100)} % del casillero`; }
+    setVtxt(`${t.name} · posición ${j + 1}: ${txt}`); writeL(lm, [[j, v]]);
   };
   // herramientas de patrón: rotar, invertir, al azar y euclídeo (aplican al compás elegido o a todos)
   const xform = (fn: (seg: number[]) => number[]) => upT(t.id, (x) => {
@@ -765,7 +771,7 @@ function FineEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => 
   });
   const rot = (n: number) => xform((sg) => sg.map((_, i) => sg[(i - n + sg.length) % sg.length]));
   const euclid = (k: number) => xform((sg) => sg.map((_, i) => Math.floor(((i + 1) * k) / sg.length) - Math.floor((i * k) / sg.length)));
-  const humanize = () => { const cells: [number, number][] = []; for (let j = 0; j < d; j++) if (val(j)) cells.push([j, Math.max(0.1, Math.min(1, +(effV(j) * (0.88 + Math.random() * 0.24)).toFixed(2)))]); writeVel(cells); };
+  const humanize = () => { const cells: [number, number][] = []; for (let j = 0; j < d; j++) if (val(j)) cells.push([j, Math.max(0.1, Math.min(1, +(((arrOf(t, 'vel')?.[j % (arrOf(t, 'vel')?.length || 1)] || defV(val(j))) as number) * (0.88 + Math.random() * 0.24)).toFixed(2)))]); writeL('vel', cells); };
   return <>
     <div class="sub">División del compás</div>
     <div class="divs">{DIVS.map(([k, l, h]) => <button class={d === k ? 'on' : ''} title={h} onClick={() => setDiv(k)}>{l}</button>)}</div>
@@ -775,11 +781,12 @@ function FineEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => 
         {Array.from({ length: rowLen }, (_, k) => { const j = r * rowLen + k, v = val(j); return <button class={'fp' + (v === 1 ? ' v1' : v === 2 ? ' v2' : v === 3 ? ' v1 gh' : '') + (j % beat === 0 ? ' q' : '')} aria-label={`${t.name}, división ${DIVS.find((x) => x[0] === d)?.[1]}, posición ${j + 1}`} {...tap(() => edit(j))} />; })}
       </div>
         <div class="vlane" style={{ '--n': rowLen } as any} onPointerDown={(e) => paint(e, r, true)} onPointerMove={(e) => paint(e, r, false)}>
-          {Array.from({ length: rowLen }, (_, k) => { const j = r * rowLen + k, v = val(j); return <div class={'vb' + (v ? '' : ' off')}>{v ? <i style={{ height: Math.round(effV(j) * 100) + '%' }} /> : null}</div>; })}
+          {Array.from({ length: rowLen }, (_, k) => { const j = r * rowLen + k, v = val(j), e = effL(j); return <div class={'vb' + (v ? '' : ' off')}>{v ? (lm === 'nud' ? <i style={e >= 0 ? { bottom: '50%', height: Math.abs(e) * 100 + '%' } : { top: '50%', bottom: 'auto', height: Math.abs(e) * 100 + '%' }} /> : <i style={{ height: Math.round((lm === 'rat' ? e / 4 : e) * 100) + '%' }} />) : null}{lm === 'nud' && v ? <u class="mid" /> : null}</div>; })}
         </div>
       </div>)}
     </div>
-    <div class="vread">{vtxt || 'Fuerza de cada golpe: arrastrá las barras de abajo de cada fila (0 a 127).'}</div>
+    <div class="seg lanes">{([['vel', 'Fuerza'], ['prob', 'Probabilidad'], ['rat', 'Rebotes'], ['nud', 'Retraso']] as const).map(([k, l]) => <button class={lm === k ? 'on' : ''} onClick={() => { setLm(k); setVtxt(''); }}>{l}</button>)}</div>
+    <div class="vread">{vtxt || (lm === 'vel' ? 'Fuerza de cada golpe: arrastrá las barras de abajo de cada fila (0 a 127).' : lm === 'prob' ? 'Probabilidad: qué tan seguido suena cada golpe (arriba = siempre, abajo = rara vez). Cambia en cada vuelta.' : lm === 'rat' ? 'Rebotes: cuántas veces se repite el golpe dentro de su casillero (1 a 4, con la fuerza bajando).' : 'Retraso: corré el golpe antes (abajo) o después (arriba) de su lugar, hasta medio casillero.')}</div>
     <div class="sub2" style={{ marginTop: '10px' }}>Euclídeo (reparte N golpes parejo en el compás)</div>
     <div class="chips">{[2, 3, 4, 5, 6, 7, 9, 11].map((k) => <button class="chip" onClick={() => euclid(k * (d / 16 >= 1 ? Math.round(d / 16) : 1))}>{k}</button>)}</div>
     <div class="chips" style={{ marginTop: '10px' }}>
@@ -787,7 +794,7 @@ function FineEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => 
       <button class="chip" onClick={() => xform((sg) => sg.map((v) => (v ? 0 : 1)))}>Invertir</button>
       <button class="chip" onClick={() => xform((sg) => sg.map((_, i) => (Math.random() < (i % Math.max(1, sg.length / 4) === 0 ? 0.65 : 0.28) ? (Math.random() < 0.15 ? 2 : 1) : 0)))}>Al azar</button>
       <button class="chip" onClick={humanize}>Humanizar fuerza</button>
-      <button class="chip" onClick={() => { upT(t.id, (x) => { if ((x.div ?? 16) === 16) x.vel = undefined; else if (x.velG) { const g = { ...x.velG }; delete g[x.div!]; x.velG = g; } }); setVtxt('Fuerza restablecida'); }}>Fuerza de siempre</button>
+      <button class="chip" onClick={() => { upT(t.id, (x) => { const kk = KEYS[lm]; if ((x.div ?? 16) === 16) (x as any)[kk[0]] = undefined; else if ((x as any)[kk[1]]) { const g = { ...(x as any)[kk[1]] }; delete g[x.div!]; (x as any)[kk[1]] = g; } }); setVtxt('Fila restablecida'); }}>Restablecer {lm === 'vel' ? 'fuerza' : lm === 'prob' ? 'probabilidad' : lm === 'rat' ? 'rebotes' : 'retraso'}</button>
       <button class="chip" onClick={() => upT(t.id, (x) => { const dd = x.div ?? 16; if (dd === 16) x.steps = Array(x.steps.length).fill(0); else x.grid = { ...x.grid, [dd]: Array(fineArr(x)?.length ?? dd).fill(0) }; })}>Vaciar</button>
       {d !== 16 && long && <span class="note" style={{ margin: 0, alignSelf: 'center' }}>Tiene los 4 compases distintos</span>}
     </div>
@@ -967,15 +974,42 @@ function SampleEditor({ p, t, upT }: { p: Project; t: Track; upT: (id: string, f
     <div class="hint">Subí cualquier audio corto (un golpe, un grito, un loop) y suena como una percusión: cada casillero de la grilla lo dispara. Se le recorta el silencio del principio y se normaliza; queda guardado en este celu junto con el loop. Con Afinación lo subís o bajás, con Largo lo cortás antes, con las líneas de la onda elegís dónde arranca y dónde termina y "Al revés" lo da vuelta. Para una capela o un loop largo, elegí "Una vez por vuelta": suena una sola vez cada vez que el loop da la vuelta (desde el compás que elijas) y no se superpone con sí mismo; "Cada golpe corta el anterior" sirve para samples largos disparados en la grilla.</div>
   </>;
 }
+/* capa extra de una batería: un segundo sonido que suena a la vez con cada golpe (sub + click, clap + snare…) */
+function LayerEditor({ t, upT, p }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void; p: Project }) {
+  const L = t.lay!, syn = L.src === 'synth', setL = (patch: Partial<NonNullable<Track['lay']>>) => upT(t.id, (x) => { x.lay = { ...x.lay!, ...patch }; });
+  return <>
+    <div class="seg" style={{ marginTop: '6px' }}>{([['sample', 'Sample'], ['synth', 'Sintetizado']] as const).map(([k, l]) => <button class={(syn ? 'synth' : 'sample') === k ? 'on' : ''} onClick={() => setL({ src: k === 'synth' ? 'synth' : undefined, ...(k === 'synth' && !L.dsyn ? { dsyn: { ...DRUM_SYNTHS.k808.p }, sound: 'kick' } : {}) })}>{l}</button>)}</div>
+    {!syn && <label class="sel-w" style={{ marginTop: '6px' }}><select class="sel" value={L.sound} onChange={(e) => setL({ sound: (e.target as HTMLSelectElement).value })}>{Object.entries(DRUM_SOUNDS).map(([k, l]) => <option value={k}>{l}</option>)}</select></label>}
+    {!syn && <label class="sel-w" style={{ marginTop: '6px' }}><select class="sel" value={L.kit && KITS[L.kit] ? L.kit : ''} onChange={(e) => { const v = (e.target as HTMLSelectElement).value; setL({ kit: v || undefined }); }}><option value="">Kit de esta pista ({KITS[t.kit && KITS[t.kit] ? t.kit : p.kit]?.label})</option>{Object.keys(KITS).map((k) => <option value={k}>{KITS[k].label}</option>)}</select></label>}
+    {syn && <div class="chips" style={{ marginTop: '6px' }}>{Object.entries(DRUM_SYNTHS).map(([k, d]) => <button class="chip" style={{ '--c': t.color } as any} onClick={() => setL({ dsyn: { ...d.p }, sound: d.sound })}>{d.label}</button>)}</div>}
+    <div class="knobs" style={{ marginTop: '8px' }}>
+      <Knob label="Nivel capa" value={L.vol} min={0} max={1.4} def={0.7} color={t.color} fmt={pct} onChange={(v) => setL({ vol: v })} />
+      <Knob label="Afinación capa" value={L.pitch} min={-24} max={24} step={1} def={0} color={t.color} fmt={(v) => (v > 0 ? '+' : '') + v + 'st'} onChange={(v) => setL({ pitch: v })} />
+      {!syn && <Knob label="Largo capa" value={L.decay ?? 1} min={0.05} max={1} def={1} color={t.color} fmt={pct} onChange={(v) => setL({ decay: v })} />}
+    </div>
+    <div class="hint-s">La capa suena con cada golpe de este instrumento, con los mismos patrones, fuerza y probabilidad. Es para apilar sonidos: por ejemplo, un bombo con un sub 808 abajo y un click arriba.</div>
+  </>;
+}
 /* batería sintetizada: armás el sonido desde cero (cuerpo, click, ruido, metal) o partís de un preset */
 function DrumSynthEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
   const P: DrumP = { ...DRUM_SYNTHS.k909.p, ...t.dsyn };
   const set = (patch: Partial<DrumP>) => upT(t.id, (x) => { x.dsyn = { ...DRUM_SYNTHS.k909.p, ...x.dsyn, ...patch }; });
   const pick = (k: string) => upT(t.id, (x) => { const d = DRUM_SYNTHS[k]; x.dsyn = { ...d.p }; x.sound = d.sound; if (Object.values(DRUM_SOUNDS).includes(x.name) || x.name === 'Percu') x.name = DRUM_SOUNDS[d.sound] ?? x.name; });
   const body = P.body > 0, noise = P.nz > 0;
+  // mis sonidos de batería: se guardan en este celu (sirven en todos los loops)
+  type Mine = { id: string; name: string; sound: string; p: DrumP };
+  const readMine = (): Mine[] => { try { const j = JSON.parse(lsGet('loop.mydrums') ?? '[]'); return Array.isArray(j) ? j : []; } catch { return []; } };
+  const [mine, setMine] = useState<Mine[]>(readMine), [nm, setNm] = useState('');
+  const saveMine = (l: Mine[]) => { setMine(l); lsSet('loop.mydrums', JSON.stringify(l.slice(0, 60))); };
   return <>
     <div class="sub">Sonido sintetizado</div>
     {DRUM_SYNTH_GROUPS.map(([g, list]) => <><div class="sub2">{g}</div><div class="chips">{list.map((k) => <button class="chip" style={{ '--c': t.color } as any} onClick={() => pick(k)}>{DRUM_SYNTHS[k].label}</button>)}</div></>)}
+    <div class="sub2">Mis sonidos</div>
+    {mine.length > 0 && <div class="chips">{mine.map((s) => <span class="mychip"><button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.dsyn = { ...DRUM_SYNTHS.k909.p, ...s.p }; x.sound = s.sound; })}>{s.name}</button><button class="chip x" aria-label={'Borrar ' + s.name} onClick={() => saveMine(mine.filter((q) => q.id !== s.id))}>×</button></span>)}</div>}
+    <div class="chips" style={{ marginTop: '6px', alignItems: 'center' }}>
+      <input class="sel" style={{ flex: 1, minWidth: '120px', padding: '8px' }} value={nm} placeholder="Nombre para guardar este sonido" maxLength={24} onInput={(e) => setNm((e.target as HTMLInputElement).value)} />
+      <button class="btn" onClick={() => { const name = nm.trim() || (DRUM_SOUNDS[t.sound] ?? 'Sonido') + ' ' + (mine.length + 1); saveMine([{ id: 'd' + Date.now().toString(36), name, sound: t.sound, p: { ...P } }, ...mine]); setNm(''); }}>Guardar</button>
+    </div>
     <div class="chips" style={{ marginTop: '8px' }}><button class="btn" style={{ '--c': t.color } as any} onClick={() => { engine.unlock(); engine.preview(t.id, 60); }}>▶ Probar</button></div>
     <div class="sub">Cuerpo</div>
     <div class="knobs">
@@ -1074,6 +1108,9 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
         <Knob label="Ataque" value={t.att ?? 0} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.03 ? 'normal' : v > 0 ? 'marcado' : 'suave')} onChange={(v) => upT(t.id, (x) => { x.att = Math.abs(v) < 0.03 ? undefined : +v.toFixed(2); })} />
         <Knob label="Caída de tono" value={t.pe ?? 0} min={0} max={24} step={1} def={0} color={t.color} fmt={(v) => (v < 0.5 ? 'no' : '+' + Math.round(v) + ' st')} onChange={(v) => upT(t.id, (x) => { x.pe = v < 0.5 ? undefined : v; })} />
       </div>}
+      <div class="sub2">Capa extra</div>
+      <div class="seg">{([[false, 'Sin capa'], [true, 'Con capa']] as const).map(([k, l]) => <button class={!!t.lay?.on === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.lay = k ? { vol: 0.7, pitch: 0, sound: x.sound === 'kick' ? 'tomL' : 'clap', ...x.lay, on: true } : x.lay ? { ...x.lay, on: false } : undefined; })}>{l}</button>)}</div>
+      {t.lay?.on && <LayerEditor t={t} upT={upT} p={p} />}
       <div class="sub2">Grupo de corte</div>
       <div class="seg">{([['', 'Ninguno'], ['A', 'A'], ['B', 'B'], ['C', 'C']] as const).map(([k, l]) => <button class={((t.cg ?? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '')) === k) ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.cg = k; })}>{l}</button>)}</div>
       <div class="hint-s">Los instrumentos del mismo grupo se cortan entre sí: el hat cerrado apaga al abierto (por defecto los dos están en el A), como en una batería de verdad.</div>
@@ -1429,7 +1466,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Automatización', body: 'En modo Avanzado, la pestaña Movimiento de cada instrumento es su automatización: elegís qué mover (Filtro, Volumen, Reverb, Delay, Saturación, Pan o Corta graves) y dibujás con el dedo cómo cambia en los 4 compases, o tocás una forma (Sube, Baja, Onda, Bombeo…). Las pistas con automatización muestran una "A".', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[0, 1, 2, 3].map((b) => <line x1={8 + b * 46} y1="4" x2={8 + b * 46} y2="76" stroke="#2a2a2a" />)}<path d="M8 60 L50 60 L54 20 L100 20 L104 50 L146 50 L150 10 L192 10" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tus propios samples', body: 'Al subir un audio la app detecta solita el BPM y el primer tiempo (si hay un pulso claro) y lo ajusta al tempo del loop. Sobre la onda ves la cuadrícula de pulsos (línea gruesa = el 1 de cada compás) y con "Qué mover en la onda" elegís: Recorte (inicio y final), Cuadrícula (corrés los pulsos hasta que caigan justo en los golpes) o Warp (tocás una línea de pulso para fijar un marcador y la arrastrás al golpe que le corresponde: entre marcadores el audio se acomoda a la cuadrícula, como en Ableton). El modo de warp se elige entre Re-pitch (cambia el tono), Tonos (estira sin cambiar el tono, para voces y sintes) y Beats (corta en pulsos y no estira: ideal para loops de batería). "+ Agregar pista" → "Sample propio" y en el editor tocá "Subir un audio": podés usar cualquier audio corto (WAV, MP3, M4A…), un golpe, un grito o un loop. Suena como una percusión en los golpes de la grilla (pestaña Ritmo, con fuerza y divisiones). Afinación lo sube o baja, Largo lo corta, las dos líneas sobre la onda marcan dónde arranca y dónde termina (se arrastran con el dedo) y "Al revés" lo da vuelta; "Cada golpe corta el anterior" sirve para samples largos. El audio queda guardado en el celu con el loop (también va en el archivo de respaldo y en los stems), no se sube a ningún lado.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[8, 22, 40, 56, 30, 18, 46, 60, 34, 14, 24, 10].map((h, k) => <line x1={14 + k * 15} y1={40 - h / 2 - 4} x2={14 + k * 15} y2={40 + h / 2 + 4} stroke={k % 3 === 0 ? Y : G} stroke-width="5" stroke-linecap="round" />)}</svg> },
     { title: 'Acordes en el piano roll', body: 'En la pestaña Notas, debajo del piano roll, elegí una nota (DO, RE…) y un tipo (Mayor, Menor, 7, Maj7, m7, Sus2, Sus4, Dim, Aum, Quinta): un toque en cualquier casillero pone el acorde entero en ese paso, con el largo elegido; otro toque en el mismo lugar lo saca. Tocá la nota de nuevo para volver a poner de a una. "Poner el acorde del loop" carga en el compás elegido el acorde que armaste en Escena → Armar.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true">{[[20, 52], [20, 36], [20, 20], [86, 44], [86, 28], [86, 12], [152, 52], [152, 36]].map(([x, y]) => <rect x={x} y={y} width="34" height="12" rx="2" fill={Y} />)}</svg> },
-    { title: 'Crear baterías y sonidos', body: 'En el editor de cada instrumento de batería: "Fuente del sonido → Sintetizado" arma el golpe desde cero con cuatro capas (cuerpo con caída de tono, click, ruido filtrado y metal de hat) y trae presets de bombo, caja, clap, rim, hats y tom. Con la fuente en Sample (kit) podés moldear el golpe con Tono (oscuro a brillante), Ataque (suave a marcado) y Caída de tono (un golpe de agudo al arrancar, ideal para bombos y toms). El Grupo de corte hace que un golpe apague a otro (el hat cerrado corta al abierto, por defecto). En Ritmo hay herramientas de patrón: Rotar, Invertir, Al azar y Euclídeo (reparte N golpes parejo en el compás).', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M10 14 C 40 14, 52 62, 110 66 S 180 66, 192 66" fill="none" stroke={Y} stroke-width="3" stroke-linecap="round" /><circle cx="26" cy="20" r="5" fill={R} /><rect x="120" y="52" width="60" height="6" rx="3" fill={G} /></svg> },
+    { title: 'Crear baterías y sonidos', body: 'En Ritmo, debajo de cada fila hay barras que se arrastran con el dedo para elegir, golpe por golpe: Fuerza, Probabilidad (qué tan seguido suena; cambia en cada vuelta), Rebotes (el golpe se repite 2 a 4 veces dentro de su casillero, con la fuerza bajando) y Retraso (lo corrés antes o después de su lugar). En el editor de una batería, "Capa extra" apila un segundo sonido con cada golpe (por ejemplo, un sub 808 abajo de un bombo) y, en sonido sintetizado, "Mis sonidos" guarda tus creaciones para usarlas en cualquier loop. En Master, "Compresión de batería" mezcla una copia fuertemente comprimida de toda la batería abajo de la original (compresión paralela). En el editor de cada instrumento de batería: "Fuente del sonido → Sintetizado" arma el golpe desde cero con cuatro capas (cuerpo con caída de tono, click, ruido filtrado y metal de hat) y trae presets de bombo, caja, clap, rim, hats y tom. Con la fuente en Sample (kit) podés moldear el golpe con Tono (oscuro a brillante), Ataque (suave a marcado) y Caída de tono (un golpe de agudo al arrancar, ideal para bombos y toms). El Grupo de corte hace que un golpe apague a otro (el hat cerrado corta al abierto, por defecto). En Ritmo hay herramientas de patrón: Rotar, Invertir, Al azar y Euclídeo (reparte N golpes parejo en el compás).', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M10 14 C 40 14, 52 62, 110 66 S 180 66, 192 66" fill="none" stroke={Y} stroke-width="3" stroke-linecap="round" /><circle cx="26" cy="20" r="5" fill={R} /><rect x="120" y="52" width="60" height="6" rx="3" fill={G} /></svg> },
     { title: 'Efectos de sonido (FX)', body: '"+ Agregar pista" → "Efectos (risers, impactos…)" suma un canal de efectos: subidas (riser), bajadas (downlifter), impactos, crash, láser, whoosh, viento, sirena, wobble y más. Cada golpe de la grilla lo dispara y dura "Largo" pasos, siempre al tempo: poné un riser en el paso donde arranca el último compás y llega a su punto más fuerte justo al empezar el siguiente. En el editor elegís el efecto y lo modificás: cómo sube o baja el volumen, la mezcla de ruido y tono, el barrido del tono y del filtro (tipo, resonancia, curva), el LFO (pulsos, wobble, sirena) y la saturación. "Probar" lo escucha ya.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M10 68 Q100 64 152 12" fill="none" stroke={Y} stroke-width="3" stroke-linecap="round" /><line x1="152" y1="8" x2="152" y2="72" stroke={R} stroke-width="2" /><path d="M156 40q12-18 14 0t14 0" fill="none" stroke={G} stroke-width="2" /></svg> },
     { title: 'Tu voz y más pistas', body: 'Con "+ Agregar pista" sumás batería, bajo, arpegio, acordes, melodía o Voz. En Voz, "Grabar 4 compases" graba en tiempo con el loop (con un compás de cuenta si está parado). Después le ponés efectos: eco, catedral, radio, robot y más. Usá auriculares para grabar.', art: <div class="art-vox"><span class="dot" />Grabar 4 compases<svg viewBox="0 0 160 30" aria-hidden="true">{Array.from({ length: 40 }, (_, k) => { const h = 4 + Math.abs(Math.sin(k * 1.7)) * 22; return <rect x={k * 4} y={15 - h / 2} width="2.5" height={h} fill={R} />; })}</svg></div> },
   ],
@@ -2133,6 +2170,21 @@ function Master({ p, up, stats }: { p: Project; up: (fn: (d: Project) => void) =
     </Panel>
     <Panel id="dly" title="Delay" icon={Ic.space} def={false}>
       <DlyEditor color="var(--mint)" v={{ ...DLY_DEF, ...p.fx.dl, fb: p.fx.dlyFb, ret: p.fx.dlyRet }} set={(patch) => up((d) => { const { fb, ret, ...rest } = patch; if (fb !== undefined) d.fx.dlyFb = fb; if (ret !== undefined) d.fx.dlyRet = ret; if (Object.keys(rest).length) d.fx.dl = { ...d.fx.dl, ...rest }; })} />
+    </Panel>
+    <Panel id="dbus" title="Compresión de batería" icon={Ic.space} def={false}>
+      {(() => { const D = { ...DBUS_DEF, ...p.drumBus }, setD = (patch: Partial<typeof DBUS_DEF>) => up((d) => { d.drumBus = { ...DBUS_DEF, ...d.drumBus, ...patch }; }); return <>
+        <div class="seg">{([[false, 'Apagada'], [true, 'Prendida']] as const).map(([k, l]) => <button class={D.on === k ? 'on' : ''} onClick={() => setD({ on: k })}>{l}</button>)}</div>
+        <div class="chips" style={{ marginTop: '8px' }}>{Object.entries(DBUS_PRESETS).map(([k, d]) => <button class="chip" onClick={() => setD({ ...d.p, on: true })}>{d.label}</button>)}</div>
+        <div class="knobs" style={{ marginTop: '8px' }}>
+          <Knob label="Mezcla" value={D.mix} min={0} max={1} def={0.4} color="var(--mint)" fmt={pct} onChange={(v) => setD({ mix: v })} />
+          <Knob label="Umbral" value={D.thr} min={-50} max={-6} step={1} def={-26} color="var(--mint)" fmt={(v) => Math.round(v) + ' dB'} onChange={(v) => setD({ thr: v })} />
+          <Knob label="Ratio" value={D.ratio} min={1.5} max={20} log def={6} color="var(--mint)" fmt={(v) => v.toFixed(1) + ':1'} onChange={(v) => setD({ ratio: v })} />
+          <Knob label="Ataque" value={D.atk} min={0.5} max={60} log def={8} color="var(--mint)" fmt={(v) => v.toFixed(1) + ' ms'} onChange={(v) => setD({ atk: v })} />
+          <Knob label="Liberación" value={D.rel} min={20} max={600} log def={90} color="var(--mint)" fmt={(v) => Math.round(v) + ' ms'} onChange={(v) => setD({ rel: v })} />
+          <Knob label="Ganancia" value={D.makeup} min={0} max={24} step={0.5} def={8} color="var(--mint)" fmt={(v) => '+' + v + ' dB'} onChange={(v) => setD({ makeup: v })} />
+        </div>
+        <div class="hint-s">Compresión paralela: toda la batería pasa por un compresor fuerte y esa copia se mezcla abajo de la original. Gana cuerpo y pegada sin aplastar los golpes. Subí "Mezcla" de a poco.</div>
+      </>; })()}
     </Panel>
     <Panel id="swing" title="Swing" icon={Ic.space} def={false}>
       <div class="knobs"><Knob label="Swing" value={p.swing} min={0} max={0.6} def={0} color="var(--sun)" fmt={pct} onChange={(v) => up((d) => { d.swing = v; })} /></div>
