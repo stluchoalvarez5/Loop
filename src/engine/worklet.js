@@ -573,7 +573,7 @@ class LoopEngine extends AudioWorkletProcessor {
       // El cambio se aplica ya en lo común (mezcla, FX, insertos) pero los patrones, el encendido y la automatización siguen siendo los de la escena que suena;
       // la versión nueva queda en cola y entra justo en el paso 0
       if (this.playing && this.pendingProj && this.compiled) {
-        const cur = this.compiled; this.pendingProj = m;
+        const cur = this.compiled; m.q = this.pendingProj.q; this.pendingProj = m;
         m = { ...m, project: { ...m.project, scene: cur.scene, swing: cur.swing, swingA: cur.swingA, mod: cur.mod, tracks: m.project.tracks.map((t) => { const o = cur.tracks.find((x) => x.id === t.id); return o ? { ...t, ev: o.ev, play: o.play, auto: o.auto } : t; }) } };
       } else this.pendingProj = null;
       // cambio de tempo mientras suena: la posición se reescala, así sigue en el mismo paso (si no, se disparaba una ráfaga de notas)
@@ -582,7 +582,7 @@ class LoopEngine extends AudioWorkletProcessor {
       this.tracks = m.project.tracks.map((t) => {
         const o = old.find((x) => x.id === t.id);
         // sample "de largo": al entrar a otra escena (o al encenderlo) arranca de nuevo desde el principio
-        if (t.once && this.done && o && (sceneChanged || (o.mute && !t.mute))) delete this.done[t.id];
+        if (t.once && this.done && o && (sceneChanged || (o.mute && !t.mute) || (o.clip || '') !== (t.clip || ''))) delete this.done[t.id];
         const rvx = t.rvx ? (o && o.rv ? o.rv : new RevFx(this.sr)) : null, dlx = t.dlx ? (o && o.dl ? o.dl : new DlyFx(this.sr)) : null; // reverb / delay propios de la pista (se reservan acá, nunca en process)
         if (rvx) rvx.setP(t.rvx); if (dlx) dlx.setP(t.dlx, m.project.bpm);
         const nt = { ...t, rv: rvx, rvRet: t.rvx ? t.rvx.ret : 0, dl: dlx, dlRet: t.dlx ? t.dlx.ret : 0, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, vph: o ? o.vph : 0, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
@@ -677,7 +677,7 @@ class LoopEngine extends AudioWorkletProcessor {
         while (this.pos >= this.nextT) {
           const st = this.next; this.step = st;
           // escena en cola: entra justo en el paso 0 (antes se cambiaba al empezar el paso 63 y un toque en el último paso esperaba otra vuelta entera)
-          if (st === 0 && this.pendingProj) { const pp = this.pendingProj; this.pendingProj = null; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; }
+          if (this.pendingProj && (st === 0 || (this.pendingProj.q === 'bar' && st % 16 === 0))) { const pp = this.pendingProj; this.pendingProj = null; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; }
           for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; if (t.once) { const dn = this.done || (this.done = {}); if (dn[t.id]) continue; dn[t.id] = 1; } // sample "de largo": suena una vez y sigue, no vuelve a arrancar en cada vuelta
           const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; { let roll = -1; for (const ev of evs) { if (ev.p !== undefined) { if (roll < 0) roll = Math.random(); if (roll > ev.p) continue; } this.trigger(t, ev, i + off + (ev.o ? Math.round(ev.o * sl) : 0)); } } // ev.p: probabilidad del golpe (una tirada por pista y paso: un acorde entra o no entero)
           } // ev.o: desfase dentro del paso (grilla fina)

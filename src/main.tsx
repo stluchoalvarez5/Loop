@@ -19,7 +19,7 @@ import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
   type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, sceneList, hasAudio, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  FX_SOUNDS, FX_GROUPS, type FxP, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
+  FX_SOUNDS, FX_GROUPS, type FxP, clipHas, WORDS, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
 
 const engine = new Engine();
@@ -340,6 +340,10 @@ function App() {
   const [tab, setTab] = useState<'scene' | 'pat' | 'mix' | 'master'>('scene');
   const [vis, setVis] = useState<StageMode>('wave');
   const [order, setOrder] = useState(false);
+  // lanzador de clips: vista de la grilla de escenas por pista (cada pista toca la escena que se toque, en el próximo compás o al terminar la vuelta)
+  const [view, setViewS] = useState<'steps' | 'launch'>(() => (lsGet('loop.view') === 'launch' ? 'launch' : 'steps'));
+  const setView = (v: 'steps' | 'launch') => { setViewS(v); lsSet('loop.view', v); };
+  const [ql, setQl] = useState<Record<string, string>>({}), qlRef = useRef(ql); qlRef.current = ql;
   const land = useLandscape(), narrow = useNarrow();
   const [half, setHalf] = useState(0), viewRef = useRef({ narrow: false, half: 0 }); viewRef.current = { narrow, half }; // mitad del compás a la vista (pasos 1–8 o 9–16)
   // guías: la intro aparece al abrir (salvo "No mostrar al abrir"); la de cada sección, la primera vez que entrás. El botón Guía las vuelve a abrir.
@@ -401,6 +405,7 @@ function App() {
   useEffect(() => {
     let lastStat = 0;
     engine.onStep = (s) => {
+      if (Object.keys(qlRef.current).length && (s === 0 || (s % 16 === 0 && (pRef.current.launchQ ?? 'bar') === 'bar'))) setQl({});
       const i = s % 16 + 1; engine.beat.step = s; setPlaying(true); // por si arrancó desde la grabación de voz
       const k = pRef.current.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !t.mute);
       if (k && k.steps[s % k.steps.length]) engine.beat.t = performance.now();
@@ -454,6 +459,18 @@ function App() {
   }, []);
 
   // desde cero: loop vacío con la tonalidad y los acordes elegidos (no pisa un loop editado, igual que generar)
+  const launchSet = (patch: Record<string, string>) => {
+    const live = engine.playing, qv = pRef.current.launchQ ?? 'bar';
+    setP((cur) => { const d = clone(cur); d.launch = { ...d.launch, ...patch }; d.edited = true; engine.update(d, live, qv); save(d); return d; });
+    if (live) setQl({ ...qlRef.current, ...patch });
+  };
+  const fromWord = (word: string, genre: string, variant: number) => {
+    const w = word.trim().slice(0, 24); if (!w) { flash('Escribí una palabra primero.'); return; }
+    const np = projectFromName(w, variant, genre), replace = !p.edited; np.title = w; np.id = replace ? p.id : newId(); np.edited = false;
+    if (!replace) flash('"' + titleOf(p) + '" quedó guardado en Mis loops');
+    remember(p, true); flushSave(); setP(np); engine.update(np); save(np);
+    setTimeout(() => flash(`Loop de "${w}" en ${GENRES[genre]?.name ?? genre}` + (variant ? ' · versión ' + (variant + 1) : ''), 3000), 0);
+  };
   const fromScratch = (m: Manual, genre: string, drums: boolean, title: string) => {
     const np = blankProject(m, genre, p.bpm, drums); np.title = title.trim().slice(0, 32) || nextTitle(); np.id = p.edited ? newId() : p.id; np.edited = true;
     if (p.edited) flash('"' + titleOf(p) + '" quedó guardado en Mis loops');
@@ -531,7 +548,7 @@ function App() {
           <div class="seg2 vis-seg">{([['wave', 'Onda'], ['spectrum', 'Espectro'], ['circle', 'Círculo']] as const).map(([k, l]) => <button class={vis === k ? 'on' : ''} onClick={() => setVis(k)}>{l}</button>)}</div>
         </div>
         <Panel id="name" title="Armar" icon={Ic.spark} cls="a-name">
-          <Scratch p={p} up={up} create={fromScratch} />
+          <Scratch p={p} up={up} create={fromScratch} fromWord={fromWord} />
         </Panel>
         <Panel id="macros" title="Macros" icon={Ic.sliders} cls="a-macros" right={<>{adv && <RecChip on={recA} toggle={toggleRecA} />}<button class="chip" onClick={() => up((d) => { d.macros = { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 }; })}>Centrar</button></>}>
           <div class="macros">
@@ -555,7 +572,11 @@ function App() {
       </div>}
 
       {tab === 'pat' && <div class="page pat">
-        <Panel id="grid" title="Patrón" icon={Ic.grid} lock cls="a-grid" right={<>
+        <div class="seg viewsw" role="tablist" aria-label="Vista de Patrón">{([['steps', 'Pasos'], ['launch', 'Lanzador']] as const).map(([k, l]) => <button class={view === k ? 'on' : ''} role="tab" aria-selected={view === k} onClick={() => setView(k)}>{l}</button>)}</div>
+        {view === 'launch' && <Panel id="lanz" title="Lanzador de clips" icon={Ic.grid} lock>
+          <Launcher p={p} ql={ql} pick={(id) => { setSel(id); setDetail(true); }} onClip={(id, k, has) => launchSet({ [id]: has ? k : '-' })} onStopAll={() => launchSet(Object.fromEntries(p.tracks.map((t) => [t.id, '-'])))} goScene={goScene} setQ={(v) => up((d) => { d.launchQ = v; })} />
+        </Panel>}
+        <Panel id="grid" title="Patrón" icon={Ic.grid} lock cls={'a-grid' + (view === 'launch' ? ' hidden' : '')} right={<>
           {adv && <button class={'ib sm' + (order ? ' on' : '')} onClick={() => setOrder(!order)} aria-label="Ordenar pistas">{Ic.sort}</button>}
           <button class={'ib sm' + (p.fill ? ' on' : '')} onClick={() => up((d) => { d.fill = !d.fill; })} aria-label="Redoble al final" aria-pressed={!!p.fill}>{Ic.fill}</button>
           <button class="ib sm" onClick={() => up((d) => d.tracks.forEach((t) => { if (t.type === 'drum') t.steps = Array(16).fill(0); }))} aria-label="Vaciar batería">{Ic.trash}</button>
@@ -1448,6 +1469,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
     { title: 'Escenas', body: 'Además de A–D podés sumar hasta 8 escenas con el botón + (al lado de las letras; el − saca la última si está vacía). El botón de copiar (junto al redoble) copia la escena abierta sobre otra letra, o trae a la escena abierta el contenido de otra: sirve para armar variaciones a partir de una escena o repetir una parte; lo que había en el destino se reemplaza (se puede deshacer). Cada escena puede durar 1, 2, 3 o 4 compases: elegilo en "Compases", al lado de las letras A–D. La escena repite solo esos compases (los demás quedan guardados, por si la alargás después), el redoble cae en su último compás y la Cadena y el tema exportado respetan cada duración. Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
     { title: 'Tonalidad, acordes y loop nuevo', body: 'Lo que cambiás en Armar (tonalidad, acordes y color: tríadas, séptimas o novenas) suena al instante en el loop abierto, y el bajo, el arpegio y los acordes lo siguen solos. "Crear loop nuevo" arma otro con los sonidos, el kit y la mezcla del género que elijas; si el anterior estaba editado, queda guardado en Mis loops.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
+    { title: 'Loop a partir de una palabra', body: 'En Armar, "Loop a partir de una palabra": escribís una palabra, elegís el género y tocás Generar. Cada letra es una tonalidad, así que la misma palabra da siempre el mismo loop. "Otra versión" cambia ritmos, melodía y tempo con la misma armonía; "Palabra al azar" elige una. Si el loop abierto ya estaba editado, el nuevo va a un lugar aparte y el anterior queda en Mis loops.', art: artName },
     { title: 'Mis loops', body: 'Todo se guarda solo en el celu. La carpeta de arriba (con el nombre del loop) abre Mis loops: abrís cualquier loop anterior, lo duplicás, lo renombrás o lo borrás. Si creás un loop nuevo sin haber tocado el abierto, lo reemplaza; si lo editaste, queda guardado y el nuevo va aparte. "Guardar en un archivo" te lo llevás a otro celu, con tu voz incluida.', art: <div class="art-chips"><span class="on">Luciano · deep</span><span>Noche · techno</span><span>Fiesta · house</span></div> },
     { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí. Con "Automatizar macros" dibujás cómo cambian en los 4 compases, y con "Grabar movimientos" las grabás moviendo los faders mientras suena.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
     { title: 'Automatización rápida', body: 'Con un toque hacés que el loop se mueva a lo largo de los 4 compases. Subida: los filtros y la reverb van creciendo, como antes de un drop. Filtro que respira: abre y cierra en cada compás. Delay al final: eco en el último tiempo. Bombeo: los acordes y el arpegio laten con el pulso. Energía que crece y Espacio al final mueven las macros.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 70 C 60 68, 120 50, 192 10 L192 74 L8 74 Z" fill={Y} fill-opacity="0.18" /><path d="M8 70 C 60 68, 120 50, 192 10" fill="none" stroke={Y} stroke-width="2" /></svg> },
@@ -1455,6 +1477,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
   ],
   pat: [
     { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos. Arriba de la grilla elegís el compás: en "Todos" lo que tocás se repite en los 4 compases; en 1, 2, 3 o 4 cambiás solo ese compás (por ejemplo, un golpe distinto al final). "Copiar a los 4 compases" y "Vaciar compás" aplican al compás elegido, y las pistas con compases distintos muestran un 4 al lado del nombre. Con el celu parado ves 8 pasos por vez, bien grandes: con "Pasos 1 – 8 / 9 – 16" pasás a la otra mitad del compás (la que está sonando se marca en verde). Acostado ves los 16 juntos.', art: artGrid },
+    { title: 'Lanzador de clips', body: 'Arriba de la grilla, el botón Lanzador cambia la vista: una columna por instrumento y una fila por escena. Tocá una celda y ese instrumento pasa a tocar el clip de esa escena desde el próximo compás (o desde la próxima vuelta, según elijas "En el compás" o "En la vuelta"), mientras los demás siguen como estaban. El cuadrado de abajo para el instrumento, la letra de la izquierda lanza la escena entera y "■ Todo" para todo. Las celdas parpadeantes están en cola. Los lanzamientos no entran en deshacer.', art: artChips(['A', 'B', 'C', 'D'], 1) },
     { title: 'Grupos y orden', body: 'En modo Avanzado, arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando el nombre de un grupo abrís su panel para renombrarlo, sumar o sacar instrumentos o borrarlo. El botón de las flechas ordena los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
     { title: 'Editar una pista', body: 'Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo. Arriba de Sonido tenés el volumen y el pan del instrumento (los mismos del Mixer) y el tono: afinación, fino y vibrato. En Movimiento también podés automatizar el Tono para que suba o baje a lo largo de los 4 compases.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Dividir el compás', body: 'Los instrumentos con golpes (batería, bajo y acordes en stabs o gate) tienen una pestaña Ritmo en su editor donde elegís cómo se divide el compás: 1/16 (lo normal), 1/32 (el doble de casilleros, para redobles y flams) o tresillos de corchea o de semicorchea. Ahí editás una grilla más fina, por compás o en los 4 juntos, y en la grilla de Patrón la pista muestra una marca (32, T8 o T16). Melodía, piano roll y arpegio también: en la pestaña Notas el piano roll tiene su selector de división (las notas pueden caer en 1/32 o en tresillos), el arpegiador suma las velocidades 1/32 y tresillos, y a la voz le podés elegir el punto de arranque de a medio paso. Debajo de cada fila de la pestaña Ritmo hay una barra por golpe: arrastrala para darle más o menos fuerza (0 a 127), por ejemplo para que un redoblante suene más que el otro.', art: artChips(['1/16', '1/32', 'T 1/8', 'T 1/16'], 1) },
@@ -1672,10 +1695,30 @@ function EqEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
   </>;
 }
 
+/* ---------- lanzador de clips: una columna por pista y una fila por escena; tocás una celda y esa pista pasa a tocar esa escena en el próximo compás ---------- */
+function Launcher({ p, ql, pick, onClip, onStopAll, goScene, setQ }: { p: Project; ql: Record<string, string>; pick: (id: string) => void; onClip: (id: string, k: string, has: boolean) => void; onStopAll: () => void; goScene: (k: string) => void; setQ: (v: 'bar' | 'loop') => void }) {
+  const scenes = sceneList(p), cur = p.scene ?? 'A', eff = (t: Track) => p.launch?.[t.id] ?? cur, qv = p.launchQ ?? 'bar';
+  return <div class="lnch">
+    <div class="lq"><span class="sb-l">Entra</span><div class="seg">{([['bar', 'En el compás'], ['loop', 'En la vuelta']] as const).map(([k, l]) => <button class={qv === k ? 'on' : ''} onClick={() => setQ(k)}>{l}</button>)}</div></div>
+    <div class="lscroll"><div class="lgrid" style={{ '--n': p.tracks.length } as any}>
+      <div class="lh corner" />
+      {p.tracks.map((t) => <button class="lh" style={{ '--c': t.color } as any} aria-label={'Abrir ' + t.name} onClick={() => pick(t.id)}><span class="ti">{trackIcon(t)}</span><span class="ln">{t.name}</span></button>)}
+      {scenes.map((k) => <>
+        <button class={'ls' + (cur === k && !Object.keys(p.launch ?? {}).length ? ' on' : '')} aria-label={'Lanzar la escena ' + k + ' entera'} onClick={() => goScene(k)}><b>▶</b> {k}</button>
+        {p.tracks.map((t) => { const has = clipHas(p, k, t), on = has && eff(t) === k, q = ql[t.id] === k;
+          return <button class={'lc' + (has ? ' has' : '') + (on ? ' on' : '') + (q ? ' q' : '')} style={{ '--c': t.color } as any} aria-label={`${t.name}, escena ${k}${has ? '' : ' (vacía)'}`} onClick={() => onClip(t.id, k, has)}>{has ? '▶' : '■'}</button>; })}
+      </>)}
+      <button class="ls stop" aria-label="Parar todas las pistas" onClick={onStopAll}><b>■</b> Todo</button>
+      {p.tracks.map((t) => <button class={'lc stopc' + (p.launch?.[t.id] === '-' ? ' on' : '')} style={{ '--c': t.color } as any} aria-label={'Parar ' + t.name} onClick={() => onClip(t.id, '-', false)}>■</button>)}
+    </div></div>
+    <div class="hint-s">Cada columna es un instrumento y cada fila una escena. Tocá una celda ▶ y esa pista pasa a tocar el patrón de esa escena justo en el próximo compás (o al terminar la vuelta, como elijas arriba), sin cortar a las demás. ■ en una celda vacía o abajo para el instrumento. La letra de la izquierda lanza la escena entera. Tocá el nombre de un instrumento para editarlo.</div>
+  </div>;
+}
+
 /* ---------- desde cero: tonalidad, acordes, género base y "Crear" ----------
    Si el loop abierto ya es "desde cero", los cambios de tonalidad y acordes se aplican en vivo; "Crear" siempre arma uno nuevo. */
-function Scratch({ p, up, create }: { p: Project; up: (fn: (d: Project) => void) => void; create: (m: Manual, genre: string, drums: boolean, title: string) => void }) {
-  const [title, setTitle] = useState('');
+function Scratch({ p, up, create, fromWord }: { p: Project; up: (fn: (d: Project) => void) => void; create: (m: Manual, genre: string, drums: boolean, title: string) => void; fromWord: (word: string, genre: string, variant: number) => void }) {
+  const [title, setTitle] = useState(''), [word, setWord] = useState(''), [wv, setWv] = useState(0);
   const [draft, setDraft] = useState<Manual>({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 });
   const [genre, setGenre] = useState(p.genre), [drums, setDrums] = useState(false);
   void draft; void setDraft;
@@ -1699,6 +1742,17 @@ function Scratch({ p, up, create }: { p: Project; up: (fn: (d: Project) => void)
     <div class="seg">{([[0, 'Tríadas'], [7, 'Séptimas'], [9, 'Novenas']] as [number, string][]).map(([v, l]) => <button class={m.ext === v ? 'on' : ''} onClick={() => set((x) => { x.ext = v; })}>{l}</button>)}</div>
     <div class="sub">Sonidos de este loop</div>
     <label class="sel-w"><select class="sel" aria-label="Género del loop" value={p.genre} onChange={(e) => { const g = (e.target as HTMLSelectElement).value; up((d) => applyGenreSound(d, g)); flashG('Sonidos de ' + GENRES[g].name + ': tus patrones y notas quedan igual'); }}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
+    <div class="sub">Loop a partir de una palabra</div>
+    <input class="txt" value={word} maxLength={24} placeholder="Una palabra, tu nombre…" aria-label="Palabra para generar el loop" onInput={(e) => { setWord((e.target as HTMLInputElement).value); setWv(0); }} />
+    <div class="gen-row" style={{ marginTop: '8px' }}>
+      <label class="sel-w"><span>Género</span><select class="sel" value={genre} onChange={(e) => setGenre((e.target as HTMLSelectElement).value)}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
+    </div>
+    <div class="chips" style={{ marginTop: '8px' }}>
+      <button class="btn hot" onClick={() => { setWv(0); fromWord(word, genre, 0); }}>Generar</button>
+      <button class="btn" onClick={() => { const v = wv + 1; setWv(v); fromWord(word, genre, v); }}>Otra versión</button>
+      <button class="btn" onClick={() => { const all = Object.values(WORDS).flat(), w = all[Math.floor(Math.random() * all.length)]; setWord(w); setWv(0); fromWord(w, genre, 0); }}>Palabra al azar</button>
+    </div>
+    <div class="hint-s">Cada letra de la palabra es una tonalidad y de ahí salen los acordes, el bajo, el arpegio y la melodía: la misma palabra en el mismo género da siempre el mismo loop. "Otra versión" cambia los detalles. Si el loop abierto no tiene cambios tuyos se reemplaza; si no, el anterior queda guardado en Mis loops.</div>
     <div class="sub">Loop nuevo</div>
     <input class="txt" value={title} maxLength={32} placeholder="Nombre (opcional)" aria-label="Nombre del loop nuevo" onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
     <div class="gen-row" style={{ marginTop: '8px' }}>

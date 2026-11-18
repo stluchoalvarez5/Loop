@@ -183,6 +183,7 @@ export type Track = {
   rvx?: Partial<RevP>; dlx?: Partial<DlyP>; // reverb y delay propios de la pista (si faltan, la pista manda al reverb y delay del master); `rev` y `dly` siguen siendo cuánto manda
   lay?: { on: boolean; src?: 'sample' | 'synth'; sound: string; kit?: string; dsyn?: DrumP; vol: number; pitch: number; decay?: number }; // capa extra de la batería: un segundo sonido que suena con cada golpe (por ejemplo, sub + click en un bombo)
   src?: 'sample' | 'synth'; dsyn?: DrumP; // batería: sonido de sample (por defecto) o sintetizado desde cero (dsyn)
+  lch?: string; // (interno) escena desde la que suena esta pista en el lanzador
   cg?: string; // grupo de corte de la batería ('A', 'B', 'C' o '' = ninguno): un golpe corta lo que suena de las pistas del mismo grupo (por defecto hat y open hat comparten el A)
   tone?: number; att?: number; pe?: number; // moldeado del golpe (batería y samples): tono oscuro..brillante (−1..1), ataque suave..marcado (−1..1) y caída de tono inicial en semitonos (0..24)
   kit?: string; // kit propio de este instrumento de batería (si falta, el del loop)
@@ -232,6 +233,7 @@ function loadScene(p: Project, s: SceneSnap) {
 /* pasa a otra escena: guarda la actual y carga la otra (si está vacía, arranca como copia de la actual) */
 export function switchScene(p: Project, to: string) {
   const cur = p.scene ?? 'A'; if (cur === to) return;
+  p.launch = undefined; // al cambiar de escena entera, todas las pistas la siguen
   p.scenes = { ...p.scenes, [cur]: snapScene(p) };
   const s = p.scenes[to]; if (s) loadScene(p, s); p.scene = to;
 }
@@ -338,6 +340,7 @@ export type Project = {
   seed?: number;
   id?: string; title?: string; // lugar donde se guarda y nombre que se muestra en Mis loops (el nombre musical es `name`)
   edited?: boolean;
+  launch?: Record<string, string>; launchQ?: 'bar' | 'loop'; // lanzador de clips: qué escena toca cada pista ('-' = parada) y cuándo entra el cambio (en el próximo compás o al terminar la vuelta)
   nScenes?: number; // cuántas escenas se muestran (4 a 8)
   bars?: Record<string, number>; // compases de cada escena (1..4; si falta, 4)
   scene?: string; scenes?: Record<string, SceneSnap>; // escenas A..D: variaciones del patrón que cambian al terminar la vuelta
@@ -833,7 +836,32 @@ export const MACROS = [
   { k: 'energy', label: 'Energía', color: '#e5655b' }, { k: 'dark', label: 'Oscuridad', color: '#9a9a9a' },
   { k: 'space', label: 'Espacio', color: '#6fbf86' }, { k: 'groove', label: 'Groove', color: '#e9c46a' },
 ] as const;
-export function compile(p: Project) {
+/* lanzador de clips: cada pista puede tocar el patrón de otra escena (o estar parada) sin cambiar la escena de las demás */
+export function withLaunch(p: Project): Project {
+  if (!p.launch || !Object.keys(p.launch).length) return p;
+  const cur = p.scene ?? 'A';
+  const tracks = p.tracks.map((t) => {
+    const k = p.launch![t.id]; if (!k) return t;
+    if (k === '-') return { ...t, mute: true, lch: '-' };
+    if (k === cur) return { ...t, lch: k };
+    const snap = p.scenes?.[k]?.t?.[t.id]; if (!snap) return { ...t, mute: true, lch: k };
+    return { ...t, ...snap, lch: k } as Track;
+  });
+  return { ...p, tracks };
+}
+/* ¿tiene contenido esa pista en esa escena? (para dibujar el lanzador) */
+export function clipHas(p: Project, k: string, t: Track): boolean {
+  const cur = p.scene ?? 'A', src: any = k === cur ? t : { ...t, ...(p.scenes?.[k]?.t?.[t.id] ?? { mute: true }) };
+  if (src.mute) return false;
+  if (t.type === 'vocal') return !!t.vox?.has;
+  if (t.type === 'sample' && (t.vox?.clip || t.vox?.free)) return !!t.vox?.has;
+  if (t.type === 'melody') return !!src.notes?.length;
+  if (t.type === 'arp') return !!(src.roll && src.notes?.length) || !!src.arp?.gate?.some(Boolean);
+  if (t.type === 'chords' && (src.chordMode ?? 'pad') === 'pad') return true;
+  return !!src.steps?.some(Boolean) || Object.values(src.grid ?? {}).some((a: any) => a?.some?.(Boolean)) || !!(src.roll && src.notes?.length);
+}
+export function compile(p0: Project) {
+  const p = withLaunch(p0);
   const anyGain = (v: number) => v * v * 1.6;
   const M = p.macros ?? { energy: 0.5, dark: 0.5, space: 0.5, groove: 0.5 };
   // macros automatizadas: su parte fija queda neutra y el movimiento va paso a paso (eventos) o como curva al motor (filtros, envíos)
@@ -924,7 +952,7 @@ export function compile(p: Project) {
       groove = g64.some((x) => x > 0) ? g64 : undefined;
     } else groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
     return {
-      cg: t.type === 'drum' ? (t.cg === undefined ? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '') : t.cg) : '', tn: t.type === 'drum' || t.type === 'sample' ? t.tone || 0 : 0, at: t.type === 'drum' || t.type === 'sample' ? t.att || 0 : 0, pe: t.type === 'drum' || t.type === 'sample' ? t.pe || 0 : 0,
+      clip: t.lch ?? '', cg: t.type === 'drum' ? (t.cg === undefined ? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '') : t.cg) : '', tn: t.type === 'drum' || t.type === 'sample' ? t.tone || 0 : 0, at: t.type === 'drum' || t.type === 'sample' ? t.att || 0 : 0, pe: t.type === 'drum' || t.type === 'sample' ? t.pe || 0 : 0,
       drm: t.type === 'drum',
       rvx: t.rvx ? { ...REV_DEF, ret: 1, ...t.rvx } : undefined, dlx: t.dlx ? { ...DLY_DEF, ret: 1, ...t.dlx } : undefined,
       id: t.id, kind, sample, synth, fxp, dsp: dsynP, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
