@@ -13,6 +13,7 @@ import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, voxKeys, cleanVox, cleanSample, detectTempo, startRecording, peaks, finishLoopVox } from './vox';
 import { fitDrum } from './drumfit';
+import { projectFromPrompt } from './promptgen';
 import { TOPICS, SECS, topicById, topicForPanel, type Sec, type Topic } from './guide';
 import { trackOpen, trackInstall, statsOff, setStats } from './stats';
 import { renderAudio, renderArrangement, defaultArrangement, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
@@ -482,12 +483,13 @@ function App() {
     setP((cur) => { const d = clone(cur); d.launch = { ...d.launch, ...patch }; d.edited = true; engine.update(d, live, qv); save(d); return d; });
     if (live) setQl({ ...qlRef.current, ...patch });
   };
-  const fromWord = (word: string, genre: string, variant: number) => {
-    const w = word.trim().slice(0, 24); if (!w) { flash('Escribí una palabra primero.'); return; }
-    const np = projectFromName(w, variant, genre), replace = !p.edited; np.title = w; np.id = replace ? p.id : newId(); np.edited = false;
+  const fromWord = (text: string, variant: number): string => {
+    const w = text.trim().slice(0, 160); if (!w) { flash('Escribí una descripción primero.'); return ''; }
+    const { p: np, summary } = projectFromPrompt(w, variant), replace = !p.edited; np.id = replace ? p.id : newId(); np.edited = false;
     if (!replace) flash('"' + titleOf(p) + '" quedó guardado en Mis loops');
     remember(p, true); flushSave(); setP(np); engine.update(np); save(np);
-    setTimeout(() => flash(`Loop de "${w}" en ${GENRES[genre]?.name ?? genre}` + (variant ? ' · versión ' + (variant + 1) : ''), 3000), 0);
+    setTimeout(() => flash('Listo: ' + summary, 4500), 0);
+    return summary;
   };
   const fromScratch = (m: Manual, genre: string, drums: boolean, title: string) => {
     const np = blankProject(m, genre, p.bpm, drums); np.title = title.trim().slice(0, 32) || nextTitle(); np.id = p.edited ? newId() : p.id; np.edited = true;
@@ -1503,7 +1505,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
     { title: 'Escenas', body: 'Además de A–D podés sumar hasta 8 escenas con el botón + (al lado de las letras; el − saca la última si está vacía). El botón de copiar (junto al redoble) copia la escena abierta sobre otra letra, o trae a la escena abierta el contenido de otra: sirve para armar variaciones a partir de una escena o repetir una parte; lo que había en el destino se reemplaza (se puede deshacer). Cada escena puede durar 1, 2, 3 o 4 compases: elegilo en "Compases", al lado de las letras A–D. La escena repite solo esos compases (los demás quedan guardados, por si la alargás después), el redoble cae en su último compás y la Cadena y el tema exportado respetan cada duración. Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
     { title: 'Tonalidad, acordes y loop nuevo', body: 'Lo que cambiás en Armar (tonalidad, acordes y color: tríadas, séptimas o novenas) suena al instante en el loop abierto, y el bajo, el arpegio y los acordes lo siguen solos. "Crear loop nuevo" arma otro con los sonidos, el kit y la mezcla del género que elijas; si el anterior estaba editado, queda guardado en Mis loops.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
-    { title: 'Loop a partir de una palabra', body: 'En Armar, "Loop a partir de una palabra": escribís una palabra, elegís el género y tocás Generar. Cada letra es una tonalidad, así que la misma palabra da siempre el mismo loop. "Otra versión" cambia ritmos, melodía y tempo con la misma armonía; "Palabra al azar" elige una. Si el loop abierto ya estaba editado, el nuevo va a un lugar aparte y el anterior queda en Mis loops.', art: artName },
+    { title: 'Generar desde una descripción', body: 'En Armar, "Generar desde una descripción": escribís cómo lo imaginás (por ejemplo "house estilo New Order, oscuro y bailable") y tocás Generar. La app entiende el género, artistas y estilos, el clima (oscuro, alegre, épico…), el tempo ("128 bpm"), la tonalidad ("en La menor") y qué sacar ("sin batería"), y arma el loop; abajo te cuenta qué entendió. No es IA de verdad, pero es gratis y anda sin conexión. "Otra versión" cambia los detalles y "Sorprendeme" prueba un ejemplo.', art: artName },
     { title: 'Mis loops', body: 'Todo se guarda solo en el celu. La carpeta de arriba (con el nombre del loop) abre Mis loops: abrís cualquier loop anterior, lo duplicás, lo renombrás o lo borrás. Si creás un loop nuevo sin haber tocado el abierto, lo reemplaza; si lo editaste, queda guardado y el nuevo va aparte. "Guardar en un archivo" te lo llevás a otro celu, con tu voz incluida.', art: <div class="art-chips"><span class="on">Luciano · deep</span><span>Noche · techno</span><span>Fiesta · house</span></div> },
     { title: 'Macros', body: 'Cuatro controles que mueven muchas cosas a la vez. Energía: más brillo, saturación y hats. Oscuridad: filtros más cerrados. Espacio: más reverb y delay. Groove: más swing. Al medio queda como lo armó el género; "Centrar" lo vuelve ahí. Con "Automatizar macros" dibujás cómo cambian en los 4 compases, y con "Grabar movimientos" las grabás moviendo los faders mientras suena.', art: artBars([R, '#9a9a9a', G, Y], [0.75, 0.4, 0.6, 0.35], ['Energía', 'Oscur.', 'Espacio', 'Groove']) },
     { title: 'Automatización rápida', body: 'Con un toque hacés que el loop se mueva a lo largo de los 4 compases. Subida: los filtros y la reverb van creciendo, como antes de un drop. Filtro que respira: abre y cierra en cada compás. Delay al final: eco en el último tiempo. Bombeo: los acordes y el arpegio laten con el pulso. Energía que crece y Espacio al final mueven las macros.', art: <svg class="art-svg" viewBox="0 0 200 80" aria-hidden="true"><path d="M8 70 C 60 68, 120 50, 192 10 L192 74 L8 74 Z" fill={Y} fill-opacity="0.18" /><path d="M8 70 C 60 68, 120 50, 192 10" fill="none" stroke={Y} stroke-width="2" /></svg> },
@@ -1806,8 +1808,9 @@ function Launcher({ p, ql, pick, onClip, onStopAll, goScene, setQ }: { p: Projec
 
 /* ---------- desde cero: tonalidad, acordes, género base y "Crear" ----------
    Si el loop abierto ya es "desde cero", los cambios de tonalidad y acordes se aplican en vivo; "Crear" siempre arma uno nuevo. */
-function Scratch({ p, up, create, fromWord }: { p: Project; up: (fn: (d: Project) => void) => void; create: (m: Manual, genre: string, drums: boolean, title: string) => void; fromWord: (word: string, genre: string, variant: number) => void }) {
-  const [title, setTitle] = useState(''), [word, setWord] = useState(''), [wv, setWv] = useState(0);
+const DESC_EXAMPLES = ['house estilo New Order, oscuro y bailable', 'techno oscuro y rápido a 140 bpm', 'deep house relajado en La menor', 'trance épico 138 bpm', 'disco funk alegre, tipo Daft Punk', 'lo-fi chill para estudiar', 'acid house con bajo 303', 'hard techno agresivo', 'melodic techno nocturno estilo Tale of Us', 'electro estilo Kraftwerk', 'synth-pop de los 80, melancólico', 'progressive house hipnótico estilo Deadmau5'];
+function Scratch({ p, up, create, fromWord }: { p: Project; up: (fn: (d: Project) => void) => void; create: (m: Manual, genre: string, drums: boolean, title: string) => void; fromWord: (text: string, variant: number) => string }) {
+  const [title, setTitle] = useState(''), [word, setWord] = useState(''), [wv, setWv] = useState(0), [sum, setSum] = useState('');
   const [draft, setDraft] = useState<Manual>({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 });
   const [genre, setGenre] = useState(p.genre), [drums, setDrums] = useState(false);
   void draft; void setDraft;
@@ -1831,17 +1834,16 @@ function Scratch({ p, up, create, fromWord }: { p: Project; up: (fn: (d: Project
     <div class="seg">{([[0, 'Tríadas'], [7, 'Séptimas'], [9, 'Novenas']] as [number, string][]).map(([v, l]) => <button class={m.ext === v ? 'on' : ''} onClick={() => set((x) => { x.ext = v; })}>{l}</button>)}</div>
     <div class="sub">Sonidos de este loop</div>
     <label class="sel-w"><select class="sel" aria-label="Género del loop" value={p.genre} onChange={(e) => { const g = (e.target as HTMLSelectElement).value; up((d) => applyGenreSound(d, g)); flashG('Sonidos de ' + GENRES[g].name + ': tus patrones y notas quedan igual'); }}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
-    <div class="sub">Loop a partir de una palabra</div>
-    <input class="txt" value={word} maxLength={24} placeholder="Una palabra, tu nombre…" aria-label="Palabra para generar el loop" onInput={(e) => { setWord((e.target as HTMLInputElement).value); setWv(0); }} />
-    <div class="gen-row" style={{ marginTop: '8px' }}>
-      <label class="sel-w"><span>Género</span><select class="sel" value={genre} onChange={(e) => setGenre((e.target as HTMLSelectElement).value)}>{Object.keys(GENRES).map((g) => <option value={g}>{GENRES[g].name}</option>)}</select></label>
-    </div>
+    <div class="sub">Generar desde una descripción</div>
+    <textarea class="txt desc" value={word} maxLength={160} rows={2} placeholder="Ej: house estilo New Order, oscuro y bailable" aria-label="Descripción del loop que querés" onInput={(e) => { setWord((e.target as HTMLTextAreaElement).value); setWv(0); }} />
     <div class="chips" style={{ marginTop: '8px' }}>
-      <button class="btn hot" onClick={() => { setWv(0); fromWord(word, genre, 0); }}>Generar</button>
-      <button class="btn" onClick={() => { const v = wv + 1; setWv(v); fromWord(word, genre, v); }}>Otra versión</button>
-      <button class="btn" onClick={() => { const all = Object.values(WORDS).flat(), w = all[Math.floor(Math.random() * all.length)]; setWord(w); setWv(0); fromWord(w, genre, 0); }}>Palabra al azar</button>
+      <button class="btn hot" onClick={() => { setWv(0); setSum(fromWord(word, 0)); }}>Generar</button>
+      <button class="btn" onClick={() => { const v = wv + 1; setWv(v); setSum(fromWord(word, v)); }}>Otra versión</button>
+      <button class="btn" onClick={() => { const w = DESC_EXAMPLES[Math.floor(Math.random() * DESC_EXAMPLES.length)]; setWord(w); setWv(0); setSum(fromWord(w, 0)); }}>Sorprendeme</button>
     </div>
-    <div class="hint-s">Cada letra de la palabra es una tonalidad y de ahí salen los acordes, el bajo, el arpegio y la melodía: la misma palabra en el mismo género da siempre el mismo loop. "Otra versión" cambia los detalles. Si el loop abierto no tiene cambios tuyos se reemplaza; si no, el anterior queda guardado en Mis loops.</div>
+    <div class="chips" style={{ marginTop: '6px' }}>{DESC_EXAMPLES.slice(0, 6).map((x) => <button class="chip mini-chip" onClick={() => { setWord(x); setWv(0); }}>{x}</button>)}</div>
+    {sum && <div class="note">Entendí: {sum}</div>}
+    <div class="hint-s">Escribí cómo lo imaginás: género (house, techno, trance, deep, disco, chill…), un artista o estilo ("estilo New Order", "tipo Daft Punk"), el clima (oscuro, alegre, épico, relajado…), el tempo ("128 bpm"), la tonalidad ("en La menor") o qué sacar ("sin batería"). No es IA de verdad: interpreta esas palabras y arma el loop con las recetas de cada género, gratis y sin conexión. La misma descripción da siempre el mismo loop; "Otra versión" cambia los detalles. Si el loop abierto no tiene cambios tuyos se reemplaza; si no, el anterior queda guardado en Mis loops.</div>
     <div class="sub">Loop nuevo</div>
     <input class="txt" value={title} maxLength={32} placeholder="Nombre (opcional)" aria-label="Nombre del loop nuevo" onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
     <div class="gen-row" style={{ marginTop: '8px' }}>
