@@ -517,7 +517,7 @@ class DlyFx {
     const N = this.N, bl = this.bl, br = this.br;
     this.cl += (this.tl - this.cl) * 0.0006; this.cr += (this.tr - this.cr) * 0.0006;
     let ml = 0, mr = 0; if (this.mod > 0) { this.ph += this.rate / this.sr; if (this.ph >= 1) this.ph -= 1; const dp = this.mod * this.sr * 0.0035; ml = dp * Math.sin(TAU * this.ph); mr = dp * Math.cos(TAU * this.ph); }
-    let pl = this.i - (this.cl + ml), pr = this.i - (this.cr + mr); if (pl < 0) pl += N; if (pr < 0) pr += N; if (pl < 0) pl += N; if (pr < 0) pr += N;
+    let pl = this.i - (this.cl + ml), pr = this.i - (this.cr + mr); if (pl < 0) pl += N; if (pr < 0) pr += N; if (pl < 0) pl += N; if (pr < 0) pr += N; if (pl >= N) pl -= N; if (pr >= N) pr -= N; // un negativo diminuto + N redondeaba a N justo: se leía fuera del buffer (undefined → NaN para siempre)
     const il = pl | 0, ir = pr | 0, fl = pl - il, fr = pr - ir, il1 = il + 1 >= N ? 0 : il + 1, ir1 = ir + 1 >= N ? 0 : ir + 1;
     const yl = bl[il] + (bl[il1] - bl[il]) * fl, yr = br[ir] + (br[ir1] - br[ir]) * fr;
     this.lpL += this.a * (yl - this.lpL); this.lpR += this.a * (yr - this.lpR);

@@ -1,4 +1,5 @@
 /* Modelo de datos, teoría musical, presets y compilación a eventos para el motor. */
+import { mkPro, osc, M, PRO_LIB } from './presets';
 import { GENRES, MEL_STYLES, GENRE_WEIGHTS, parseDrum, parseBass, parseGate } from './genres';
 export { GENRES };
 
@@ -20,19 +21,13 @@ export type Pro = {
   fType: 'lp12' | 'lp24' | 'hp' | 'bp' | 'notch'; cut: number; res: number; drive: number; fEnv: number; fKey: number;
   env1: ProEnv; env2: ProEnv; lfo1: ProLfo; lfo2: ProLfo;
   mods: { src: ModSrc; dst: ModDst; amt: number }[];
-  mono: boolean; legato: boolean; glide: number; gain: number;
+  mono: boolean; legato: boolean; glide: number; gain: number; lib?: string; // lib: clave del sonido de la biblioteca de donde salió (se borra al editarlo)
 };
 export const WTABLES: [WTable, string][] = [['basic', 'Básica'], ['harm', 'Armónicos'], ['vocal', 'Vocal'], ['metal', 'Metálica']];
 export const MOD_SRC: [ModSrc, string][] = [['lfo1', 'LFO 1'], ['lfo2', 'LFO 2'], ['env2', 'Env 2'], ['vel', 'Velocidad'], ['note', 'Nota']];
 export const MOD_DST: [ModDst, string][] = [['cut', 'Filtro'], ['res', 'Reso'], ['pitch', 'Tono'], ['posA', 'Forma A'], ['posB', 'Forma B'], ['fm', 'FM'], ['vol', 'Volumen'], ['pan', 'Pan']];
 export const LFO_RATES: [number, string][] = [[64, '4 c'], [32, '2 c'], [16, '1 c'], [8, '1/2'], [4, '1/4'], [2, '1/8'], [1, '1/16'], [0.5, '1/32']];
-const osc = (o: Partial<ProOsc> = {}): ProOsc => ({ on: true, table: 'basic', pos: 0.5, oct: 0, semi: 0, fine: 0, uni: 1, det: 0, width: 0.5, level: 1, ...o });
-const off = (o: Partial<ProOsc> = {}) => osc({ on: false, ...o });
-export const mkPro = (o: Partial<Pro> = {}): Pro => ({
-  a: osc(), b: off(), sub: 0, subOct: -1, noise: 0, fm: 0, fType: 'lp12', cut: 4000, res: 0.15, drive: 0, fEnv: 0, fKey: 0,
-  env1: { a: 0.005, d: 0.4, s: 0.7, r: 0.25 }, env2: { a: 0.001, d: 0.3, s: 0, r: 0.2 },
-  lfo1: { shape: 'sine', rate: 16, trig: false }, lfo2: { shape: 'tri', rate: 4, trig: true }, mods: [], mono: false, legato: false, glide: 0.06, gain: 0.3, ...o,
-});
+export { mkPro };
 /* pasa un sonido clásico al sinte pro, sonando lo más parecido posible */
 export function proFrom(s: Synth): Pro {
   const pos = { sine: 0, tri: 0.25, saw: 0.5, square: 0.75, fm: 0 }[s.wave] ?? 0.5, oc = s.octave || 0;
@@ -50,8 +45,7 @@ export function proFrom(s: Synth): Pro {
   return p;
 }
 /* sonidos pro armados desde cero */
-const M = (src: ModSrc, dst: ModDst, amt: number) => ({ src, dst, amt });
-export const PRO_PRESETS: Record<string, { label: string; for: TrackType[]; p: Pro }> = {
+export const PRO_PRESETS: Record<string, { label: string; for: TrackType[]; p: Pro; cat?: string }> = {
   ssaw: { label: 'Supersaw pro', for: ['melody', 'chords', 'arp'], p: mkPro({ a: osc({ pos: 0.5, uni: 7, det: 30, width: 0.9 }), b: osc({ pos: 0.75, oct: -1, uni: 3, det: 12, level: 0.35 }), cut: 7000, res: 0.1, env1: { a: 0.006, d: 0.5, s: 0.8, r: 0.35 }, gain: 0.494 }) },
   reese: { label: 'Reese que gruñe', for: ['bass'], p: mkPro({ a: osc({ pos: 0.5, uni: 2, det: 22, width: 0.3 }), b: osc({ pos: 0.5, fine: 14, uni: 2, det: 18, width: 0.3 }), sub: 0.55, fType: 'lp24', cut: 520, res: 0.3, drive: 0.45, lfo1: { shape: 'sine', rate: 8, trig: false }, mods: [M('lfo1', 'cut', 0.18), M('lfo1', 'posA', 0.15)], mono: true, legato: true, glide: 0.05, env1: { a: 0.008, d: 0.3, s: 0.9, r: 0.1 }, gain: 1.413 }) },
   wobble: { label: 'Wobble', for: ['bass'], p: mkPro({ a: osc({ table: 'harm', pos: 0.65 }), b: osc({ table: 'vocal', pos: 0.4, level: 0.6 }), sub: 0.6, fType: 'lp24', cut: 320, res: 0.5, drive: 0.35, lfo1: { shape: 'tri', rate: 4, trig: false }, mods: [M('lfo1', 'cut', 0.55), M('lfo1', 'posB', 0.5)], mono: true, legato: true, glide: 0.04, env1: { a: 0.005, d: 0.3, s: 0.9, r: 0.08 }, gain: 1.353 }) },
@@ -65,6 +59,7 @@ export const PRO_PRESETS: Record<string, { label: string; for: TrackType[]; p: P
   choir: { label: 'Coro vocal', for: ['chords', 'melody'], p: mkPro({ a: osc({ table: 'vocal', pos: 0.5, uni: 4, det: 14, width: 0.9 }), cut: 3500, res: 0.1, lfo1: { shape: 'sine', rate: 32, trig: false }, mods: [M('lfo1', 'posA', 0.35)], env1: { a: 0.7, d: 1, s: 0.85, r: 1.3 }, gain: 1.274 }) },
   stab: { label: 'Stab filtrado', for: ['chords'], p: mkPro({ a: osc({ pos: 0.5, uni: 3, det: 12, width: 0.6 }), b: osc({ pos: 0.75, uni: 2, det: 8, level: 0.5 }), fType: 'lp24', cut: 500, res: 0.4, fEnv: 0.5, env2: { a: 0.001, d: 0.14, s: 0, r: 0.1 }, env1: { a: 0.003, d: 0.25, s: 0, r: 0.12 }, gain: 1.06 }) },
 };
+Object.assign(PRO_PRESETS, PRO_LIB);
 /* automatización: qué se puede mover a lo largo de los 4 compases y en qué rango */
 export type AutoKey = 'lp' | 'vol' | 'rev' | 'dly' | 'drive' | 'pan' | 'hp' | 'pitch';
 export const AUTO_PARAMS: { k: AutoKey; label: string; lo: number; hi: number; fmt: (v: number) => string }[] = [
@@ -676,6 +671,14 @@ export function newProject(name = '', genre = 'prog'): Project {
   applyGenre(p, genre);
   return p;
 }
+/* sonido de un instrumento: una clave clásica (`bassSaw`) o `pro:<clave>` de la biblioteca del sinte pro (el clásico queda de reserva por si se apaga) */
+const SOUND_BASE: Partial<Record<TrackType, string>> = { bass: 'bassSaw', chords: 'strings', arp: 'pluck', melody: 'lead' };
+export function setSound(t: Track, sound: string) {
+  if (sound.startsWith('pro:') && PRO_PRESETS[sound.slice(4)]) {
+    const k = sound.slice(4); t.sound = SOUND_BASE[t.type] ?? t.sound;
+    t.synth = { ...(SYNTHS[t.sound]?.p ?? SYNTHS.pluck.p), pro: { ...JSON.parse(JSON.stringify(PRO_PRESETS[k].p)), lib: k } };
+  } else { t.sound = sound; t.synth = undefined; }
+}
 /* aplica la receta completa del género. La semilla es nombre + género (+ versión): el mismo nombre en trance suena siempre igual */
 export function applyGenre(p: Project, g: string, variant = 0) {
   const G = GENRES[g]; if (!G) return; p.genre = g;
@@ -689,19 +692,19 @@ export function applyGenre(p: Project, g: string, variant = 0) {
   const kick = T('kick'); if (kick) { kick.pitch = G.kick.pitch; kick.decay = G.kick.decay; }
   const clap = T('clap'); if (clap) { clap.sound = pick(r, G.clap); clap.name = DRUM_SOUNDS[clap.sound] ?? 'Clap'; }
   const perc = T('perc'); if (perc) { perc.sound = pick(r, G.perc); perc.name = DRUM_SOUNDS[perc.sound] ?? 'Percu'; }
-  const mix = (t: Track | undefined, m: { vol: number; rev: number; dly: number; duck: number }) => { if (t) { t.vol = m.vol; t.rev = 0; t.dly = 0; t.duck = m.duck; t.mute = false; t.synth = undefined; } };
+  const mix = (t: Track | undefined, m: { vol: number; rev: number; dly: number; duck: number }) => { if (t) { t.vol = m.vol; t.rev = 0; t.dly = 0; t.duck = m.duck; t.mute = false; } };
   // bajo
   const bass = T('bass');
-  if (bass) { const b = pick(r, G.bass), pb = parseBass(b.line); bass.steps = pb.steps; bass.bassLine = pb.line; bass.bassLen = b.l; bass.sound = pick(r, G.bassSound); mix(bass, G.mix.bass); }
+  if (bass) { const b = pick(r, G.bass), pb = parseBass(b.line); bass.steps = pb.steps; bass.bassLine = pb.line; bass.bassLen = b.l; setSound(bass, pick(r, G.bassSound)); mix(bass, G.mix.bass); }
   // acordes
   const ch = T('chords');
-  if (ch) { const c = pick(r, G.chords); ch.chordMode = c.mode; ch.steps = c.steps ? parseDrum(c.steps).map((v) => (v ? 1 : 0)) : R([0]); ch.chordLen = c.len; ch.sound = pick(r, G.chordSound); mix(ch, G.mix.chords); }
+  if (ch) { const c = pick(r, G.chords); ch.chordMode = c.mode; ch.steps = c.steps ? parseDrum(c.steps).map((v) => (v ? 1 : 0)) : R([0]); ch.chordLen = c.len; setSound(ch, pick(r, G.chordSound)); mix(ch, G.mix.chords); }
   // arpegio
   const arp = T('arp');
-  if (arp) { const a = pick(r, G.arp); arp.sound = pick(r, G.arpSound); arp.arp = { mode: a.mode, rate: a.rate, oct: a.oct, gate: a.gate ? parseGate(a.gate) : Array(16).fill(true) }; mix(arp, G.mix.arp);
+  if (arp) { const a = pick(r, G.arp); setSound(arp, pick(r, G.arpSound)); arp.arp = { mode: a.mode, rate: a.rate, oct: a.oct, gate: a.gate ? parseGate(a.gate) : Array(16).fill(true) }; mix(arp, G.mix.arp);
     if (a.mode === 'acid') arp.arp.gate = acidPattern(p).gate; }
   // melodía
-  const mel = T('melody'); if (mel) { mel.sound = pick(r, G.mel.sound); mix(mel, G.mix.melody); }
+  const mel = T('melody'); if (mel) { setSound(mel, pick(r, G.mel.sound)); mix(mel, G.mix.melody); }
   // inserto y groove por pista según el género
   p.tracks.forEach((t) => { if (['kick', 'clap', 'hat', 'open', 'perc', 'bass', 'arp', 'chords', 'melody'].includes(t.id)) { t.fx = G.ins[t.id] ? { ...G.ins[t.id] } : undefined; t.groove = G.groove[t.id] ? [...G.groove[t.id]!] : undefined; } });
   applyHarmony(p, variant ? String(variant) : '');
@@ -713,7 +716,7 @@ export function applyGenreSound(p: Project, g: string) {
   const r = seeded('snd:' + g), T = (id: string) => p.tracks.find((t) => t.id === id);
   p.kit = pick(r, G.kit); p.fx = { ...G.fx, rv: p.fx?.rv, dl: p.fx?.dl }; p.tracks.forEach((t) => { t.kit = undefined; });
   const kick = T('kick'); if (kick) { kick.pitch = G.kick.pitch; kick.decay = G.kick.decay; }
-  const set = (t: Track | undefined, sound: string, m: { vol: number; rev: number; dly: number; duck: number }) => { if (!t) return; t.vol = m.vol; t.rev = 0; t.dly = 0; t.duck = m.duck; if (!t.synth?.pro) { t.sound = sound; t.synth = undefined; } };
+  const set = (t: Track | undefined, sound: string, m: { vol: number; rev: number; dly: number; duck: number }) => { if (!t) return; t.vol = m.vol; t.rev = 0; t.dly = 0; t.duck = m.duck; if (!t.synth?.pro || t.synth.pro.lib) setSound(t, sound); };
   set(T('bass'), pick(r, G.bassSound), G.mix.bass); set(T('chords'), pick(r, G.chordSound), G.mix.chords); set(T('arp'), pick(r, G.arpSound), G.mix.arp); set(T('melody'), pick(r, G.mel.sound), G.mix.melody);
   p.tracks.forEach((t) => { if (['kick', 'clap', 'hat', 'open', 'perc', 'bass', 'arp', 'chords', 'melody'].includes(t.id)) t.fx = G.ins[t.id] ? { ...G.ins[t.id] } : undefined; });
 }

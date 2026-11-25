@@ -17,7 +17,7 @@ import { migrate, listProjects, loadProject, saveProject, deleteProject, renameP
 import { registerSW } from 'virtual:pwa-register';
 import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
-  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, sceneList, hasAudio, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
+  type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, setSound, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, sceneList, hasAudio, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
   FX_SOUNDS, FX_GROUPS, type FxP, clipHas, WORDS, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
 } from './model';
@@ -1161,9 +1161,10 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
     {t.type === 'arp' && <Arpeggiator p={p} t={t} upT={upT} />}
     <PitchRow t={t} upT={upT} />
     <div class="sub">Sonido{t.synth && <button class="lnk" onClick={() => upT(t.id, (x) => { x.synth = undefined; })}>Restablecer</button>}</div>
-    <label class="sel-w"><select class="sel" value={s?.pro ? '' : t.sound} onChange={(e) => { const k = (e.target as HTMLSelectElement).value; if (k) upT(t.id, (x) => { x.sound = k; x.synth = undefined; }); }}>
-      {s?.pro && <option value="">Sinte pro</option>}
-      {presets.map((k) => <option value={k}>{SYNTHS[k].label}</option>)}
+    <label class="sel-w"><select class="sel" value={s?.pro ? (s.pro.lib ? 'pro:' + s.pro.lib : '') : t.sound} onChange={(e) => { const k = (e.target as HTMLSelectElement).value; if (k) upT(t.id, (x) => { setSound(x, k); }); }}>
+      {s?.pro && !s.pro.lib && <option value="">Sinte pro (editado)</option>}
+      <optgroup label="Clásicos">{presets.map((k) => <option value={k}>{SYNTHS[k].label}</option>)}</optgroup>
+      {Object.entries(proCats(t.type)).map(([c, list]) => <optgroup label={c}>{list.map(([k, l]) => <option value={'pro:' + k}>{l}</option>)}</optgroup>)}
     </select></label>
     {t.type === 'chords' && <>
       <div class="sub">Modo</div>
@@ -1183,7 +1184,6 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
       {adv && <><div class="sub">Sinte pro</div>
         <div class="chips">
           <button class="btn hot" onClick={() => upT(t.id, (x) => { const base = x.synth ?? SYNTHS[x.sound]?.p ?? SYNTHS.pluck.p; x.synth = { ...base, pro: proFrom(base) }; })}>Editar a fondo</button>
-          {Object.entries(PRO_PRESETS).filter(([, v]) => v.for.includes(t.type)).slice(0, 3).map(([k, v]) => <button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.synth = { ...(x.synth ?? SYNTHS[x.sound]?.p ?? SYNTHS.pluck.p), pro: clone(PRO_PRESETS[k].p) }; })}>{v.label}</button>)}
         </div></>}
     </>}
     <div class="hint">Elegí el sonido de la lista y ajustalo con las perillas (filtro = brillo, ataque = qué tan de golpe entra, release = cuánto queda sonando).{adv ? ' "Editar a fondo" abre el sinte pro: dos osciladores con tablas de onda, filtro de varios tipos, envolventes, LFO y matriz de modulación, como Serum.' : ' En modo Avanzado tenés más perillas y el sinte pro.'}</div>
@@ -1479,7 +1479,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'La grilla', body: 'Cada fila es un instrumento y cada casillero, un paso del compás. Un toque prende el golpe, otro lo acentúa y el tercero lo apaga. Los casilleros tenues son golpes suaves. El interruptor de la izquierda enciende o apaga la pista. Podés tocar varios a la vez con varios dedos. Arriba de la grilla elegís el compás: en "Todos" lo que tocás se repite en los 4 compases; en 1, 2, 3 o 4 cambiás solo ese compás (por ejemplo, un golpe distinto al final). "Copiar a los 4 compases" y "Vaciar compás" aplican al compás elegido, y las pistas con compases distintos muestran un 4 al lado del nombre. Con el celu parado ves 8 pasos por vez, bien grandes: con "Pasos 1 – 8 / 9 – 16" pasás a la otra mitad del compás (la que está sonando se marca en verde). Acostado ves los 16 juntos.', art: artGrid },
     { title: 'Lanzador de clips', body: 'Arriba de la grilla, el botón Lanzador cambia la vista: una columna por instrumento y una fila por escena. Tocá una celda y ese instrumento pasa a tocar el clip de esa escena desde el próximo compás (o desde la próxima vuelta, según elijas "En el compás" o "En la vuelta"), mientras los demás siguen como estaban. El cuadrado de abajo para el instrumento, la letra de la izquierda lanza la escena entera y "■ Todo" para todo. Las celdas parpadeantes están en cola. Los lanzamientos no entran en deshacer.', art: artChips(['A', 'B', 'C', 'D'], 1) },
     { title: 'Grupos y orden', body: 'En modo Avanzado, arriba de la grilla están los grupos: con M muteás todo el grupo junto (por ejemplo, toda la Batería) y con S lo dejás sonando solo. "+ Grupo" crea uno nuevo y tocando el nombre de un grupo abrís su panel para renombrarlo, sumar o sacar instrumentos o borrarlo. El botón de las flechas ordena los instrumentos.', art: artChips(['Batería  M  S', 'Sintes  M  S', '+ Grupo'], 0) },
-    { title: 'Editar una pista', body: 'Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo. Arriba de Sonido tenés el volumen y el pan del instrumento (los mismos del Mixer) y el tono: afinación, fino y vibrato. En Movimiento también podés automatizar el Tono para que suba o baje a lo largo de los 4 compases.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
+    { title: 'Editar una pista', body: 'En Sonido, la lista tiene los sonidos clásicos y la biblioteca del sinte pro, agrupada por categorías (por ejemplo, para el bajo: Sub, House y deep, Reese y wobble, Acid…). Tocá el nombre de un instrumento y se abre su editor abajo, con pestañas: Sonido (elegís el sonido de la lista y lo ajustás), Notas (piano roll), Movimiento (automatización, en modo Avanzado) y Más (copiar, pegar, grupo y borrar). Tocá la X o el nombre de nuevo para cerrarlo. Arriba de Sonido tenés el volumen y el pan del instrumento (los mismos del Mixer) y el tono: afinación, fino y vibrato. En Movimiento también podés automatizar el Tono para que suba o baje a lo largo de los 4 compases.', art: artKnobs(['Filtro', 'Reso', 'Decay', 'Detune']) },
     { title: 'Dividir el compás', body: 'Los instrumentos con golpes (batería, bajo y acordes en stabs o gate) tienen una pestaña Ritmo en su editor donde elegís cómo se divide el compás: 1/16 (lo normal), 1/32 (el doble de casilleros, para redobles y flams) o tresillos de corchea o de semicorchea. Ahí editás una grilla más fina, por compás o en los 4 juntos, y en la grilla de Patrón la pista muestra una marca (32, T8 o T16). Melodía, piano roll y arpegio también: en la pestaña Notas el piano roll tiene su selector de división (las notas pueden caer en 1/32 o en tresillos), el arpegiador suma las velocidades 1/32 y tresillos, y a la voz le podés elegir el punto de arranque de a medio paso. Debajo de cada fila de la pestaña Ritmo hay una barra por golpe: arrastrala para darle más o menos fuerza (0 a 127), por ejemplo para que un redoblante suene más que el otro.', art: artChips(['1/16', '1/32', 'T 1/8', 'T 1/16'], 1) },
     { title: 'Variación, copiar y pegar', body: 'El dado arriba del editor de cada instrumento le da otro patrón (de los que usa el género, o cambiando algunos golpes y notas). En la pestaña Más, "Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. Arriba de la grilla, las barritas agregan un redoble y el tacho vacía la batería.', art: artChips(['Variación', 'Copiar patrón', 'Pegar'], 0) },
     { title: 'Sinte pro', body: 'En modo Avanzado, en la pestaña Sonido del bajo, el arpegio, los acordes o la melodía, "Editar a fondo" abre un sinte completo, estilo Serum: dos osciladores con tablas de onda (Forma recorre la tabla), unísono con detune y ancho estéreo, sub y ruido, filtro de varios tipos, dos envolventes, dos LFO al ritmo del loop y una matriz para conectar todo. Hay sonidos pro listos y podés guardar los tuyos en Mis sonidos.', art: artKnobs(['Forma', 'Detune', 'Corte', 'LFO']) },
@@ -1892,10 +1892,21 @@ const sec = (v: number) => (v < 1 ? Math.round(v * 1000) + 'ms' : v.toFixed(1) +
 const MY_KEY = 'loop.mysynths';
 const mySynths = (): { name: string; pro: Pro }[] => { try { return JSON.parse(localStorage.getItem(MY_KEY) ?? '[]'); } catch { return []; } };
 type ProTab = 'a' | 'b' | 'sub' | 'filt' | 'env' | 'lfo' | 'mod' | 'voice';
+/* biblioteca de sonidos del sinte pro: lista desplegable por categoría, solo los que sirven para este tipo de instrumento */
+const PRO_CAT: Partial<Record<string, string>> = { bass: 'Bajo · Sinte pro', melody: 'Leads · Sinte pro', chords: 'Acordes · Sinte pro', arp: 'Arpegios · Sinte pro' };
+const proCats = (type: string) => { const cats: Record<string, [string, string][]> = {}; for (const [k, v] of Object.entries(PRO_PRESETS)) if (v.for.includes(type as any)) (cats[v.cat ?? PRO_CAT[v.for[0]] ?? 'Otros'] ??= []).push([k, v.label]); return cats; };
+function ProLib({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const cats = proCats(t.type);
+  const cur = t.synth?.pro?.lib ?? '';
+  return <label class="sel-w"><span>Biblioteca de sonidos</span><select class="sel" aria-label="Biblioteca de sonidos del sinte pro" value={cur} onChange={(e) => { const k = (e.target as HTMLSelectElement).value; if (k) upT(t.id, (x) => { x.synth = { ...(x.synth ?? SYNTHS[x.sound]?.p ?? SYNTHS.pluck.p), pro: { ...clone(PRO_PRESETS[k].p), lib: k } }; }); }}>
+    <option value="">{cur ? '—' : 'Elegí un sonido…'}</option>
+    {Object.entries(cats).map(([c, list]) => <optgroup label={c}>{list.map(([k, l]) => <option value={k}>{l}</option>)}</optgroup>)}
+  </select></label>;
+}
 function SynthPro({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
   const P = t.synth!.pro!, c = t.color, D = mkPro();
   const [tab, setTab] = useState<ProTab>('a'), [mine, setMine] = useState(mySynths), [naming, setNaming] = useState(false), [nm, setNm] = useState('');
-  const setP = (fn: (p: Pro) => void) => upT(t.id, (x) => { const p = clone(x.synth!.pro!); fn(p); x.synth = { ...x.synth!, pro: p }; });
+  const setP = (fn: (p: Pro) => void) => upT(t.id, (x) => { const p = clone(x.synth!.pro!); fn(p); p.lib = undefined; x.synth = { ...x.synth!, pro: p }; });
   const K = (label: string, v: number, min: number, max: number, on: (p: Pro, v: number) => void, o: { fmt?: (v: number) => string; log?: boolean; step?: number; def?: number } = {}) =>
     <Knob label={label} value={v} min={min} max={max} color={c} fmt={o.fmt ?? pct} log={o.log} step={o.step} def={o.def} onChange={(x) => setP((p) => on(p, x))} />;
   const oscTab = (k: 'a' | 'b') => { const o = P[k]; return <>
@@ -1926,7 +1937,7 @@ function SynthPro({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
   </>; };
   return <div class="pro" style={{ '--c': c } as any}>
     <div class="sub">Sinte pro</div>
-    <div class="chips">{Object.entries(PRO_PRESETS).filter(([, v]) => v.for.includes(t.type)).map(([k, v]) => <button class="chip" style={{ '--c': c } as any} onClick={() => upT(t.id, (x) => { x.synth = { ...x.synth!, pro: clone(PRO_PRESETS[k].p) }; })}>{v.label}</button>)}</div>
+    <ProLib t={t} upT={upT} />
     {(mine.length > 0 || naming) && <div class="chips" style={{ marginTop: '6px' }}>
       {mine.map((m, i) => <span class="mychip"><button class="chip" onClick={() => upT(t.id, (x) => { x.synth = { ...x.synth!, pro: clone(m.pro) }; })}>★ {m.name}</button><button class="chip x" aria-label={'Borrar ' + m.name} onClick={() => { const l = mine.filter((_, j) => j !== i); try { localStorage.setItem(MY_KEY, JSON.stringify(l)); } catch { /* */ } setMine(l); }}>×</button></span>)}
     </div>}
