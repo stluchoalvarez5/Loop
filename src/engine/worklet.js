@@ -654,7 +654,7 @@ class LoopEngine extends AudioWorkletProcessor {
     if (m.type === 'tap') { this.tap = m.id ? new SpecTap(this.sr, m.id) : null; return; }
     if (m.type === 'play') { const f = m.from | 0, sl = this.stepLen(); this.playing = true; this.done = {}; this.pos = f * sl; this.next = f; this.nextT = f * sl; this.step = -1; return; }
     if (m.type === 'stop') { this.playing = false; this.tracks.forEach((t) => t.voices.forEach((v) => { if (v.stage !== undefined) v.stage = 2; else fastRelease(v, this.sr); })); return; }
-    if (m.type === 'preview') { for (const id of [m.id, m.id + ':L']) { const t = this.tracks.find((x) => x.id === id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); } }
+    if (m.type === 'preview') { for (const id of [m.id, m.id + ':L', m.id + ':O']) { const t = this.tracks.find((x) => x.id === id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); } }
   }
   stepLen() { return this.sr * 60 / this.bpm / 4; }
   trigger(t, ev, offset) {

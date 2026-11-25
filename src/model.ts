@@ -176,6 +176,7 @@ export type Track = {
   id: string; name: string; color: string; type: TrackType;
   fxs?: FxP; // canal de efectos: parámetros del sonido (se parte del preset `sound`)
   rvx?: Partial<RevP>; dlx?: Partial<DlyP>; // reverb y delay propios de la pista (si faltan, la pista manda al reverb y delay del master); `rev` y `dly` siguen siendo cuánto manda
+  osk?: string; osm?: number; // batería sintetizada que salió de un sample: clave del sample original (osk) y cuánto de ese sample se mezcla con el sintetizado (osm 0..1)
   lay?: { on: boolean; src?: 'sample' | 'synth'; sound: string; kit?: string; dsyn?: DrumP; vol: number; pitch: number; decay?: number }; // capa extra de la batería: un segundo sonido que suena con cada golpe (por ejemplo, sub + click en un bombo)
   src?: 'sample' | 'synth'; dsyn?: DrumP; // batería: sonido de sample (por defecto) o sintetizado desde cero (dsyn)
   lch?: string; // (interno) escena desde la que suena esta pista en el lanzador
@@ -1002,6 +1003,8 @@ export function compile(p0: Project) {
   const withLayers: any[] = [];
   tracks.forEach((c: any, i: number) => {
     withLayers.push(c); const t = p.tracks[i], L = t.lay;
+    // sintetizado que viene de un sample: el sample original suena abajo en una pista aparte (`<id>:O`) mezclado con `osm`, el sintetizado baja lo que sube el original
+    if (t.type === 'drum' && t.src === 'synth' && t.osk && (t.osm ?? 0) > 0) { const m = Math.min(1, t.osm!); withLayers.push({ ...c, id: c.id + ':O', isKick: false, kind: 'sample', sample: t.osk, dsp: undefined, gain: c.gain * m, rvx: undefined, dlx: undefined }); c.gain = c.gain * (1 - m); }
     if (t.type === 'drum' && L?.on) {
       const syn = L.src === 'synth';
       withLayers.push({ ...c, id: c.id + ':L', isKick: false, kind: syn ? 'dsyn' : 'sample', sample: syn ? undefined : sampleKey(L.kit && KITS[L.kit] ? L.kit : t.kit && KITS[t.kit] ? t.kit : p.kit, L.sound), dsp: syn ? { ...DRUM_SYNTHS.k909.p, ...L.dsyn } : undefined, gain: anyGain(t.vol) * L.vol, pitch: L.pitch, decay: L.decay ?? 1, rvx: undefined, dlx: undefined });

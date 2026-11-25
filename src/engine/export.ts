@@ -19,7 +19,7 @@ export async function renderAudio(engine: Engine, p: Project, loops: number, ste
   await ctx.audioWorklet.addModule(workletUrl);
   const project: any = compile(p);
   if (stemId) {
-    project.tracks.forEach((t: any) => { t.mute = t.id !== stemId && t.id !== stemId + ':L'; t.solo = false; }); // la capa extra de una batería va en el stem de su instrumento
+    project.tracks.forEach((t: any) => { t.mute = t.id !== stemId && t.id !== stemId + ':L' && t.id !== stemId + ':O'; t.solo = false; }); // la capa extra de una batería va en el stem de su instrumento
     project.master = { ...project.master, auto: false, eq: [0, 0, 0, 0, 0, 0, 0, 0] };
   }
   const node = new AudioWorkletNode(ctx, 'loop-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { export: true, project, samples: engine.sampleData, freezeAt: start } });

@@ -12,6 +12,7 @@ import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, voxKeys, cleanVox, cleanSample, detectTempo, startRecording, peaks, finishLoopVox } from './vox';
+import { fitDrum } from './drumfit';
 import { TOPICS, SECS, topicById, topicForPanel, type Sec, type Topic } from './guide';
 import { trackOpen, trackInstall, statsOff, setStats } from './stats';
 import { renderAudio, renderArrangement, defaultArrangement, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
@@ -21,8 +22,7 @@ import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
   type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, setSound, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, sceneList, hasAudio, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  FX_SOUNDS, FX_GROUPS, type FxP, clipHas, WORDS, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType,
-} from './model';
+  FX_SOUNDS, FX_GROUPS, type FxP, clipHas, WORDS, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType, sampleKey } from './model';
 
 const engine = new Engine();
 const clone = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
@@ -1032,10 +1032,21 @@ function LayerEditor({ t, upT, p }: { t: Track; upT: (id: string, fn: (t: Track)
   </>;
 }
 /* batería sintetizada: armás el sonido desde cero (cuerpo, click, ruido, metal) o partís de un preset */
-function DrumSynthEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+/* al pasar un instrumento de sample a sintetizado: el sintetizado se ajusta solo al sonido que tenía (envolvente y espectro) y el sample original queda mezclado abajo
+   (`osm`) para que suene parecido desde el primer momento; después se baja el original y se retoca el sintético */
+const DRUM_KIND: Record<string, string> = { kick: 'kick', snare: 'snare', snare808: 'snare', snareSoft: 'snare', clap: 'clap', rim: 'rim', rim2: 'rim', hat: 'hat', open: 'hat', ride: 'hat', crash: 'hat', tomL: 'tom', tomM: 'tom', tomH: 'tom' };
+async function matchSample(key: string, sound: string, id: string, upT: (id: string, fn: (t: Track) => void) => void, mix = 0.6): Promise<boolean> {
+  const data = engine.sampleData[key]; if (!data) return false;
+  const kind = DRUM_KIND[sound], all = Object.values(DRUM_SYNTHS), pre = all.filter((d) => d.p.kind === kind || (kind === 'rim' && d.p.kind === 'snare')), starts = (pre.length ? pre : all).map((d) => d.p);
+  const r = await fitDrum(data, engine.sr, starts, { yieldEvery: 12 });
+  upT(id, (x) => { if (x.src === 'synth' && x.osk === key) { x.dsyn = r.p; x.osm = mix; } });
+  return true;
+}
+function DrumSynthEditor({ t, upT, p }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void; p: Project }) {
+  const [fitBusy, setFitBusy] = useState(false), skey = sampleKey(t.kit && KITS[t.kit] ? t.kit : p.kit, t.sound);
   const P: DrumP = { ...DRUM_SYNTHS.k909.p, ...t.dsyn };
   const set = (patch: Partial<DrumP>) => upT(t.id, (x) => { x.dsyn = { ...DRUM_SYNTHS.k909.p, ...x.dsyn, ...patch }; });
-  const pick = (k: string) => upT(t.id, (x) => { const d = DRUM_SYNTHS[k]; x.dsyn = { ...d.p }; x.sound = d.sound; if (Object.values(DRUM_SOUNDS).includes(x.name) || x.name === 'Percu') x.name = DRUM_SOUNDS[d.sound] ?? x.name; });
+  const pick = (k: string) => upT(t.id, (x) => { const d = DRUM_SYNTHS[k]; x.dsyn = { ...d.p }; x.sound = d.sound; x.osm = 0; if (Object.values(DRUM_SOUNDS).includes(x.name) || x.name === 'Percu') x.name = DRUM_SOUNDS[d.sound] ?? x.name; });
   const body = P.body > 0, noise = P.nz > 0;
   // mis sonidos de batería: se guardan en este celu (sirven en todos los loops)
   type Mine = { id: string; name: string; sound: string; p: DrumP };
@@ -1044,6 +1055,9 @@ function DrumSynthEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track
   const saveMine = (l: Mine[]) => { setMine(l); lsSet('loop.mydrums', JSON.stringify(l.slice(0, 60))); };
   return <>
     <div class="sub">Sonido sintetizado</div>
+    <div class="chips"><button class="chip" disabled={fitBusy || !engine.sampleData[skey]} onClick={async () => { setFitBusy(true); upT(t.id, (x) => { x.osk = skey; x.osm = Math.max(x.osm ?? 0, 0.6); }); await matchSample(skey, t.sound, t.id, upT); setFitBusy(false); }}>{fitBusy ? 'Ajustando…' : 'Ajustar al sample'}</button></div>
+    {t.osk && <div class="knobs"><Knob label="Sample original" value={t.osm ?? 0} min={0} max={1} def={0.6} color={t.color} fmt={pct} onChange={(v) => upT(t.id, (x) => { x.osm = v; })} /></div>}
+    {t.osk && <div class="hint-s">El sintetizado se ajusta solo al sonido que tenía el instrumento. "Sample original" mezcla ese sample por debajo: bajalo a 0 para quedarte solo con el sintetizado y retocarlo.</div>}
     {DRUM_SYNTH_GROUPS.map(([g, list]) => <><div class="sub2">{g}</div><div class="chips">{list.map((k) => <button class="chip" style={{ '--c': t.color } as any} onClick={() => pick(k)}>{DRUM_SYNTHS[k].label}</button>)}</div></>)}
     <div class="sub2">Mis sonidos</div>
     {mine.length > 0 && <div class="chips">{mine.map((s) => <span class="mychip"><button class="chip" style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.dsyn = { ...DRUM_SYNTHS.k909.p, ...s.p }; x.sound = s.sound; })}>{s.name}</button><button class="chip x" aria-label={'Borrar ' + s.name} onClick={() => saveMine(mine.filter((q) => q.id !== s.id))}>×</button></span>)}</div>}
@@ -1137,8 +1151,8 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
       <LevelRow t={t} upT={upT} />
       <PitchRow t={t} upT={upT} />
       <div class="sub">Fuente del sonido</div>
-      <div class="seg">{([['sample', 'Sample (kit)'], ['synth', 'Sintetizado']] as const).map(([k, l]) => <button class={(t.src ?? 'sample') === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.src = k === 'synth' ? 'synth' : undefined; if (k === 'synth' && !x.dsyn) { const pre = Object.entries(DRUM_SYNTHS).find(([, d]) => d.sound === x.sound)?.[1] ?? DRUM_SYNTHS.k909; x.dsyn = { ...pre.p }; } })}>{l}</button>)}</div>
-      {t.src === 'synth' && <DrumSynthEditor t={t} upT={upT} />}
+      <div class="seg">{([['sample', 'Sample (kit)'], ['synth', 'Sintetizado']] as const).map(([k, l]) => <button class={(t.src ?? 'sample') === k ? 'on' : ''} onClick={() => { let matchTodo = ''; upT(t.id, (x) => { x.src = k === 'synth' ? 'synth' : undefined; if (k === 'synth' && !x.dsyn) { const pre = Object.entries(DRUM_SYNTHS).find(([, d]) => d.sound === x.sound)?.[1] ?? DRUM_SYNTHS[({ kick: 'k909', snare: 's909', clap: 'clap', rim: 'rim', hat: 'hatC', tom: 'tom' } as Record<string, string>)[DRUM_KIND[x.sound]] ?? 'k909']; x.dsyn = { ...pre.p }; const key = sampleKey(x.kit && KITS[x.kit] ? x.kit : p.kit, x.sound); if (engine.sampleData[key]) { x.osk = key; x.osm = 1; matchTodo = key; } } }); if (matchTodo) { const key = matchTodo; void matchSample(key, t.sound, t.id, upT); } }}>{l}</button>)}</div>
+      {t.src === 'synth' && <DrumSynthEditor t={t} upT={upT} p={p} />}
       {t.src !== 'synth' && <div class="sub">Golpe</div>}
       {t.src !== 'synth' && DRUM_GROUPS.map(([g, list]) => <><div class="sub2">{g}</div><div class="chips">{list.map((o) => <button class={'chip' + (t.sound === o ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => upT(t.id, (x) => { x.sound = o; if (x.name === DRUM_SOUNDS[x.sound] || Object.values(DRUM_SOUNDS).includes(x.name)) x.name = DRUM_SOUNDS[o]; })}>{DRUM_SOUNDS[o]}</button>)}</div></>)}
       {t.src !== 'synth' && <div class="sub">Ajustes</div>}
