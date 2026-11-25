@@ -12,6 +12,7 @@ import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, voxKeys, cleanVox, cleanSample, detectTempo, startRecording, peaks, finishLoopVox } from './vox';
+import { trackOpen, trackInstall, statsOff, setStats } from './stats';
 import { renderAudio, renderArrangement, defaultArrangement, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
 import { migrate, listProjects, loadProject, saveProject, deleteProject, renameProject, duplicate, currentId, newId, titleOf, exportFile, importFile, type Meta } from './store';
 import { registerSW } from 'virtual:pwa-register';
@@ -48,7 +49,8 @@ const pwa = { prompt: null as any, update: null as null | (() => void), listener
 const pwaPing = () => pwa.listeners.forEach((f) => f());
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pwa.prompt = e; pwaPing(); });
-  window.addEventListener('appinstalled', () => { pwa.prompt = null; pwaPing(); });
+  window.addEventListener('appinstalled', () => { pwa.prompt = null; pwaPing(); trackInstall(); });
+  trackOpen();
   // la versión nueva se instala sola en segundo plano (también desde versiones viejas de la app) pero no recarga:
   // cortaría lo que está sonando. Cuando toma el control se avisa arriba y "Actualizar" recarga.
   const hadCtrl = 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
@@ -2056,6 +2058,7 @@ function Projects({ p, open, flash }: { p: Project; open: (np: Project) => void;
 
 /* ---------- la app: instalar, sin conexión y espacio ---------- */
 function AppCard({ adv, setAdv }: { adv: boolean; setAdv: (v: boolean) => void }) {
+  const [stats, setStatsOn] = useState(!statsOff());
   const w = usePwa(), [persist, setPersist] = useState<boolean | null>(null), [use, setUse] = useState('');
   const standalone = typeof matchMedia !== 'undefined' && (matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true);
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -2080,6 +2083,8 @@ function AppCard({ adv, setAdv }: { adv: boolean; setAdv: (v: boolean) => void }
         {!persist && navigator.storage?.persist && <button class="chip" onClick={() => navigator.storage.persist().then((x) => { setPersist(x); if (!x) alert('El navegador no lo permitió todavía. Instalando la app suele alcanzar.'); }).catch(() => {})}>Proteger mis loops</button>}
         {w.update && <button class="btn vio" onClick={() => w.update!()}>Actualizar a la versión nueva</button>}
       </div>
+      <div class="chips" style={{ marginTop: '8px' }}><button class={'chip' + (stats ? ' on' : '')} onClick={() => { setStats(!stats); setStatsOn(!stats); }}>Estadísticas anónimas: {stats ? 'sí' : 'no'}</button></div>
+      <div class="note">Cuenta cuánta gente abre e instala Loop, sin saber quién sos: no se guarda ningún dato personal ni tus loops.</div>
       {!standalone && <div class="hint">{ios ? 'En iPhone: abrila en Safari, tocá Compartir (el cuadrado con la flecha) y después "Agregar a inicio". Queda como una app, a pantalla completa y sin conexión.' : w.prompt ? 'Instalala para abrirla como una app, a pantalla completa y sin conexión.' : 'Para instalarla, abrí el menú del navegador y elegí "Instalar app" o "Agregar a la pantalla de inicio".'}</div>}
     </Panel>
   );
