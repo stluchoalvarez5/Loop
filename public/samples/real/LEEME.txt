@@ -1,0 +1,16 @@
+Sonidos reales de percusión de Loop
+===================================
+Fuente: Versilian Community Sample Library (VCSL), https://github.com/sgossner/VCSL
+Licencia: CC0 1.0 (dominio público): se pueden usar, modificar y redistribuir sin pedir permiso ni dar crédito (igual se agradece).
+
+Qué se hizo con los originales: se pasaron a mono, 44,1 kHz y 16 bits, se recortó el silencio del principio, se les puso un fundido
+al final y se ajustó el nivel de cada golpe (las capas suaves siguen más bajas que las fuertes). La afinación del tom medio (rtomm_*)
+es la del tom agudo bajada unos 4 semitonos.
+
+Archivos (los usa SAMPLE_VARIANTS en src/model.ts):
+rhat_v1..v4 (a, b)  hi-hat cerrado, 4 capas de fuerza y 2 tomas      ropen_a, ropen_b   hi-hat abierto
+rride_*, rcrash_*   platillo (golpe de palillo / crash)               rshk_*, rmar_*     shaker chico (abajo/arriba) y grande
+rtamb_1..4          panderetas                                        rcow_a, rcow_b     cowbell
+rclave_1..3         claves                                            rclap_1..3         aplausos
+rconga_v1..v3 (a,b) congas, 3 capas                                   rtomh/rtomm/rtoml  toms (3 capas)
+rsnare_a..c         caja moderna                                      rrim_a, rrim_b     aro de caja (stick)

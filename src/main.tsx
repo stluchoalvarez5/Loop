@@ -2173,6 +2173,7 @@ function AppCard({ adv, setAdv }: { adv: boolean; setAdv: (v: boolean) => void }
         {w.update && <button class="btn vio" onClick={() => w.update!()}>Actualizar a la versión nueva</button>}
       </div>
       <div class="chips" style={{ marginTop: '8px' }}><button class={'chip' + (stats ? ' on' : '')} onClick={() => { setStats(!stats); setStatsOn(!stats); }}>Estadísticas anónimas: {stats ? 'sí' : 'no'}</button></div>
+      <div class="hint">Percusión real (hi-hat, shaker, pandereta, congas, toms…): Versilian Community Sample Library, licencia CC0 (dominio público).</div>
       <div class="note">Cuenta cuánta gente abre e instala Loop, sin saber quién sos: no se guarda ningún dato personal ni tus loops.</div>
       {!standalone && <div class="hint">{ios ? 'En iPhone: abrila en Safari, tocá Compartir (el cuadrado con la flecha) y después "Agregar a inicio". Queda como una app, a pantalla completa y sin conexión.' : w.prompt ? 'Instalala para abrirla como una app, a pantalla completa y sin conexión.' : 'Para instalarla, abrí el menú del navegador y elegí "Instalar app" o "Agregar a la pantalla de inicio".'}</div>}
     </Panel>

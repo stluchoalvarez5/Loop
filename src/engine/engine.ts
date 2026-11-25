@@ -1,6 +1,6 @@
 /* Controlador del motor: crea el AudioContext, carga el worklet y los samples, y le manda el proyecto compilado. */
 import workletUrl from './worklet.js?url';
-import { compile, type Project } from '../model';
+import { compile, REAL_FILES, type Project } from '../model';
 
 const FILES: Record<string, string> = {
   kA909: 'BT0A0DA', kBh: 'BTAAADA', clap1: 'HANDCLP1', clap2: 'HANDCLP2', hat1: 'HHCD2', hatH: 'HHCD0', open: 'HHOD6', openH: 'HHOD4',
@@ -58,8 +58,16 @@ export class Engine {
     }));
     const shots = await synthShots(ctx.sampleRate);
     Object.entries(shots).forEach(([k, b]) => this.send(k, mono(b)));
-    // kit Lo-Fi: copias del 909 pasadas por un bitcrusher (menos muestras y menos bits), filtradas y saturadas
-    ([['lofiKick', 'kA909', 0.9], ['lofiClap', 'clap1', 0.8], ['lofiHat', 'hat1', 0.7], ['lofiOpen', 'open', 0.7], ['lofiSnare', 'snare', 0.8]] as const).forEach(([k, src, pk]) => { const d = this.sampleData[src]; if (d) this.send(k, crush(d, pk)); });
+    // las percusiones electrónicas originales quedan con otro nombre para los kits clásicos 909 y 808
+    for (const k of ['ride', 'crash', 'tomL', 'tomM', 'tomH', 'cowbell', 'clave', 'conga', 'shaker', 'maraca', 'tamb']) { const d = this.sampleData[k]; if (d) this.send(k + '909', d); }
+    // sonidos reales (Versilian Community Sample Library, CC0): capas de fuerza y tomas alternadas; las claves de siempre pasan a usar la toma del medio
+    await Promise.all(REAL_FILES.map(async (f) => {
+      try { const ab = await (await fetch(base + 'real/' + f + '.wav')).arrayBuffer(); const b = await ctx.decodeAudioData(ab); this.send(f, mono(b)); } catch { /* sin esa toma: suena el sample base */ }
+    }));
+    const MID: Record<string, string> = { rHat: 'rhat_v3a', rOpen: 'ropen_a', ride: 'rride_a', crash: 'rcrash_a', shaker: 'rshk_da', maraca: 'rmar_a', tamb: 'rtamb_1', cowbell: 'rcow_a', clave: 'rclave_1', rClap: 'rclap_1', conga: 'rconga_v2a', tomH: 'rtomh_v3', tomM: 'rtomm_v3', tomL: 'rtoml_v3', rSnare: 'rsnare_a', rRim: 'rrim_a' };
+    for (const [k, f] of Object.entries(MID)) { const d = this.sampleData[f]; if (d) this.send(k, d); }
+    // kit Lo-Fi: copias pasadas por un bitcrusher (menos muestras y menos bits), filtradas y saturadas
+    ([['lofiKick', 'kA909', 0.9], ['lofiClap', 'clap1', 0.8], ['lofiHat', 'rHat', 0.7], ['lofiOpen', 'rOpen', 0.7], ['lofiSnare', 'snare', 0.8]] as const).forEach(([k, src, pk]) => { const d = this.sampleData[src]; if (d) this.send(k, crush(d, pk)); });
   }
 
   /* voz grabada: se guarda la versión normal y la invertida; si el audio está a otra frecuencia de muestreo, se remuestrea */

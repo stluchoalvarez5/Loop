@@ -612,20 +612,23 @@ export const SYNTHS: Record<string, { label: string; for: TrackType[]; p: Synth 
 export const STAB = (p: Synth): Synth => ({ ...p, attack: 0.004, decay: 0.3, sustain: 0, release: 0.15, gain: p.gain * 1.6, envAmt: Math.max(p.envAmt, 0.8), fdecay: 0.2 });
 
 /* ---------- batería ---------- */
+/* los kits clásicos (909, 808) conservan las percusiones electrónicas originales; el resto usa las reales */
+const CLASSIC_PERC = { ride: 'ride909', crash: 'crash909', tomL: 'tomL909', tomM: 'tomM909', tomH: 'tomH909', cowbell: 'cowbell909', clave: 'clave909', conga: 'conga909', shaker: 'shaker909', maraca: 'maraca909', tamb: 'tamb909' };
 export const KITS: Record<string, { label: string; map: Record<string, string> }> = {
-  tr909: { label: '909', map: { kick: 'kA909', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim' } },
-  tr909h: { label: '909 Duro', map: { kick: 'kBh', clap: 'clap2', hat: 'hatH', open: 'openH', snare: 'snareH', rim: 'rim' } },
-  tr808: { label: '808', map: { kick: 'k808', clap: 'clap808', hat: 'hat808', open: 'open808', snare: 'snare808', rim: 'rim' } },
+  tr909: { label: '909', map: { kick: 'kA909', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim', ...CLASSIC_PERC } },
+  tr909h: { label: '909 Duro', map: { kick: 'kBh', clap: 'clap2', hat: 'hatH', open: 'openH', snare: 'snareH', rim: 'rim', ...CLASSIC_PERC } },
+  tr808: { label: '808', map: { kick: 'k808', clap: 'clap808', hat: 'hat808', open: 'open808', snare: 'snare808', rim: 'rim', ...CLASSIC_PERC } },
   // kits por género
-  trance: { label: 'Kit Trance', map: { kick: 'kTrance', clap: 'clap2', hat: 'hatTight', open: 'openH', snare: 'snareH', rim: 'rim' } },
-  techno: { label: 'Kit Techno', map: { kick: 'kTechno', clap: 'clapVerb', hat: 'hatH', open: 'openH', snare: 'snareH', rim: 'rim' } },
-  hard: { label: 'Kit Hard Techno', map: { kick: 'kHard', clap: 'clapVerb', hat: 'hatH', open: 'openH', snare: 'snareH', rim: 'rim' } },
-  house: { label: 'Kit House', map: { kick: 'kA909', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim' } },
-  deep: { label: 'Kit Deep', map: { kick: 'k808', clap: 'clap808', hat: 'hatDark', open: 'open808', snare: 'snareSoft', rim: 'rim' } },
-  melodic: { label: 'Kit Melodic', map: { kick: 'kMelodic', clap: 'snap', hat: 'hatDark', open: 'open808', snare: 'snareSoft', rim: 'rim' } },
-  prog: { label: 'Kit Progressive', map: { kick: 'kProg', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim' } },
+  trance: { label: 'Kit Trance', map: { kick: 'kTrance', clap: 'clap2', hat: 'rHat', open: 'rOpen', snare: 'snareH', rim: 'rim' } },
+  techno: { label: 'Kit Techno', map: { kick: 'kTechno', clap: 'clapVerb', hat: 'rHat', open: 'rOpen', snare: 'snareH', rim: 'rim' } },
+  hard: { label: 'Kit Hard Techno', map: { kick: 'kHard', clap: 'clapVerb', hat: 'rHat', open: 'rOpen', snare: 'snareH', rim: 'rim' } },
+  house: { label: 'Kit House', map: { kick: 'kA909', clap: 'clap1', hat: 'rHat', open: 'rOpen', snare: 'snare', rim: 'rim' } },
+  deep: { label: 'Kit Deep', map: { kick: 'k808', clap: 'clap808', hat: 'rHat', open: 'rOpen', snare: 'snareSoft', rim: 'rim' } },
+  melodic: { label: 'Kit Melodic', map: { kick: 'kMelodic', clap: 'snap', hat: 'rHat', open: 'rOpen', snare: 'snareSoft', rim: 'rim' } },
+  prog: { label: 'Kit Progressive', map: { kick: 'kProg', clap: 'clap1', hat: 'rHat', open: 'rOpen', snare: 'snare', rim: 'rim' } },
   synth80: { label: 'Kit Synthwave 80s', map: { kick: 'k80s', clap: 'clapGated', hat: 'hatTight', open: 'openH', snare: 'snareGated', rim: 'rim' } },
   electro: { label: 'Kit Electro', map: { kick: 'kElectro', clap: 'clap808', hat: 'hat808', open: 'open808', snare: 'snareZap', rim: 'clave' } },
+  real: { label: 'Kit Real (acústico)', map: { kick: 'kProg', clap: 'rClap', hat: 'rHat', open: 'rOpen', snare: 'rSnare', rim: 'rRim' } },
   lofi: { label: 'Kit Lo-Fi', map: { kick: 'lofiKick', clap: 'lofiClap', hat: 'lofiHat', open: 'lofiOpen', snare: 'lofiSnare', rim: 'rim' } },
 };
 export const DRUM_SOUNDS: Record<string, string> = {
@@ -635,6 +638,18 @@ export const DRUM_SOUNDS: Record<string, string> = {
 };
 export const DRUM_GROUPS: [string, string[]][] = [['Bombo', ['kick']], ['Golpes', ['clap', 'snare', 'snare808', 'snareSoft', 'rim', 'rim2']], ['Platillos', ['hat', 'open', 'ride', 'crash']], ['Percusión', ['cowbell', 'clave', 'conga', 'shaker', 'tamb', 'maraca']], ['Toms', ['tomL', 'tomM', 'tomH']]];
 export const sampleKey = (kit: string, sound: string) => KITS[kit]?.map[sound] ?? sound;
+/* Sonidos reales (Versilian Community Sample Library, dominio público CC0: hi-hat, platillos, shaker, pandereta, cowbell, claves, congas, toms, caja y aplausos reales grabados con micrófono).
+   Cada clave tiene capas de fuerza (de suave a fuerte; el golpe elige la capa según su velocidad) y en cada capa varias tomas que se alternan (round-robin), así no suena a ametralladora. */
+export const SAMPLE_VARIANTS: Record<string, string[][]> = {
+  rHat: [['rhat_v1a', 'rhat_v1b'], ['rhat_v2a', 'rhat_v2b'], ['rhat_v3a', 'rhat_v3b'], ['rhat_v4a', 'rhat_v4b']],
+  rOpen: [['ropen_a', 'ropen_b']], ride: [['rride_a', 'rride_b']], crash: [['rcrash_a', 'rcrash_b']],
+  shaker: [['rshk_da', 'rshk_ua', 'rshk_db', 'rshk_ub']], maraca: [['rmar_a', 'rmar_b']], tamb: [['rtamb_1', 'rtamb_2', 'rtamb_3', 'rtamb_4']], cowbell: [['rcow_a', 'rcow_b']],
+  clave: [['rclave_1', 'rclave_2', 'rclave_3']], rClap: [['rclap_1', 'rclap_2', 'rclap_3']],
+  conga: [['rconga_v1a', 'rconga_v1b'], ['rconga_v2a', 'rconga_v2b'], ['rconga_v3a', 'rconga_v3b']],
+  tomH: [['rtomh_v2'], ['rtomh_v3'], ['rtomh_v4']], tomM: [['rtomm_v2'], ['rtomm_v3'], ['rtomm_v4']], tomL: [['rtoml_v2'], ['rtoml_v3'], ['rtoml_v4']],
+  rSnare: [['rsnare_a', 'rsnare_b', 'rsnare_c']], rRim: [['rrim_a', 'rrim_b']],
+};
+export const REAL_FILES = [...new Set(Object.values(SAMPLE_VARIANTS).flat(2))];
 
 const R = (on: number[], acc: number[] = []) => { const s = Array(16).fill(0); on.forEach((i) => (s[i] = 1)); acc.forEach((i) => (s[i] = 2)); return s; };
 
@@ -985,6 +1000,11 @@ export function compile(p0: Project) {
       const g64 = S64.map((s) => { const g = mAt('groove', s); return t.groove ? Math.max(0, t.groove[s % 16] * (1 + g * 2.4)) : g > 0.15 && t.type === 'drum' && t.id !== 'kick' && s % 2 ? g * 0.12 : 0; });
       groove = g64.some((x) => x > 0) ? g64 : undefined;
     } else groove = t.groove ? t.groove.map((x) => Math.max(0, x * (1 + gr * 2.4))) : gr > 0.15 && t.type === 'drum' && t.id !== 'kick' ? Array.from({ length: 16 }, (_, i) => (i % 2 ? gr * 0.12 : 0)) : undefined;
+    // sonidos reales: cada golpe elige la capa de fuerza que le toca y la toma siguiente (round-robin)
+    if (t.type === 'drum' && kind === 'sample' && sample && SAMPLE_VARIANTS[sample]) {
+      const LY = SAMPLE_VARIANTS[sample]; let rr = 0;
+      for (let s = 0; s < 64; s++) for (const e of ev[s]) { const L = LY[LY.length === 1 ? 0 : Math.min(LY.length - 1, Math.floor(e.v * LY.length * 0.999))]; e.k = L[rr++ % L.length]; }
+    }
     return {
       clip: t.lch ?? '', cg: t.type === 'drum' ? (t.cg === undefined ? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '') : t.cg) : '', tn: t.type === 'drum' || t.type === 'sample' ? t.tone || 0 : 0, at: t.type === 'drum' || t.type === 'sample' ? t.att || 0 : 0, pe: t.type === 'drum' || t.type === 'sample' ? t.pe || 0 : 0,
       drm: t.type === 'drum',
@@ -1004,10 +1024,10 @@ export function compile(p0: Project) {
   tracks.forEach((c: any, i: number) => {
     withLayers.push(c); const t = p.tracks[i], L = t.lay;
     // sintetizado que viene de un sample: el sample original suena abajo en una pista aparte (`<id>:O`) mezclado con `osm`, el sintetizado baja lo que sube el original
-    if (t.type === 'drum' && t.src === 'synth' && t.osk && (t.osm ?? 0) > 0) { const m = Math.min(1, t.osm!); withLayers.push({ ...c, id: c.id + ':O', isKick: false, kind: 'sample', sample: t.osk, dsp: undefined, gain: c.gain * m, rvx: undefined, dlx: undefined }); c.gain = c.gain * (1 - m); }
+    if (t.type === 'drum' && t.src === 'synth' && t.osk && (t.osm ?? 0) > 0) { const m = Math.min(1, t.osm!); withLayers.push({ ...c, ev: c.ev.map((a: any[]) => a.map(({ k, ...e }: any) => e)), id: c.id + ':O', isKick: false, kind: 'sample', sample: t.osk, dsp: undefined, gain: c.gain * m, rvx: undefined, dlx: undefined }); c.gain = c.gain * (1 - m); }
     if (t.type === 'drum' && L?.on) {
       const syn = L.src === 'synth';
-      withLayers.push({ ...c, id: c.id + ':L', isKick: false, kind: syn ? 'dsyn' : 'sample', sample: syn ? undefined : sampleKey(L.kit && KITS[L.kit] ? L.kit : t.kit && KITS[t.kit] ? t.kit : p.kit, L.sound), dsp: syn ? { ...DRUM_SYNTHS.k909.p, ...L.dsyn } : undefined, gain: anyGain(t.vol) * L.vol, pitch: L.pitch, decay: L.decay ?? 1, rvx: undefined, dlx: undefined });
+      withLayers.push({ ...c, ev: c.ev.map((a: any[]) => a.map(({ k, ...e }: any) => e)), id: c.id + ':L', isKick: false, kind: syn ? 'dsyn' : 'sample', sample: syn ? undefined : sampleKey(L.kit && KITS[L.kit] ? L.kit : t.kit && KITS[t.kit] ? t.kit : p.kit, L.sound), dsp: syn ? { ...DRUM_SYNTHS.k909.p, ...L.dsyn } : undefined, gain: anyGain(t.vol) * L.vol, pitch: L.pitch, decay: L.decay ?? 1, rvx: undefined, dlx: undefined });
     }
   });
   const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;

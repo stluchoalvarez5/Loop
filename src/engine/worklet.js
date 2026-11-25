@@ -680,7 +680,7 @@ class LoopEngine extends AudioWorkletProcessor {
     }
     const pan = (t.spread || 0) * (Math.random() * 2 - 1);
     if (t.kind === 'sample') {
-      const key = ev.k || t.sample, buf = this.samples[key]; if (!buf) return;
+      const key = ev.k || t.sample, buf = this.samples[key] || this.samples[t.sample]; if (!buf) return; // si falta una toma real, suena el sample base
       // voz: corta la anterior (choke) para que una palabra no se pise con la siguiente
       if (t.choke) for (const x of t.voices) if (x.on && x !== v) x.hold = Math.min(x.hold, x.n + offset);
       const hum = 1 + (Math.random() * 2 - 1) * (t.human || 0);
