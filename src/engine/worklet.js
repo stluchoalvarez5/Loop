@@ -535,6 +535,40 @@ class DlyFx {
 /* ---------- master ---------- */
 class KWeight { constructor(sr) { this.a = new Biquad(); this.a.set('hs', 1500, 0.7071, 4, sr); this.b = new Biquad(); this.b.set('hp', 38, 0.5, 0, sr); } run(x) { return this.b.run(this.a.run(x)); } }
 
+/* analizador de espectro de UNA pista (el EQ del instrumento): guarda la señal de antes y después de su EQ, hace una FFT de 4096 puntos con ventana Hann cada 2048 muestras
+   y manda 96 bandas logarítmicas (20 Hz a 20 kHz, en dB) al hilo principal. Todo se reserva al empezar (mensaje `tap`), nunca en process; solo corre con el EQ abierto. */
+const TAPN = 4096, TAPB = 96;
+class SpecTap {
+  constructor(sr, id) {
+    this.id = id; this.sr = sr; this.pre = new Float32Array(TAPN); this.post = new Float32Array(TAPN); this.w = 0; this.cnt = 0; this.a = 0;
+    this.re = new Float64Array(TAPN); this.im = new Float64Array(TAPN);
+    this.win = new Float64Array(TAPN); for (let i = 0; i < TAPN; i++) this.win[i] = 0.5 - 0.5 * Math.cos(TAU * i / TAPN);
+    this.cs = new Float64Array(TAPN / 2); this.sn = new Float64Array(TAPN / 2); for (let i = 0; i < TAPN / 2; i++) { this.cs[i] = Math.cos(TAU * i / TAPN); this.sn[i] = -Math.sin(TAU * i / TAPN); }
+    this.rev = new Uint16Array(TAPN); const bits = Math.log2(TAPN); for (let i = 0; i < TAPN; i++) { let r = 0, x = i; for (let b = 0; b < bits; b++) { r = (r << 1) | (x & 1); x >>= 1; } this.rev[i] = r; }
+    this.edge = new Float64Array(TAPB + 1); for (let j = 0; j <= TAPB; j++) this.edge[j] = 20 * Math.pow(1000, j / TAPB) * TAPN / sr; // bordes de cada banda, en bins
+  }
+  push(a, b) { this.pre[this.w] = a; this.post[this.w] = b; this.w = (this.w + 1) & (TAPN - 1); }
+  fft(src, out) {
+    const re = this.re, im = this.im, rev = this.rev, n = TAPN;
+    for (let i = 0; i < n; i++) { re[rev[i]] = src[(this.w + i) & (n - 1)] * this.win[i]; im[rev[i]] = 0; }
+    for (let len = 2; len <= n; len <<= 1) {
+      const half = len >> 1, step = n / len;
+      for (let i = 0; i < n; i += len) for (let k = 0; k < half; k++) {
+        const c = this.cs[k * step], s = this.sn[k * step], a = i + k, b = a + half;
+        const tr = re[b] * c - im[b] * s, ti = re[b] * s + im[b] * c;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+      }
+    }
+    const nyq = n / 2, mag = (i) => Math.sqrt(re[i] * re[i] + im[i] * im[i]) * 4 / n; // un seno de amplitud A da A
+    for (let j = 0; j < TAPB; j++) {
+      const b0 = this.edge[j], b1 = this.edge[j + 1]; let v = 0;
+      if (b1 - b0 < 1) { const c = Math.min(nyq - 1, (b0 + b1) * 0.5), i0 = Math.floor(c), fr = c - i0; v = mag(i0) * (1 - fr) + mag(i0 + 1) * fr; }
+      else { const lo = Math.max(1, Math.floor(b0)), hi = Math.min(nyq - 1, Math.ceil(b1)); for (let i = lo; i <= hi; i++) { const m = mag(i); if (m > v) v = m; } }
+      out[j] = Math.max(-110, 20 * Math.log10(v + 1e-9));
+    }
+  }
+}
+
 class LoopEngine extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -617,6 +651,7 @@ class LoopEngine extends AudioWorkletProcessor {
       this.setEq(m.project.master.eq);
       return;
     }
+    if (m.type === 'tap') { this.tap = m.id ? new SpecTap(this.sr, m.id) : null; return; }
     if (m.type === 'play') { const f = m.from | 0, sl = this.stepLen(); this.playing = true; this.done = {}; this.pos = f * sl; this.next = f; this.nextT = f * sl; this.step = -1; return; }
     if (m.type === 'stop') { this.playing = false; this.tracks.forEach((t) => t.voices.forEach((v) => { if (v.stage !== undefined) v.stage = 2; else fastRelease(v, this.sr); })); return; }
     if (m.type === 'preview') { for (const id of [m.id, m.id + ':L']) { const t = this.tracks.find((x) => x.id === id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); } }
@@ -742,7 +777,8 @@ class LoopEngine extends AudioWorkletProcessor {
         if (t.macDrive && mEn > 0) dv = Math.min(1, dv + mEn * 0.6);
         if (dv !== I.drive) { I.drive = dv; I.dk = 1 + dv * 10; I.dg = (1 + dv) / I.dk; }
       }
-      if (I && (I.drive || I.hp || I.lp || I.chorus || I.crush || I.phaser || I.eqOn)) {
+      const tp = this.tap && this.tap.id === t.id ? this.tap : null; // analizador de espectro de esta pista (solo con su EQ abierto)
+      if (I && (I.drive || I.hp || I.lp || I.chorus || I.crush || I.phaser || I.eqOn || tp)) {
         const cb = I.cb, cr = I.chorus, dinc = 0.55 / sr, cq = I.cq, cds = I.cds, ph = I.phaser, ap = I.ap;
         const pinc = ph ? this.bpm / 60 / 8 / sr : 0, pfb = ph * 0.55; // phaser: una vuelta cada 2 compases
         for (let i = 0; i < N; i++) {
@@ -754,7 +790,9 @@ class LoopEngine extends AudioWorkletProcessor {
           }
           if (I.hp) { l = I.hpL.run(l); r = I.hpR.run(r); }
           if (I.lp) { l = I.lpL.run(l); r = I.lpR.run(r); }
+          if (tp) tp.a = (l + r) * 0.5;
           if (I.eqOn) { const EB = I.eqB, EA = I.eqA; for (let k = 0; k < 4; k++) if (EA[k]) { l = EB[k][0].run(l); r = EB[k][1].run(r); } }
+          if (tp) tp.push(tp.a, (l + r) * 0.5);
           if (ph && ap) {
             I.pph += pinc; if (I.pph >= 1) I.pph -= 1;
             // barrido exponencial 250 Hz .. 3,5 kHz; el canal derecho va un cuarto de vuelta corrido
@@ -775,6 +813,7 @@ class LoopEngine extends AudioWorkletProcessor {
           }
           B.tL[i] = l; B.tR[i] = r;
         }
+        if (tp && !this.quiet) { tp.cnt += N; if (tp.cnt >= 2048) { tp.cnt -= 2048; const pre = new Float32Array(TAPB), post = new Float32Array(TAPB); tp.fft(tp.pre, pre); tp.fft(tp.post, post); this.port.postMessage({ type: 'spec', id: tp.id, pre, post }, [pre.buffer, post.buffer]); } }
       }
       if (MD && MD.sk) { aRev = Math.min(1, aRev * mSk + (t.spAdd && mSadd > 0 ? mSadd : 0)); aDly = Math.min(1, aDly * mSk); }
       const audible = !t.mute && (!anySolo || t.solo);

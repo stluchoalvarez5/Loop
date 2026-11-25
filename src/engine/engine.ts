@@ -20,6 +20,9 @@ export class Engine {
   beat = { t: 0, step: -1 }; // último golpe de bombo (performance.now) para que los visuales latan
   onStep: (s: number) => void = () => {};
   stepTaps = new Set<(s: number, frame: number) => void>();
+  specTaps = new Set<(m: { id: string; pre: Float32Array; post: Float32Array }) => void>(); // espectro de una pista (EQ del instrumento)
+  /** empieza (id) o termina (null) de analizar el espectro de una pista: solo con su EQ abierto */
+  tap(id: string | null) { this.node?.port.postMessage({ type: 'tap', id }); }
   onMeter: (m: Meter) => void = () => {};
   private pending: Project | null = null;
 
@@ -35,7 +38,7 @@ export class Engine {
       const split = ctx.createChannelSplitter(2); node.connect(split);
       const mk = () => { const a = ctx.createAnalyser(); a.fftSize = 2048; a.smoothingTimeConstant = 0.78; return a; };
       this.aL = mk(); this.aR = mk(); split.connect(this.aL, 0); split.connect(this.aR, 1);
-      node.port.onmessage = (e) => { const m = e.data; if (m.type === 'step') { this.onStep(m.step); this.stepTaps.forEach((f) => f(m.step, m.frame)); } else if (m.type === 'meter') this.onMeter(m); };
+      node.port.onmessage = (e) => { const m = e.data; if (m.type === 'step') { this.onStep(m.step); this.stepTaps.forEach((f) => f(m.step, m.frame)); } else if (m.type === 'meter') this.onMeter(m); else if (m.type === 'spec') this.specTaps.forEach((f) => f(m)); };
       this.node = node;
       await this.loadSamples();
       Object.keys(this.sampleData).filter((k) => k.startsWith('vox:')).forEach((k) => this.send(k, this.sampleData[k])); // voces cargadas antes de arrancar el audio

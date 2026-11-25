@@ -1717,6 +1717,23 @@ const EQ_PRESETS: [string, (b: EqBand[]) => void][] = [
 function EqEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
   const bands = t.eq ?? EQ_DEF, [sel, setSel] = useState(1), ref = useRef<SVGSVGElement>(null), drag = useRef(-1), raf = useRef(0), pend = useRef<EqBand | null>(null);
   const W = 320, H = 150, GMAX = 18;
+  // espectro en vivo de este instrumento detrás de la curva: "antes" del EQ (línea blanca) y "después" (relleno de color); se dibuja directo en el DOM, sin estado por cuadro
+  const [showSpec, setShowSpec] = useState(() => lsGet('loop.eqSpec') !== '0'), prePath = useRef<SVGPathElement>(null), postPath = useRef<SVGPathElement>(null), idleTxt = useRef<SVGTextElement>(null);
+  useEffect(() => {
+    if (!showSpec) return;
+    const NB = 96, tgPre = new Float32Array(NB).fill(-110), tgPost = new Float32Array(NB).fill(-110), dPre = new Float32Array(NB).fill(-110), dPost = new Float32Array(NB).fill(-110); let last = 0, raf2 = 0;
+    const off = engine.specTaps; const on = (m: { id: string; pre: Float32Array; post: Float32Array }) => { if (m.id !== t.id) return; tgPre.set(m.pre); tgPost.set(m.post); let mx = -110; for (let j = 0; j < NB; j++) if (m.post[j] > mx) mx = m.post[j]; if (mx > -95) last = performance.now(); }; // solo cuenta si hay sonido (parado llegan ceros)
+    off.add(on); engine.tap(t.id);
+    const yOf = (db: number) => H - Math.max(0, Math.min(1, (db + 96) / 84)) * (H - 16) - 2; // -96 dB abajo … -12 dB arriba
+    const line = (a: Float32Array, close: boolean) => { let d = ''; for (let j = 0; j < NB; j++) d += (j ? 'L' : 'M') + (((j + 0.5) / NB) * W).toFixed(1) + ' ' + yOf(a[j]).toFixed(1); return close ? d + ` L${W} ${H} L0 ${H} Z` : d; };
+    const loop = (now: number) => {
+      raf2 = requestAnimationFrame(loop); const alive = now - last < 700;
+      for (let j = 0; j < NB; j++) { const a = alive ? tgPre[j] : -110, b = alive ? tgPost[j] : -110; dPre[j] += (a - dPre[j]) * (a > dPre[j] ? 0.5 : 0.12); dPost[j] += (b - dPost[j]) * (b > dPost[j] ? 0.5 : 0.12); }
+      postPath.current?.setAttribute('d', line(dPost, true)); prePath.current?.setAttribute('d', line(dPre, false)); idleTxt.current?.setAttribute('opacity', alive ? '0' : '1');
+    };
+    raf2 = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf2); off.delete(on); engine.tap(null); };
+  }, [t.id, showSpec]);
   const fx = (f: number) => (Math.log(f / 20) / Math.log(1000)) * W, gy = (g: number) => H / 2 - (g / GMAX) * (H / 2 - 8);
   const curve = useMemo(() => { const cs = bands.map((b, k) => (Math.abs(b.g) > 0.05 ? bqCoef(eqType(k), b.f, k === 0 || k === 3 ? 0.707 : b.q, b.g) : null)); let d = ''; for (let i = 0; i <= 120; i++) { const f = 20 * Math.pow(1000, i / 120); let db = 0; cs.forEach((c) => { if (c) db += bqDb(c, f); }); d += (i ? 'L' : 'M') + ((i / 120) * W).toFixed(1) + ' ' + gy(Math.max(-GMAX, Math.min(GMAX, db))).toFixed(1); } return d; }, [bands]);
   const setBand = (k: number, b: Partial<EqBand>) => upT(t.id, (x) => { const e = (x.eq ?? EQ_DEF).map((y) => ({ ...y })); e[k] = { ...e[k], ...b }; x.eq = e; });
@@ -1731,6 +1748,7 @@ function EqEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
     <svg ref={ref} class="eqg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Curva del ecualizador"
       onPointerDown={(e) => { const r = at(e as any); let best = 0, bd = 1e9; bands.forEach((x, k) => { const d = Math.hypot(fx(x.f) - r.x, gy(x.g) - r.y); if (d < bd) { bd = d; best = k; } }); drag.current = best; setSel(best); (e.currentTarget as any).setPointerCapture(e.pointerId); move(e as any); }}
       onPointerMove={(e) => move(e as any)} onPointerUp={() => { drag.current = -1; }} onPointerCancel={() => { drag.current = -1; }}>
+      {showSpec && <><path ref={postPath} fill={t.color} fill-opacity="0.26" stroke={t.color} stroke-opacity="0.55" stroke-width="1" vector-effect="non-scaling-stroke" /><path ref={prePath} fill="none" stroke="#e8e8e8" stroke-opacity="0.55" stroke-width="1" stroke-dasharray="3 2" vector-effect="non-scaling-stroke" /><text ref={idleTxt} x={W / 2} y={H / 2 + 22} text-anchor="middle" class="eq-lab" opacity="1">Dale play para ver el espectro</text></>}
       {[100, 1000, 10000].map((f) => <line x1={fx(f)} x2={fx(f)} y1="0" y2={H} class="eq-grid" />)}
       {[-12, -6, 6, 12].map((g) => <line x1="0" x2={W} y1={gy(g)} y2={gy(g)} class="eq-grid" />)}
       <line x1="0" x2={W} y1={gy(0)} y2={gy(0)} class="eq-zero" />
@@ -1739,6 +1757,7 @@ function EqEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
       <path d={curve} fill="none" stroke={t.color} stroke-width="2" vector-effect="non-scaling-stroke" />
       {bands.map((x, k) => <circle cx={fx(x.f)} cy={gy(x.g)} r={sel === k ? 9 : 7} fill={EQ_COL[k]} fill-opacity={Math.abs(x.g) > 0.05 ? 1 : 0.45} stroke={sel === k ? '#fff' : '#111'} stroke-width="2" vector-effect="non-scaling-stroke" />)}
     </svg>
+    <div class="chips" style={{ marginTop: '8px' }}><button class={'chip' + (showSpec ? ' on' : '')} onClick={() => { const v = !showSpec; setShowSpec(v); lsSet('loop.eqSpec', v ? '1' : '0'); }}>Espectro en vivo: {showSpec ? 'sí' : 'no'}</button>{showSpec && <span class="hint-s" style={{ alignSelf: 'center' }}>Relleno = sonido con el EQ · línea punteada = antes del EQ</span>}</div>
     <div class="seg" style={{ marginTop: '8px' }}>{EQ_NAMES.map((n, k) => <button class={sel === k ? 'on' : ''} style={sel === k ? { background: EQ_COL[k] } : undefined} onClick={() => setSel(k)}>{n}</button>)}</div>
     <div class="knobs" style={{ marginTop: '6px' }}>
       <Knob label="Frecuencia" value={b.f} min={EQ_RANGE[sel][0]} max={EQ_RANGE[sel][1]} log def={EQ_DEF[sel].f} color={EQ_COL[sel]} fmt={fmtF} onChange={(v) => setBand(sel, { f: Math.round(v) })} />
