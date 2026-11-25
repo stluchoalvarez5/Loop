@@ -704,3 +704,24 @@ img,svg{-webkit-user-drag:none}
 .lc.q{outline:2px solid #fff;outline-offset:-2px;animation:lcb .5s ease-in-out infinite alternate}
 .lc.stopc{background:#2a2a2a;color:#777}.lc.stopc.on{background:#5a2d2a;color:#e5655b}
 @keyframes lcb{from{opacity:1}to{opacity:.55}}
+
+/* ---- ayuda de cada panel ("?") y guía de Loop ---- */
+.hbox{display:none}
+.help .hbox{display:block;background:#1f1f1f;border-left:2px solid var(--hot);padding:10px 12px;border-radius:2px;margin:0 0 10px;color:#d0d0d0;font-size:13px;line-height:1.5}
+.hbox p,.gt-b p{margin:0 0 8px}
+.hb-lead{color:#fff}
+.hbox ol,.gt-b ol{margin:0 0 8px;padding-left:20px}
+.hbox li,.gt-b li{margin:0 0 5px}
+.hb-tip{color:#c9c9c9;font-size:12.5px}
+.hbox .lnk{margin-top:2px}
+.sheet.guide{max-height:90vh}
+.gsearch{width:100%;box-sizing:border-box;margin-bottom:10px;padding:10px 12px;border-radius:3px;border:1px solid var(--bb,#444);background:#1b1b1b;color:#fff;font-size:15px}
+.gsecs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.gtopic{border:1px solid #333;border-radius:3px;margin-bottom:8px;background:#232323}
+.gt-h{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;color:#fff;padding:12px;font-size:14.5px}
+.gt-h b{flex:1;font-weight:600}
+.gt-h i{font-style:normal;font-size:11px;color:var(--mut)}
+.gchev{width:14px;color:var(--mut);font-size:13px}
+.gt-lead{margin:0;padding:0 12px 12px 38px;color:var(--mut);font-size:12.5px;line-height:1.45}
+.gt-b{padding:0 14px 8px 14px;font-size:13.5px;line-height:1.55;color:#d6d6d6}
+.gtour{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid #333}

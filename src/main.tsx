@@ -12,6 +12,7 @@ import './style.css';
 import { Engine } from './engine/engine';
 import { Stage, type StageMode } from './stage';
 import { saveVox, loadVox, deleteVox, voxKeys, cleanVox, cleanSample, detectTempo, startRecording, peaks, finishLoopVox } from './vox';
+import { TOPICS, SECS, topicById, topicForPanel, type Sec, type Topic } from './guide';
 import { trackOpen, trackInstall, statsOff, setStats } from './stats';
 import { renderAudio, renderArrangement, defaultArrangement, wav, mp3, abletonZip, baseName, takeWav, takeMp3, type Take } from './engine/export';
 import { migrate, listProjects, loadProject, saveProject, deleteProject, renameProject, duplicate, currentId, newId, titleOf, exportFile, importFile, type Meta } from './store';
@@ -248,6 +249,18 @@ const trackIcon = (t: Track) => t.type === 'sample' ? Ic.wave : t.type === 'fx' 
    Recuerda si lo dejaste abierto (loop.open.<id>). Las explicaciones (.hint) solo se ven al tocar "?". */
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* */ } };
+/* el manual se abre desde cualquier parte: el botón Guía, el "?" de cada panel ("Abrir en la guía") y el botón de arriba */
+const guideApi = { open: (_topic?: string, _sec?: Sec) => {} };
+/* ayuda de un panel, hoja o pestaña del editor: se ve al tocar su "?" (nunca queda vacía) */
+function HelpBox({ topic }: { topic?: Topic }) {
+  if (!topic) return null;
+  return <div class="hbox">
+    <p class="hb-lead">{topic.lead}</p>
+    {topic.steps && <ol>{topic.steps.map((x) => <li>{x}</li>)}</ol>}
+    {topic.tips && topic.tips.map((x) => <p class="hb-tip">💡 {x}</p>)}
+    <button class="lnk" onClick={() => guideApi.open(topic.id, topic.sec)}>Abrir en la guía</button>
+  </div>;
+}
 function Panel({ id, title, icon, def = true, lock, right, cls = '', children }: { id: string; title: string; icon?: any; def?: boolean; lock?: boolean; right?: any; cls?: string; children: any }) {
   const [open, setOpen] = useState(() => lock || (lsGet('loop.open.' + id) ?? (def ? '1' : '0')) === '1'), [help, setHelp] = useState(false);
   const flip = () => { if (lock) return; const v = !open; setOpen(v); lsSet('loop.open.' + id, v ? '1' : '0'); };
@@ -258,7 +271,7 @@ function Panel({ id, title, icon, def = true, lock, right, cls = '', children }:
         {open && right && <div class="ph-r">{right}</div>}
         {open && <button class={'qm' + (help ? ' on' : '')} onClick={() => setHelp(!help)} aria-label={'Ayuda de ' + title} aria-pressed={help}>?</button>}
       </div>
-      {open && <div class="pb">{children}</div>}
+      {open && <div class="pb"><HelpBox topic={topicForPanel(id)} />{children}</div>}
     </section>
   );
 }
@@ -268,7 +281,7 @@ function Sheet({ title, icon, onClose, children }: { title: string; icon?: any; 
   return <div class="sheet-bg" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
     <div class={'sheet' + (help ? ' help' : '')} role="dialog" aria-modal="true" aria-label={title}>
       <div class="ph"><span class="ph-t">{icon && <span class="pi">{icon}</span>}<h3>{title}</h3></span><button class={'qm' + (help ? ' on' : '')} onClick={() => setHelp(!help)} aria-label="Ayuda">?</button><button class="ib sm" onClick={onClose} aria-label="Cerrar">{Ic.close}</button></div>
-      <div class="sheet-b">{children}</div>
+      <div class="sheet-b"><HelpBox topic={topicForPanel(title)} />{children}</div>
     </div>
   </div>;
 }
@@ -292,6 +305,7 @@ function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }
       </div>
       <div class="dtabs">{tabs.map(([k, l, ic]) => <button class={cur === k ? 'on' : ''} onClick={() => setTab(k)}>{ic}<span>{l}</span></button>)}</div>
       <div class="db">
+        <HelpBox topic={topicById('ed-' + cur)} />
         {cur === 'rit' && <FineEditor t={t} upT={upT} />}
         {cur === 'snd' && (t.type === 'vocal' ? <><VocalEditor p={p} t={t} upT={upT} power={null} onDelete={onDelete} bare /><PitchRow t={t} upT={upT} /></> : <TrackEditor p={p} t={t} upT={upT} up={up} part="snd" adv={adv} />)}
         {cur === 'snd' && <TrackFxPanel t={t} upT={upT} />}
@@ -357,6 +371,8 @@ function App() {
     ls.set('loop.seen.' + g); setGuide(null);
   };
   const goTab = (t: 'scene' | 'pat' | 'mix' | 'master') => { setTab(t); if (!guide && !ls.get('loop.seen.' + t)) { ls.set('loop.seen.' + t); flash('Tocá "Guía" (abajo a la derecha) para ver cómo se usa esta sección.', 3500); } };
+  const [gs, setGs] = useState<{ sec: Sec; topic?: string } | null>(null);
+  guideApi.open = (topic, sec) => { setGs({ sec: sec ?? (topic ? topicById(topic)?.sec : undefined) ?? SEC_OF[tab] ?? 'start', topic }); };
   const [sel, setSel] = useState('arp');
   const [playing, setPlaying] = useState(false);
   const [noAudio, setNoAudio] = useState(false);
@@ -526,6 +542,7 @@ function App() {
         <div class="sp" />
         <button class="tb" disabled={!hist.current.past.length} onClick={undo} aria-label="Deshacer">{Ic.undo}</button>
         <button class="tb" disabled={!hist.current.future.length} onClick={redo} aria-label="Rehacer">{Ic.redo}</button>
+        <button class="tb" onClick={() => guideApi.open()} aria-label="Guía de Loop" title="Guía de Loop">{Icon.help}</button>
         <button class={'tb mode' + (adv ? ' on' : '')} onClick={() => setAdv(!adv)} aria-pressed={adv} title="Muestra u oculta las funciones avanzadas">{adv ? 'Avanzado' : 'Simple'}</button>
       </header>
 
@@ -689,12 +706,13 @@ function App() {
       {loopsOpen && <Sheet title="Mis loops" icon={Ic.folder} onClose={() => setLoopsOpen(false)}><Projects p={p} open={(np) => { openProject(np); }} flash={flash} /></Sheet>}
 
       {guide && <Tutorial key={guide} kind={guide} onClose={closeGuide} />}
+      {gs && <GuideSheet init={gs} onClose={() => setGs(null)} onTour={(k) => { setGs(null); setGuide(k); }} tab={tab} />}
       <nav class="nav">
         <button class={tab === 'scene' ? 'on' : ''} onClick={() => goTab('scene')}>{Icon.scene}Escena</button>
         <button class={tab === 'pat' ? 'on' : ''} onClick={() => goTab('pat')}>{Icon.grid}Patrón</button>
         <button class={tab === 'mix' ? 'on' : ''} onClick={() => goTab('mix')}>{Icon.mix}Mixer</button>
         <button class={tab === 'master' ? 'on' : ''} onClick={() => goTab('master')}>{Icon.master}Master</button>
-        <button class="nav-help" onClick={() => setGuide(tab)} aria-label="Guía de esta sección">{Icon.help}Guía</button>
+        <button class="nav-help" onClick={() => guideApi.open()} aria-label="Guía de Loop">{Icon.help}Guía</button>
       </nav>
     </div>
   );
@@ -1511,6 +1529,42 @@ const TUTS: Record<TutKey, TutStep[]> = {
   ],
 };
 const TUT_NAME: Record<TutKey, string> = { intro: 'Intro', scene: 'Escena', pat: 'Patrón', mix: 'Mixer', master: 'Master' };
+const SEC_OF: Record<string, Sec> = { scene: 'scene', pat: 'pat', mix: 'mix', master: 'master' };
+/* el manual: buscador, secciones y temas que se abren al tocarlos; sale desde el botón Guía, el de arriba o el "Abrir en la guía" de cada ayuda */
+function GuideSheet({ init, onClose, onTour, tab }: { init: { sec: Sec; topic?: string }; onClose: () => void; onTour: (k: TutKey) => void; tab: string }) {
+  const [sec, setSec] = useState<Sec>(init.sec), [q, setQ] = useState(''), [open, setOpen] = useState<string | null>(init.topic ?? null);
+  const norm = (x: string) => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const qq = norm(q.trim());
+  const list = qq ? TOPICS.filter((t) => norm([t.title, t.lead, ...(t.steps ?? []), ...(t.tips ?? [])].join(' ')).includes(qq)) : TOPICS.filter((t) => t.sec === sec);
+  useEffect(() => { if (init.topic) setTimeout(() => document.getElementById('gt-' + init.topic)?.scrollIntoView({ block: 'start' }), 80); }, []);
+  const tourKey = (SEC_OF[tab] ? tab : 'pat') as TutKey;
+  return <div class="sheet-bg" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class="sheet guide" role="dialog" aria-modal="true" aria-label="Guía de Loop">
+      <div class="ph"><span class="ph-t"><span class="pi">{Icon.help}</span><h3>Guía de Loop</h3></span><button class="ib sm" onClick={onClose} aria-label="Cerrar la guía">{Ic.close}</button></div>
+      <div class="sheet-b">
+        <input class="gsearch" type="search" placeholder="Buscar en la guía (por ejemplo: reverb, escenas, exportar)" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} aria-label="Buscar en la guía" />
+        {!qq && <div class="gsecs">{SECS.map(([k, l]) => <button class={'chip' + (sec === k ? ' on' : '')} onClick={() => { setSec(k); setOpen(null); }}>{l}</button>)}</div>}
+        {qq && <div class="note">{list.length ? list.length + ' resultado' + (list.length > 1 ? 's' : '') : 'No encontré nada. Probá con otra palabra.'}</div>}
+        {list.map((t) => <div class={'gtopic' + (open === t.id ? ' open' : '')} id={'gt-' + t.id}>
+          <button class="gt-h" aria-expanded={open === t.id} onClick={() => setOpen(open === t.id ? null : t.id)}><span class="gchev" aria-hidden="true">{open === t.id ? '▾' : '▸'}</span><b>{t.title}</b>{qq && <i>{SECS.find((s) => s[0] === t.sec)?.[1]}</i>}</button>
+          {open === t.id && <div class="gt-b"><HelpBody t={t} /></div>}
+          {open !== t.id && <p class="gt-lead">{t.lead}</p>}
+        </div>)}
+        <div class="gtour">
+          <button class="btn" onClick={() => onTour('intro')}>Recorrido de bienvenida</button>
+          <button class="btn" onClick={() => onTour(tourKey)}>Recorrido de {TUT_NAME[tourKey]}</button>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+function HelpBody({ t }: { t: Topic }) {
+  return <>
+    <p class="hb-lead">{t.lead}</p>
+    {t.steps && <ol>{t.steps.map((x) => <li>{x}</li>)}</ol>}
+    {t.tips && t.tips.map((x) => <p class="hb-tip">💡 {x}</p>)}
+  </>;
+}
 function Tutorial({ kind, onClose }: { kind: TutKey; onClose: (never: boolean) => void }) {
   const steps = TUTS[kind], [i, setI] = useState(0), [never, setNever] = useState(false), st = steps[i], last = i === steps.length - 1;
   return (
