@@ -71,7 +71,7 @@ export function interpret(text: string): Interp {
   if (key) { let pc = NOTES[key[1]]; const acc = key[3]; if (acc === '#' || acc === 'sostenido') pc = (pc + 1) % 12; else if (acc === 'b' || acc === 'bemol') pc = (pc + 11) % 12; I.tonic = pc; const m = key[5] ?? key[4]; if (m) I.mode = /^(m|min|minor|menor)$/.test(m.trim()) ? 'min' : 'maj'; }
   for (const [re, snd, label] of BASS_WORDS) if (re.test(t)) { I.bass = snd; I.notes.push('bajo ' + label); if (label === 'acid') I.arpAcid = true; break; }
   if (/sin (bateria|ritmo|percusion)/.test(t)) I.drop.push('kick', 'clap', 'hat', 'open', 'perc');
-  if (/sin bajo/.test(t)) I.drop.push('bass'); if (/sin melodia/.test(t)) I.drop.push('melody'); if (/sin arpegio/.test(t)) I.drop.push('arp'); if (/sin (acordes|pad)/.test(t)) I.drop.push('chords');
+  if (/sin bajo/.test(t)) I.drop.push('bass'); if (/sin arpegio/.test(t)) I.drop.push('arp'); if (/sin (acordes|pad)/.test(t)) I.drop.push('chords');
   const dn: Record<string, string> = { kick: 'batería', clap: '', hat: '', open: '', perc: '', bass: 'bajo', melody: 'melodía', arp: 'arpegio', chords: 'acordes' };
   if (/solo (bateria|ritmo|percusion)/.test(t)) I.drop.push('bass', 'arp', 'chords', 'melody');
   if (/sin voz|instrumental/.test(t)) { /* sin voz: no hay pista de voz por defecto */ }
@@ -94,7 +94,7 @@ export function projectFromPrompt(text: string, variant = 0): { p: Project; info
   // estilo de otro género: bajo, acordes, arpegio y melodía toman la forma y el sonido de ese estilo; la batería, el tempo y el kit siguen siendo del género pedido
   if (I.style && GENRES[I.style]) {
     const q = projectFromName(clean, variant, I.style);
-    for (const id of ['bass', 'chords', 'arp', 'melody']) { const a = p.tracks.find((t) => t.id === id), b = q.tracks.find((t) => t.id === id); if (a && b) Object.assign(a, { steps: b.steps, bassLine: b.bassLine, bassLen: b.bassLen, sound: b.sound, synth: b.synth, arp: b.arp, chordMode: b.chordMode, chordLen: b.chordLen, fx: b.fx, vol: b.vol, duck: b.duck, rev: 0, dly: 0 }); }
+    for (const id of ['bass', 'chords', 'arp']) { const a = p.tracks.find((t) => t.id === id), b = q.tracks.find((t) => t.id === id); if (a && b) Object.assign(a, { steps: b.steps, bassLine: b.bassLine, bassLen: b.bassLen, sound: b.sound, synth: b.synth, arp: b.arp, chordMode: b.chordMode, chordLen: b.chordLen, fx: b.fx, vol: b.vol, duck: b.duck, rev: 0, dly: 0 }); }
     if (!G.harm.mode && GENRES[I.style].harm.mode) I.mode ??= GENRES[I.style].harm.mode; // el estilo trae su modo habitual (New Order: menor)
   }
   const mode2: 'maj' | 'min' = I.mode ?? mode, tpl2 = G.harm.tpl?.[mode2] ?? GENRES[I.style ?? I.genre].harm.tpl?.[mode2] ?? PROGS[mode2].map(([, d]) => d);
@@ -106,6 +106,8 @@ export function projectFromPrompt(text: string, variant = 0): { p: Project; info
   // bajo pedido y arpegio acid
   const bass = p.tracks.find((t) => t.id === 'bass'); if (bass && I.bass) setSound(bass, I.bass);
   if (I.arpAcid) { const arp = p.tracks.find((t) => t.id === 'arp'); if (arp?.arp) { arp.arp = { ...arp.arp, mode: 'acid', pat: undefined, rate: '16' }; setSound(arp, 'acid303'); } }
+  // sin melodía: los loops generados traen batería, bajo, acordes y arpegio (pedido de Luc); la pista de melodía se saca
+  p.tracks = p.tracks.filter((t) => t.id !== 'melody');
   // pistas que se piden sin
   for (const id of I.drop) { const t = p.tracks.find((x) => x.id === id); if (t) t.mute = true; }
   p.title = clean.length > 30 ? clean.slice(0, 29) + '…' : clean; p.edited = false; p.seed = r();

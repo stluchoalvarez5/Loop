@@ -10,7 +10,7 @@ import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/600.css';
 import './style.css';
 import { Engine } from './engine/engine';
-import { Stage, type StageMode } from './stage';
+import { Stage } from './stage';
 import { saveVox, loadVox, deleteVox, voxKeys, cleanVox, cleanSample, detectTempo, startRecording, peaks, finishLoopVox } from './vox';
 import { fitDrum } from './drumfit';
 import { projectFromPrompt } from './promptgen';
@@ -355,7 +355,6 @@ function App() {
   const [adv, setAdvS] = useState(() => { try { return localStorage.getItem('loop.adv') === '1'; } catch { return false; } });
   const setAdv = (v: boolean) => { setAdvS(v); try { localStorage.setItem('loop.adv', v ? '1' : '0'); } catch { /* */ } };
   const [tab, setTab] = useState<'scene' | 'pat' | 'mix' | 'master'>('scene');
-  const [vis, setVis] = useState<StageMode>('wave');
   const [order, setOrder] = useState(false);
   // lanzador de clips: vista de la grilla de escenas por pista (cada pista toca la escena que se toque, en el próximo compás o al terminar la vuelta)
   const [view, setViewS] = useState<'steps' | 'launch'>(() => (lsGet('loop.view') === 'launch' ? 'launch' : 'steps'));
@@ -565,8 +564,7 @@ function App() {
 
       {tab === 'scene' && <div class="page scene">
         <div class="a-stage">
-          <Stage engine={engine} mode={vis} bpm={p.bpm} playing={playing} onTap={toggle} hud={{ name: titleOf(p), key: p.key ?? '', genre: GENRES[p.genre]?.name ?? '' }} />
-          <div class="seg2 vis-seg">{([['wave', 'Onda'], ['spectrum', 'Espectro'], ['circle', 'Círculo']] as const).map(([k, l]) => <button class={vis === k ? 'on' : ''} onClick={() => setVis(k)}>{l}</button>)}</div>
+          <Stage engine={engine} bpm={p.bpm} playing={playing} onTap={toggle} hud={{ name: titleOf(p), key: p.key ?? '', genre: GENRES[p.genre]?.name ?? '' }} />
         </div>
         <Panel id="name" title="Armar" icon={Ic.spark} cls="a-name">
           <Scratch p={p} up={up} create={fromScratch} fromWord={fromWord} />
@@ -1540,7 +1538,7 @@ const TUTS: Record<TutKey, TutStep[]> = {
     { title: 'Cómo se mueven los controles', body: 'Para mover una perilla o un fader, mantené el dedo quieto un instante hasta que se marque y después arrastrá; si deslizás de una, solo se mueve la pantalla. Doble toque vuelve al valor inicial. Cada sección viene en paneles que se abren y cierran tocando el título, y el "?" de cada panel muestra su explicación. Arriba: la carpeta abre Mis loops, las flechas deshacen y rehacen, y "Simple / Avanzado" muestra u oculta las funciones más técnicas.', art: artBars([R, Y, G], [0.7, 0.4, 0.55, 0.3, 0.8]) },
   ],
   scene: [
-    { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. Con Onda, Espectro y Círculo cambiás el visual.', art: artWave },
+    { title: 'El escenario', body: 'Tocalo para que suene o para pararlo. Arriba ves el nombre y el tempo; abajo, el género, la tonalidad y los 16 pasos del compás. El dibujo es un túnel de anillos en 3D que late con el sonido.', art: artWave },
     { title: 'Escenas', body: 'Además de A–D podés sumar hasta 8 escenas con el botón + (al lado de las letras; el − saca la última si está vacía). El botón de copiar (junto al redoble) copia la escena abierta sobre otra letra, o trae a la escena abierta el contenido de otra: sirve para armar variaciones a partir de una escena o repetir una parte; lo que había en el destino se reemplaza (se puede deshacer). Cada escena puede durar 1, 2, 3 o 4 compases: elegilo en "Compases", al lado de las letras A–D. La escena repite solo esos compases (los demás quedan guardados, por si la alargás después), el redoble cae en su último compás y la Cadena y el tema exportado respetan cada duración. Las letras A, B, C y D debajo del play son cuatro versiones del loop para armar un tema: tocá B y arranca como copia de la actual; cambiale golpes o notas, o apagá instrumentos para un break. Si está sonando, cambia justo al terminar la vuelta. El botón de las barritas mete un redoble al final de cada vuelta, y en modo Avanzado la cadena las pasa solas.', art: artChips(['A', 'B', 'C', 'D'], 1) },
     { title: 'Tonalidad, acordes y loop nuevo', body: 'Lo que cambiás en Armar (tonalidad, acordes y color: tríadas, séptimas o novenas) suena al instante en el loop abierto, y el bajo, el arpegio y los acordes lo siguen solos. "Crear loop nuevo" arma otro con los sonidos, el kit y la mezcla del género que elijas; si el anterior estaba editado, queda guardado en Mis loops.', art: artChips(['Otra versión', 'Trance', 'Techno', 'House'], 2) },
     { title: 'Generar desde una descripción', body: 'En Armar, "Generar desde una descripción": escribís cómo lo imaginás (por ejemplo "house estilo New Order, oscuro y bailable") y tocás Generar. La app entiende el género, artistas y estilos, el clima (oscuro, alegre, épico…), el tempo ("128 bpm"), la tonalidad ("en La menor") y qué sacar ("sin batería"), y arma el loop; abajo te cuenta qué entendió. No es IA de verdad, pero es gratis y anda sin conexión. "Otra versión" cambia los detalles y "Sorprendeme" prueba un ejemplo.', art: artName },
@@ -1881,7 +1879,7 @@ function Scratch({ p, up, create, fromWord }: { p: Project; up: (fn: (d: Project
     </div>
     <div class="chips" style={{ marginTop: '6px' }}>{DESC_EXAMPLES.slice(0, 6).map((x) => <button class="chip mini-chip" onClick={() => { setWord(x); setWv(0); }}>{x}</button>)}</div>
     {sum && <div class="note">Entendí: {sum}</div>}
-    <div class="hint-s">Escribí cómo lo imaginás: género (house, techno, trance, deep, disco, chill…), un artista o estilo ("estilo New Order", "tipo Daft Punk"), el clima (oscuro, alegre, épico, relajado…), el tempo ("128 bpm"), la tonalidad ("en La menor") o qué sacar ("sin batería"). No es IA de verdad: interpreta esas palabras y arma el loop con las recetas de cada género, gratis y sin conexión. La misma descripción da siempre el mismo loop; "Otra versión" cambia los detalles. Si el loop abierto no tiene cambios tuyos se reemplaza; si no, el anterior queda guardado en Mis loops.</div>
+    <div class="hint-s">Escribí cómo lo imaginás: género (house, techno, trance, deep, disco, chill…), un artista o estilo ("estilo New Order", "tipo Daft Punk"), el clima (oscuro, alegre, épico, relajado…), el tempo ("128 bpm"), la tonalidad ("en La menor") o qué sacar ("sin batería"). El loop sale con batería, bajo, acordes y arpegio, sin melodía. No es IA de verdad: interpreta esas palabras y arma el loop con las recetas de cada género, gratis y sin conexión. La misma descripción da siempre el mismo loop; "Otra versión" cambia los detalles. Si el loop abierto no tiene cambios tuyos se reemplaza; si no, el anterior queda guardado en Mis loops.</div>
     <div class="sub">Loop nuevo</div>
     <input class="txt" value={title} maxLength={32} placeholder="Nombre (opcional)" aria-label="Nombre del loop nuevo" onInput={(e) => setTitle((e.target as HTMLInputElement).value)} />
     <div class="gen-row" style={{ marginTop: '8px' }}>
