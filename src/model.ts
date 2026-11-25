@@ -619,7 +619,7 @@ const R = (on: number[], acc: number[] = []) => { const s = Array(16).fill(0); o
 
 const COLORS: Record<string, string> = { kick: '#e5655b', clap: '#e98a5f', hat: '#e9c46a', open: '#d6cf7e', perc: '#a7c973', bass: '#6fbf86', arp: '#e3b04b', chords: '#8fc7a0' };
 const mkTrack = (id: string, name: string, type: TrackType, sound: string, extra: Partial<Track> = {}): Track => ({
-  id, name, color: COLORS[id], type, steps: Array(16).fill(0), sound, pitch: 0, decay: 1, vol: 0.8, pan: 0, mute: false, solo: false, rev: 0, dly: 0, duck: 0, ...extra,
+  id, name, color: COLORS[id], type, steps: Array(16).fill(0), sound, pitch: 0, decay: 1, vol: 0.8, pan: 0, mute: false, solo: false, duck: 0, ...extra, rev: 0, dly: 0, // todo instrumento nuevo arranca sin reverb ni delay (pedido de Luc)
 });
 
 const PALETTE = ['#e5655b', '#e98a5f', '#e9c46a', '#d6cf7e', '#a7c973', '#6fbf86', '#e3b04b', '#8fc7a0', '#c97a6e', '#b8d39a', '#f0d99a', '#5fa877'];
@@ -685,7 +685,7 @@ export function applyGenre(p: Project, g: string, variant = 0) {
   const kick = T('kick'); if (kick) { kick.pitch = G.kick.pitch; kick.decay = G.kick.decay; }
   const clap = T('clap'); if (clap) { clap.sound = pick(r, G.clap); clap.name = DRUM_SOUNDS[clap.sound] ?? 'Clap'; }
   const perc = T('perc'); if (perc) { perc.sound = pick(r, G.perc); perc.name = DRUM_SOUNDS[perc.sound] ?? 'Percu'; }
-  const mix = (t: Track | undefined, m: { vol: number; rev: number; dly: number; duck: number }) => { if (t) { t.vol = m.vol; t.rev = m.rev; t.dly = m.dly; t.duck = m.duck; t.mute = false; t.synth = undefined; } };
+  const mix = (t: Track | undefined, m: { vol: number; rev: number; dly: number; duck: number }) => { if (t) { t.vol = m.vol; t.rev = 0; t.dly = 0; t.duck = m.duck; t.mute = false; t.synth = undefined; } };
   // bajo
   const bass = T('bass');
   if (bass) { const b = pick(r, G.bass), pb = parseBass(b.line); bass.steps = pb.steps; bass.bassLine = pb.line; bass.bassLen = b.l; bass.sound = pick(r, G.bassSound); mix(bass, G.mix.bass); }
@@ -709,7 +709,7 @@ export function applyGenreSound(p: Project, g: string) {
   const r = seeded('snd:' + g), T = (id: string) => p.tracks.find((t) => t.id === id);
   p.kit = pick(r, G.kit); p.fx = { ...G.fx, rv: p.fx?.rv, dl: p.fx?.dl }; p.tracks.forEach((t) => { t.kit = undefined; });
   const kick = T('kick'); if (kick) { kick.pitch = G.kick.pitch; kick.decay = G.kick.decay; }
-  const set = (t: Track | undefined, sound: string, m: { vol: number; rev: number; dly: number; duck: number }) => { if (!t) return; t.vol = m.vol; t.rev = m.rev; t.dly = m.dly; t.duck = m.duck; if (!t.synth?.pro) { t.sound = sound; t.synth = undefined; } };
+  const set = (t: Track | undefined, sound: string, m: { vol: number; rev: number; dly: number; duck: number }) => { if (!t) return; t.vol = m.vol; t.rev = 0; t.dly = 0; t.duck = m.duck; if (!t.synth?.pro) { t.sound = sound; t.synth = undefined; } };
   set(T('bass'), pick(r, G.bassSound), G.mix.bass); set(T('chords'), pick(r, G.chordSound), G.mix.chords); set(T('arp'), pick(r, G.arpSound), G.mix.arp); set(T('melody'), pick(r, G.mel.sound), G.mix.melody);
   p.tracks.forEach((t) => { if (['kick', 'clap', 'hat', 'open', 'perc', 'bass', 'arp', 'chords', 'melody'].includes(t.id)) t.fx = G.ins[t.id] ? { ...G.ins[t.id] } : undefined; });
 }
