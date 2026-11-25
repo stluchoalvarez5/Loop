@@ -585,7 +585,7 @@ class LoopEngine extends AudioWorkletProcessor {
         if (t.once && this.done && o && (sceneChanged || (o.mute && !t.mute) || (o.clip || '') !== (t.clip || ''))) delete this.done[t.id];
         const rvx = t.rvx ? (o && o.rv ? o.rv : new RevFx(this.sr)) : null, dlx = t.dlx ? (o && o.dl ? o.dl : new DlyFx(this.sr)) : null; // reverb / delay propios de la pista (se reservan acá, nunca en process)
         if (rvx) rvx.setP(t.rvx); if (dlx) dlx.setP(t.dlx, m.project.bpm);
-        const nt = { ...t, rv: rvx, rvRet: t.rvx ? t.rvx.ret : 0, dl: dlx, dlRet: t.dlx ? t.dlx.ret : 0, voices: o ? o.voices : [], vi: o ? o.vi : 0, last: o ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, vph: o ? o.vph : 0, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
+        const nt = { ...t, rv: rvx, rvRet: t.rvx ? t.rvx.ret : 0, dl: dlx, dlRet: t.dlx ? t.dlx.ret : 0, voices: o && o.kind === t.kind ? o.voices : [], vi: o && o.kind === t.kind ? o.vi : 0, last: o && o.kind === t.kind ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, vph: o ? o.vph : 0, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
         // inserto por pista: saturación, filtros pasa altos / pasa bajos y chorus (los buffers se reservan acá, nunca en process)
         const fx = t.fx || {};
         if (!nt.ins) nt.ins = { hpL: new Biquad(), hpR: new Biquad(), lpL: new Biquad(), lpR: new Biquad(), cb: null, ci: 0, cph: 0, ap: null, pph: 0, pfl: 0, pfr: 0, chL: 0, chR: 0, cn: 0 };
