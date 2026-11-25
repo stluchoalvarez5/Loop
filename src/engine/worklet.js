@@ -665,7 +665,7 @@ class LoopEngine extends AudioWorkletProcessor {
       for (const x of t.voices) if (x.on && x.stage < 2) { x.len = Math.min(x.len, x.t + offset); if (x.stage === 0) x.stage = 2; }
     }
     // grupo de corte (hat cerrado corta al abierto): un golpe apaga con un fundido corto lo que suena de las pistas del mismo grupo
-    if (t.cg) for (const x of this.tracks) if (x.cg === t.cg) for (const v0 of x.voices) if (v0.on) fastRelease(v0, this.sr);
+    if (t.cg && !t.cgq && !t.mute && (!this.anySolo || t.solo)) { const bid = String(t.id).split(':')[0]; for (const x of this.tracks) if (x.cg === t.cg && String(x.id).split(':')[0] !== bid) for (const v0 of x.voices) if (v0.on) fastRelease(v0, this.sr); } // el cerrado corta al abierto, pero NO al revés (`cgq`: el abierto no corta a nadie); una pista muteada no corta; ni la propia cola ni la de su capa
     // la voz tiene que ser del tipo de la pista: sampler, sinte clásico o sinte pro
     const fxv = t.kind === 'fx', dsv = t.kind === 'dsyn', pro = !fxv && !dsv && t.kind !== 'sample' && !!(t.synth && t.synth.pro), mk = () => (fxv ? new FxVoice() : dsv ? new DrumVoice() : t.kind === 'sample' ? new SampleVoice() : pro ? new ProVoice() : new SynthVoice());
     let v = t.voices.find((x) => !x.on && !!x.pro === pro);

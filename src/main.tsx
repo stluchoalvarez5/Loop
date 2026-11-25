@@ -1044,6 +1044,43 @@ async function matchSample(key: string, sound: string, id: string, upT: (id: str
   upT(id, (x) => { if (x.src === 'synth' && x.osk === key) { x.dsyn = r.p; x.osm = mix; } });
   return true;
 }
+/* recorte y estirado del sample de un instrumento de batería (como en los samples propios): se ve la onda, se arrastran el inicio y el final, y "Estirar" cambia la duración sin cambiar el tono */
+function DrumTrim({ p, t, upT }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const key = sampleKey(t.kit && KITS[t.kit] ? t.kit : p.kit, t.sound), d = engine.sampleData[key];
+  const [zoom, setZoom] = useState(1), [vs, setVs] = useState(0), ref = useRef<HTMLDivElement>(null), drag = useRef('');
+  const sec = d ? d.length / engine.sr : 0, a0 = t.cut?.from ?? 0, b0 = t.cut?.to && t.cut.to > a0 ? t.cut.to : 1, minGap = Math.max(0.0002, 0.002 / Math.max(0.02, sec || 1));
+  const wave = useMemo(() => { if (!d) return [] as number[]; const i0 = Math.floor(vs * d.length), i1 = Math.min(d.length, Math.max(i0 + 160, Math.floor((vs + 1 / zoom) * d.length))); return peaks(d.subarray(i0, i1), 160); }, [key, zoom, vs, !!d]);
+  if (!d) return null;
+  const px = (f: number) => (f - vs) * zoom * 100, ms = (f: number) => (sec * f).toFixed(zoom >= 4 ? 3 : 2) + ' s';
+  const setCut = (from: number, to: number) => upT(t.id, (x) => { const f = +Math.max(0, Math.min(1 - minGap, from)).toFixed(5), e = Math.max(f + minGap, Math.min(1, to)); x.cut = f <= 0.00005 && e >= 0.99995 ? undefined : { from: f, to: e >= 0.99995 ? undefined : +e.toFixed(5) }; });
+  const setZ = (nz: number, center?: number) => { nz = Math.max(1, Math.min(256, nz)); const c = center ?? vs + 0.5 / zoom; setZoom(nz); setVs(Math.max(0, Math.min(1 - 1 / nz, c - 0.5 / nz))); };
+  const ptr = (e: PointerEvent, ph: 'down' | 'move' | 'up') => {
+    const el = ref.current; if (!el) return; if (ph === 'up') { drag.current = ''; return; } if (ph === 'move' && !drag.current) return;
+    const r = el.getBoundingClientRect(), f = Math.max(0, Math.min(1, vs + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) / zoom));
+    if (ph === 'down') { el.setPointerCapture(e.pointerId); drag.current = Math.abs(f - a0) <= Math.abs(f - b0) ? 'a' : 'b'; }
+    if (drag.current === 'a') setCut(Math.min(f, b0 - minGap), b0); else setCut(a0, Math.max(f, a0 + minGap));
+  };
+  const nudge = (w: 'a' | 'b', dms: number) => { const dd = dms / 1000 / sec; if (w === 'a') setCut(a0 + dd, b0); else setCut(a0, b0 + dd); };
+  return <>
+    <div class="sub2">Recorte y estirado</div>
+    <div class="swave" style={{ '--c': t.color, touchAction: 'none' } as any} ref={ref} onPointerDown={(e) => ptr(e, 'down')} onPointerMove={(e) => ptr(e, 'move')} onPointerUp={(e) => ptr(e, 'up')} onPointerCancel={() => { drag.current = ''; }}>
+      {wave.map((h) => <i style={{ height: Math.max(3, h * 100) + '%' }} />)}
+      <div class="shade" style={{ left: 0, width: Math.max(0, Math.min(100, px(a0))) + '%' }} /><div class="shade" style={{ left: Math.max(0, Math.min(100, px(b0))) + '%', right: 0 }} />
+      {px(a0) >= -1 && px(a0) <= 101 && <div class="tline" style={{ left: px(a0) + '%' }}><b>{ms(a0)}</b></div>}
+      {px(b0) >= -1 && px(b0) <= 101 && <div class="tline e" style={{ left: px(b0) + '%' }}><b>{ms(b0)}</b></div>}
+    </div>
+    {zoom > 1 && <input class="swpan" type="range" min={0} max={1000} value={Math.round((vs / Math.max(1e-6, 1 - 1 / zoom)) * 1000)} aria-label="Mover la vista de la onda" onInput={(e) => setVs((+(e.target as HTMLInputElement).value / 1000) * (1 - 1 / zoom))} />}
+    <div class="chips" style={{ marginTop: '6px' }}>
+      <button class="chip" onClick={() => { engine.unlock(); engine.preview(t.id, 60); }}>▶ Probar</button>
+      <button class="chip" onClick={() => setZ(zoom / 2)}>Zoom −</button><button class="chip" onClick={() => setZ(zoom * 2)}>Zoom +</button>
+      {zoom > 1 && <button class="chip" onClick={() => setZ(1)}>Ver todo</button>}
+      {(t.cut || t.str) && <button class="chip" onClick={() => { setZ(1); upT(t.id, (x) => { x.cut = undefined; x.str = undefined; }); }}>Sin recorte ni estirado</button>}
+    </div>
+    <div class="nudge">{(['a', 'b'] as const).map((w) => <div class="nr"><span>{w === 'a' ? 'Inicio' : 'Final'}</span>{[-10, -1, 1, 10].map((dd) => <button class="chip" onClick={() => nudge(w, dd)}>{dd > 0 ? '+' : '−'}{Math.abs(dd)} ms</button>)}</div>)}</div>
+    <div class="knobs" style={{ marginTop: '8px' }}><Knob label="Estirar" value={t.str ?? 1} min={0.4} max={2.5} log def={1} color={t.color} fmt={(v) => (Math.abs(v - 1) < 0.03 ? 'normal' : '×' + v.toFixed(2))} onChange={(v) => upT(t.id, (x) => { x.str = Math.abs(v - 1) < 0.03 ? undefined : +v.toFixed(2); })} /></div>
+    <div class="hint-s">Arrastrá las dos líneas para cortar el inicio y el final del golpe (por ejemplo, el final largo de un bombo o un hi-hat). Estirar alarga o acorta el golpe sin cambiar el tono (como el warp de un sample); funciona mejor con cambios chicos. Vale para todas las tomas del sonido.</div>
+  </>;
+}
 function DrumSynthEditor({ t, upT, p }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void; p: Project }) {
   const [fitBusy, setFitBusy] = useState(false), skey = sampleKey(t.kit && KITS[t.kit] ? t.kit : p.kit, t.sound);
   const P: DrumP = { ...DRUM_SYNTHS.k909.p, ...t.dsyn };
@@ -1165,6 +1202,7 @@ function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: 
         <Knob label="Ataque" value={t.att ?? 0} min={-1} max={1} def={0} color={t.color} fmt={(v) => (Math.abs(v) < 0.03 ? 'normal' : v > 0 ? 'marcado' : 'suave')} onChange={(v) => upT(t.id, (x) => { x.att = Math.abs(v) < 0.03 ? undefined : +v.toFixed(2); })} />
         <Knob label="Caída de tono" value={t.pe ?? 0} min={0} max={24} step={1} def={0} color={t.color} fmt={(v) => (v < 0.5 ? 'no' : '+' + Math.round(v) + ' st')} onChange={(v) => upT(t.id, (x) => { x.pe = v < 0.5 ? undefined : v; })} />
       </div>}
+      {t.src !== 'synth' && <DrumTrim p={p} t={t} upT={upT} />}
       <div class="sub2">Capa extra</div>
       <div class="seg">{([[false, 'Sin capa'], [true, 'Con capa']] as const).map(([k, l]) => <button class={!!t.lay?.on === k ? 'on' : ''} onClick={() => upT(t.id, (x) => { x.lay = k ? { vol: 0.7, pitch: 0, sound: x.sound === 'kick' ? 'tomL' : 'clap', ...x.lay, on: true } : x.lay ? { ...x.lay, on: false } : undefined; })}>{l}</button>)}</div>
       {t.lay?.on && <LayerEditor t={t} upT={upT} p={p} />}
