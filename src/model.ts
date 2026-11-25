@@ -513,34 +513,55 @@ export function applyHarmony(p: Project, salt = '') {
    Frase de pregunta y respuesta: compás 1 = motivo (el dibujo de las letras), compás 2 = respuesta con otro ritmo,
    compás 3 = el motivo más agudo, compás 4 = cierre que baja hasta la tónica. Los tiempos fuertes caen en notas del acorde. */
 export function generateMelody(p: Project, salt = ''): Note[] {
+  /* Melodía hipnótica: un motivo corto que se repite y SIGUE a los acordes (se escribe en grados de la escala relativos a cada acorde, así
+     viaja con la armonía), con movimiento por pasos, saltos chicos que se recuperan y cierre en nota de acorde. Nada de notas sueltas al azar. */
   const r = seeded(clean(p.name || 'Loop') + '#mel' + salt);
   const scale = (p.scale && p.scale.length ? p.scale : [...new Set(p.seq.map((m) => ((m % 12) + 12) % 12))]);
   const tonic = p.tonic ?? ((p.seq[0] ?? 60) % 12);
   const st = MEL_STYLES[GENRES[p.genre]?.mel.style ?? 'qa'] ?? MEL_STYLES.qa, LO = st.lo, HI = st.hi, hook = st.form === 'hook';
   const pool: number[] = []; for (let m = LO; m <= HI; m++) if (scale.includes(m % 12)) pool.push(m);
-  const nearestIdx = (m: number) => { let bi = 0; pool.forEach((x, i) => { if (Math.abs(x - m) < Math.abs(pool[bi] - m)) bi = i; }); return bi; };
-  const nearPc = (pc: number, ref: number) => { let best = pool[0], d = 1e9; pool.forEach((x) => { if (x % 12 === pc && Math.abs(x - ref) < d) { d = Math.abs(x - ref); best = x; } }); return best; };
-  let motif = p.seq.slice(0, 6).map((m) => ((m % 12) + 12) % 12);
-  if (new Set(motif).size < 3) { const sc = [...scale].sort((a, b) => ((a - tonic + 12) % 12) - ((b - tonic + 12) % 12)); motif = [...clean(p.name || 'Loop')].slice(0, 6).map((ch, i) => sc[(ch.charCodeAt(0) + i * 2) % sc.length]); }
+  if (pool.length < 5) return [];
+  const clampI = (i: number) => Math.max(0, Math.min(pool.length - 1, i));
+  const ctr = Math.round((LO + HI) / 2) - 1;
+  // posición en la escala de la nota del acorde (fundamental, tercera o quinta) más cercana al centro del registro
+  const anchor = (b: number, want: number) => {
+    const pcs = [...new Set(p.chords[b % 4].midi.map((m) => ((m % 12) + 12) % 12))], pc = pcs[Math.min(want, pcs.length - 1)];
+    let bi = -1, d = 1e9; pool.forEach((x, i) => { if (x % 12 === pc && Math.abs(x - ctr) < d) { d = Math.abs(x - ctr); bi = i; } });
+    if (bi < 0) { pool.forEach((x, i) => { if (Math.abs(x - ctr) < d) { d = Math.abs(x - ctr); bi = i; } }); }
+    return bi;
+  };
   const RH = st.rh, rA = pick(r, RH); let rB = pick(r, RH); if (rB === rA) rB = RH[(RH.indexOf(rA) + 1) % RH.length];
-  const bars = hook ? [rA, rA, rA, pick(r, st.cad)] : [rA, rB, rA, pick(r, st.cad)];
-  const notes: Note[] = []; let prev = Math.round((LO + HI) / 2) + (r() < 0.5 ? 0 : 3);
-  bars.forEach((rh, b) => {
-    const chordPcs = p.chords[b].midi.map((m) => m % 12), offset = hook ? 0 : b === 1 ? 2 : b === 3 ? 1 : 0;
-    rh.forEach(([st, len], k) => {
-      let m: number;
-      if (b === 3 && k === rh.length - 1) m = nearPc(tonic, prev); // cierre en la tónica
-      else {
-        m = nearPc(motif[(k + offset) % motif.length] ?? tonic, prev);
-        if (b === 2 && !hook) m = pool[Math.min(pool.length - 1, nearestIdx(m) + 2)]; // el motivo, una tercera más arriba
-        if (b === 3 && !hook) { const i = nearestIdx(prev); m = pool[Math.max(0, i - 1 - (k % 2))]; } // baja por grados
-        if ((st === 0 || st === 8) && !chordPcs.includes(m % 12)) { const up = pool[Math.min(pool.length - 1, nearestIdx(m) + 1)], dn = pool[Math.max(0, nearestIdx(m) - 1)]; m = chordPcs.includes(up % 12) ? up : chordPcs.includes(dn % 12) ? dn : m; }
-      }
+  const rC = pick(r, st.cad);
+  // motivo: caminata por grados. Empieza en la nota de acorde (0), sube o baja de a un grado (a veces repite), y después de un salto vuelve de a un paso
+  const makeMotif = (n: number) => {
+    const d: number[] = [0]; let cur = 0, last = 0;
+    for (let k = 1; k < n; k++) {
+      let mv: number; const x = r();
+      if (Math.abs(last) >= 2) mv = last > 0 ? -1 : 1;                 // tras un salto, vuelve de a un paso
+      else mv = x < 0.17 ? 0 : x < 0.5 ? 1 : x < 0.83 ? -1 : x < 0.91 ? 2 : -2;
+      if (cur + mv > 4 || cur + mv < -3) mv = -Math.sign(mv) * Math.max(1, Math.abs(mv) - 1);
+      cur += mv; last = mv; d.push(cur);
+    }
+    return d;
+  };
+  const mA = makeMotif(rA.length);
+  const mB = rB.length === rA.length ? mA.map((v, k) => (k >= rA.length - 2 ? v - 1 : v)) : Array.from({ length: rB.length }, (_, k) => mA[k % mA.length] + (k >= rB.length - 2 ? -1 : 0)); // la "respuesta": el mismo dibujo con el final distinto
+  const bars: [[number, number][], number[]][] = hook ? [[rA, mA], [rA, mA], [rA, mA.map((v, k) => (k === rA.length - 1 ? v + 1 : v))], [rC, mA.slice(0, rC.length).map((v, k, ar) => (k === ar.length - 1 ? 0 : v))]]
+    : [[rA, mA], [rB, mB], [rA, mA.map((v, k) => (k >= rA.length - 2 ? v + 1 : v))], [rC, mA.slice(0, rC.length).map((v, k, ar) => (k === ar.length - 1 ? 0 : v))]];
+  const notes: Note[] = []; let prev = ctr;
+  bars.forEach(([rh, deg], b) => {
+    const base = anchor(b, b === 3 ? 0 : b === 1 ? 1 : 0), chordPcs = p.chords[b].midi.map((m) => ((m % 12) + 12) % 12);
+    rh.forEach(([stp, len], k) => {
+      let i = clampI(base + (deg[k] ?? 0)); let m = pool[i];
+      // en los tiempos fuertes cae en una nota del acorde (la vecina de la escala si hace falta)
+      if ((stp === 0 || stp === 8) && !chordPcs.includes(m % 12)) { const up = pool[clampI(i + 1)], dn = pool[clampI(i - 1)]; m = chordPcs.includes(dn % 12) ? dn : chordPcs.includes(up % 12) ? up : m; }
+      if (b === 3 && k === rh.length - 1) m = pool[anchor(b, 0)]; // cierra en la fundamental del último acorde
       if (Math.abs(m - prev) > 7) { const alt = m + (m > prev ? -12 : 12); if (alt >= LO && alt <= HI) m = alt; }
       m = Math.max(LO, Math.min(HI, m));
-      notes.push({ s: b * 16 + st, n: m, l: len }); prev = m;
+      notes.push({ s: b * 16 + stp, n: m, l: len }); prev = m;
     });
   });
+  void tonic;
   return notes;
 }
 
@@ -701,7 +722,12 @@ export function applyGenre(p: Project, g: string, variant = 0) {
   if (ch) { const c = pick(r, G.chords); ch.chordMode = c.mode; ch.steps = c.steps ? parseDrum(c.steps).map((v) => (v ? 1 : 0)) : R([0]); ch.chordLen = c.len; setSound(ch, pick(r, G.chordSound)); mix(ch, G.mix.chords); }
   // arpegio
   const arp = T('arp');
-  if (arp) { const a = pick(r, G.arp); setSound(arp, pick(r, G.arpSound)); arp.arp = { mode: a.mode, rate: a.rate, oct: a.oct, gate: a.gate ? parseGate(a.gate) : Array(16).fill(true) }; mix(arp, G.mix.arp);
+  if (arp) { const a = pick(r, G.arp); setSound(arp, pick(r, G.arpSound));
+    // los modos viejos (name, mirror, up…) tocaban las letras del nombre sin seguir los acordes: ahora arpegian el acorde de cada compás con un patrón fijo (hipnótico)
+    const LEG: Record<string, ArpPat> = { name: 'up', mirror: 'updown', up: 'up', down: 'down', pp: 'updown' };
+    arp.arp = { mode: a.mode, rate: a.rate, oct: a.oct, gate: a.gate ? parseGate(a.gate) : Array(16).fill(true) };
+    if (LEG[a.mode]) { arp.arp.pat = a.mode === 'name' && r() < 0.5 ? 'thumb' : LEG[a.mode]; arp.arp.len = 0.8; arp.arp.reg = 0; }
+    mix(arp, G.mix.arp);
     if (a.mode === 'acid') arp.arp.gate = acidPattern(p).gate; }
   // melodía
   const mel = T('melody'); if (mel) { setSound(mel, pick(r, G.mel.sound)); mix(mel, G.mix.melody); }
