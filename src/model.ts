@@ -582,6 +582,9 @@ export const SYNTHS: Record<string, { label: string; for: TrackType[]; p: Synth 
   acid303: { label: 'Acid 303', for: ['arp', 'bass'], p: S({ cutoff: 230, reso: 0.9, envAmt: 3, fdecay: 0.14, attack: 0.002, decay: 0.3, sustain: 0.6, release: 0.03, gain: 0.4, octave: -1 }) },
   technoSub: { label: 'Sub techno', for: ['bass'], p: S({ wave: 'tri', sub: 0.6, cutoff: 260, reso: 0.15, envAmt: 0.6, fdecay: 0.1, attack: 0.003, decay: 0.3, sustain: 0.7, release: 0.08, gain: 0.6 }) },
   techStab: { label: 'Stab techno', for: ['chords'], p: S({ unison: 3, detune: 12, cutoff: 650, reso: 0.4, envAmt: 2.2, fdecay: 0.12, attack: 0.002, decay: 0.2, sustain: 0, release: 0.1, gain: 0.3 }) },
+  hardRumble: { label: 'Rumble hard', for: ['bass'], p: S({ wave: 'sine', sub: 0.4, cutoff: 220, reso: 0.1, envAmt: 0.5, fdecay: 0.08, attack: 0.002, decay: 0.18, sustain: 0.5, release: 0.05, gain: 0.7 }) },
+  hardStab: { label: 'Stab hard', for: ['chords', 'arp'], p: S({ unison: 5, detune: 22, cutoff: 900, reso: 0.5, envAmt: 2.6, fdecay: 0.09, attack: 0.001, decay: 0.15, sustain: 0, release: 0.08, gain: 0.26 }) },
+  hardLead: { label: 'Screech', for: ['melody', 'arp'], p: S({ wave: 'square', unison: 3, detune: 16, cutoff: 2600, reso: 0.65, envAmt: 1.4, fdecay: 0.18, attack: 0.002, decay: 0.25, sustain: 0.5, release: 0.08, gain: 0.18 }) },
   housePiano: { label: 'Piano house', for: ['chords', 'melody', 'arp'], p: S({ wave: 'fm', fmRatio: 2, fmIndex: 2.2, fmDecay: 0.25, cutoff: 7000, reso: 0.05, attack: 0.002, decay: 0.9, sustain: 0.1, release: 0.3, gain: 0.36 }) },
   houseBass: { label: 'Bajo house', for: ['bass'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.6, fmDecay: 0.12, sub: 0.3, cutoff: 1800, reso: 0.05, decay: 0.3, sustain: 0.35, release: 0.06, gain: 0.55 }) },
   deepRhodes: { label: 'Rhodes', for: ['chords', 'melody'], p: S({ wave: 'fm', fmRatio: 1, fmIndex: 1.2, fmDecay: 0.6, cutoff: 3200, reso: 0.05, attack: 0.004, decay: 1.6, sustain: 0.3, release: 0.6, gain: 0.34 }) },
@@ -599,6 +602,7 @@ export const KITS: Record<string, { label: string; map: Record<string, string> }
   // kits por género
   trance: { label: 'Kit Trance', map: { kick: 'kTrance', clap: 'clap2', hat: 'hatTight', open: 'openH', snare: 'snareH', rim: 'rim' } },
   techno: { label: 'Kit Techno', map: { kick: 'kTechno', clap: 'clapVerb', hat: 'hatH', open: 'openH', snare: 'snareH', rim: 'rim' } },
+  hard: { label: 'Kit Hard Techno', map: { kick: 'kHard', clap: 'clapVerb', hat: 'hatH', open: 'openH', snare: 'snareH', rim: 'rim' } },
   house: { label: 'Kit House', map: { kick: 'kA909', clap: 'clap1', hat: 'hat1', open: 'open', snare: 'snare', rim: 'rim' } },
   deep: { label: 'Kit Deep', map: { kick: 'k808', clap: 'clap808', hat: 'hatDark', open: 'open808', snare: 'snareSoft', rim: 'rim' } },
   melodic: { label: 'Kit Melodic', map: { kick: 'kMelodic', clap: 'snap', hat: 'hatDark', open: 'open808', snare: 'snareSoft', rim: 'rim' } },

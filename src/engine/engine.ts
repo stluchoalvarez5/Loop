@@ -203,6 +203,8 @@ async function synthShots(sr: number) {
   S.kTrance = norm(await shot(0.45, (c, o, N) => kick(c, o, N, { f0: 330, f1: 88, fe: 52, tp: 0.03, dur: 0.5, hold: 0.07, tau: 0.085, click: 0.9, clickF: 3500, drive: 2.4 })), 0.5);
   // techno: grave, largo, saturado y con rumble
   S.kTechno = norm(await shot(1.1, (c, o, N) => kick(c, o, N, { f0: 240, f1: 60, fe: 48, tp: 0.045, dur: 1.1, hold: 0.08, tau: 0.11, click: 0.55, clickF: 2500, drive: 3.2, rumble: 0.35 })), 0.5);
+  // hard techno: más ataque, distorsión fuerte y rumble pesado que ocupa el lugar del bajo
+  S.kHard = norm(await shot(1, (c, o, N) => kick(c, o, N, { f0: 320, f1: 58, fe: 44, tp: 0.035, dur: 1, hold: 0.07, tau: 0.1, click: 0.8, clickF: 3200, drive: 6, rumble: 0.6 })), 0.5);
   // melodic: sub redondo y largo, click suave
   S.kMelodic = norm(await shot(0.9, (c, o, N) => kick(c, o, N, { f0: 180, f1: 56, fe: 46, tp: 0.045, dur: 0.8, hold: 0.08, tau: 0.12, click: 0.35, clickF: 2200, drive: 1.6 })), 0.5);
   // progressive: redondo y apretado

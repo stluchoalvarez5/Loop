@@ -74,6 +74,29 @@ export const GENRES: Record<string, Genre> = {
     fx: { revSize: 0.75, revDamp: 0.45, revRet: 0.8, dlyFb: 0.58, dlyRet: 0.8, duck: 0.45 },
     mix: { arp: { vol: 0.5, rev: 0.12, dly: 0.25, duck: 0.5 }, chords: { vol: 0.5, rev: 0.3, dly: 0.55, duck: 0.5 }, melody: { vol: 0.5, rev: 0.25, dly: 0.35, duck: 0.4 }, bass: { vol: 0.72, rev: 0, dly: 0, duck: 0.6 } },
   },
+  /* Hard Techno: 148-156, menor, acorde casi fijo, bombo saturado con rumble pesado que hace de bajo,
+     hats en semicorcheas y abiertos a contratiempo, clap con sala, stab distorsionado y screech arriba. */
+  hard: {
+    name: 'Hard Techno', bpm: [148, 156], swing: [0, 0.03], kit: ['hard'],
+    harm: { mode: 'min', ext: -1, tpl: { min: [[0, 0, 0, 0], [0, 0, 0, 6], [0, 0, 5, 5], [0, 0, 6, 5]] } },
+    drums: [
+      { kick: 'X...X...X...X...', clap: '....X.......X...', hat: 'xgXgxgXgxgXgxgXg', open: '..X...X...X...X.', perc: '..x...x...x...x.' },
+      { kick: 'X...X...X...X...', clap: '....X.......X..g', hat: 'XgxgXgxgXgxgXgxg', open: '..X...X...X...X.', perc: '.x.x.x.x.x.x.x.x' },
+      { kick: 'X...X...X...X.x.', clap: '....X.......X...', hat: 'xxXxxxXxxxXxxxXx', open: '..X...X...X...X.', perc: '...x..x....x..x.' },
+    ],
+    clap: ['clap', 'rim2'], perc: ['ride', 'rim', 'tomL'], kick: { pitch: -1, decay: 1 },
+    bass: [{ line: '..r...r...r...r.', l: 0.9 }, { line: '.rr..rr..rr..rr.', l: 0.55 }, { line: '..rr..rr..rr..rr', l: 0.6 }],
+    bassSound: ['hardRumble', 'technoSub'],
+    chords: [{ mode: 'stab', steps: '..x...x...x...x.', len: 0.8 }, { mode: 'stab', steps: '...x..x....x..x.', len: 0.8 }, { mode: 'stab', steps: 'x..x..x...x..x..', len: 0.7 }],
+    chordSound: ['hardStab', 'techStab'],
+    arp: [{ mode: 'acid', rate: '16', oct: 2 }, { mode: 'chord', rate: '16', oct: 2 }],
+    arpSound: ['acid303', 'hardLead'],
+    mel: { style: 'hook', sound: ['hardLead', 'chip'] },
+    ins: { kick: { drive: 0.25 }, bass: { drive: 0.6, lp: 300 }, chords: { drive: 0.6, hp: 260 }, arp: { drive: 0.7, hp: 150 }, melody: { drive: 0.5, hp: 400 }, clap: { hp: 300, drive: 0.2 }, hat: { hp: 6000 }, perc: { drive: 0.3, hp: 300 } },
+    groove: { hat: gr([0, 0.01, 0, 0.02]) },
+    fx: { revSize: 0.7, revDamp: 0.5, revRet: 0.75, dlyFb: 0.5, dlyRet: 0.7, duck: 0.55 },
+    mix: { arp: { vol: 0.45, rev: 0.1, dly: 0.2, duck: 0.55 }, chords: { vol: 0.45, rev: 0.25, dly: 0.4, duck: 0.6 }, melody: { vol: 0.42, rev: 0.2, dly: 0.3, duck: 0.45 }, bass: { vol: 0.6, rev: 0, dly: 0, duck: 0.85 } },
+  },
   /* House: 122-126 con swing, acordes de séptima en stabs sincopados de piano/órgano, bajo con saltos de octava,
      hats abiertos a contratiempo, pandereta y shaker en semicorcheas. */
   house: {
@@ -197,7 +220,7 @@ export const MEL_STYLES: Record<string, { rh: Rh[]; cad: Rh[]; lo: number; hi: n
 };
 
 /* pesos para elegir el género cuando se genera desde el nombre */
-export const GENRE_WEIGHTS: Record<string, number> = { prog: 3, melodic: 3, deep: 2, house: 2, trance: 2, techno: 2 };
+export const GENRE_WEIGHTS: Record<string, number> = { prog: 3, melodic: 3, deep: 2, house: 2, trance: 2, techno: 2, hard: 1 };
 
 export const parseDrum = (s: string) => [...s].map((c) => (c === 'X' ? 2 : c === 'x' ? 1 : c === 'g' ? 3 : 0));
 const OFF: Record<string, number> = { r: 0, R: 0, o: 12, f: 7, s: 10, b: -12 };
