@@ -538,6 +538,93 @@ class KWeight { constructor(sr) { this.a = new Biquad(); this.a.set('hs', 1500, 
 /* analizador de espectro de UNA pista (el EQ del instrumento): guarda la señal de antes y después de su EQ, hace una FFT de 4096 puntos con ventana Hann cada 2048 muestras
    y manda 96 bandas logarítmicas (20 Hz a 20 kHz, en dB) al hilo principal. Todo se reserva al empezar (mensaje `tap`), nunca en process; solo corre con el EQ abierto. */
 const TAPN = 4096, TAPB = 96;
+/* atmósfera: voz continua por pista (pad de osciladores + aire + vinilo + rumble). Los movimientos van atados a la posición del loop, así empalma. */
+class AtmVoice {
+  constructor(sr) {
+    this.sr = sr; this.g = 0; this.ph = new Float64Array(24); this.fr = new Float64Array(4); this.sg = new Float64Array(4); this.init = false;
+    this.z1L = 0; this.z2L = 0; this.z1R = 0; this.z2R = 0; this.gc = 0.1; this.kk = 1.5; this.rA = 12345; this.rB = 987654; this.rC = 424242; this.rD = 777;
+    this.aL = 0; this.aR = 0; this.pop = 0; this.popR = 0; this.rl = 0; this.rr = 0; this.hl = 0; this.hr = 0; this.wph = 0; this.ctl = 0; this.ampM = 1; this.tm = 0;
+    this.lL = 0; this.lR = 0; this.hpL = 0; this.hpR = 0;
+  }
+  rnd(k) { let x = k === 0 ? this.rA : k === 1 ? this.rB : k === 2 ? this.rC : this.rD; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; if (k === 0) this.rA = x; else if (k === 1) this.rB = x; else if (k === 2) this.rC = x; else this.rD = x; return x / 2147483648; }
+  render(L, R, N, P, roots, gate, ps0, slen, len, bpm, pm) {
+    const sr = this.sr, TWO = 2 * Math.PI;
+    const target = gate ? 1 : 0, up = 1 - Math.exp(-1 / (sr * Math.max(0.02, P.atk))), dn = 1 - Math.exp(-1 / (sr * 0.15));
+    if (!gate && this.g < 1e-5) { this.g = 0; return; }
+    const bar = Math.min(3, Math.max(0, Math.floor(ps0 / 16))), tones = roots[bar] || roots[0], nt = Math.min(4, tones.length);
+    const uni = Math.max(1, Math.min(5, P.uni | 0)), nOsc = nt * uni, norm = 1 / Math.sqrt(nOsc);
+    const wv = P.wave, cyc = P.lfo || 0, wow = P.wow || 0, mixPad = P.pad, air = P.air, vin = P.vin, hiss = P.hiss, rum = P.rum;
+    // dispersión de unísono simétrica y panorama alternado
+    const det = P.det / 1200, gl = 1 - Math.exp(-16 / (sr * Math.max(0.02, P.glide)));
+    const nz = this.rnd.bind(this);
+    for (let s = 0; s < N; s++) {
+      if ((s & 15) === 0) {
+        const ps = ps0 + s / slen, lp = len > 0 ? (ps / len) : 0, ph = cyc ? ((lp * cyc) % 1 + 1) % 1 : 0;
+        const lf = cyc ? Math.sin(TWO * ph) : 0;
+        this.ampM = 1 - P.swell * 0.5 * (1 - (cyc ? Math.cos(TWO * ph) : 1));
+        const f = Math.min(sr * 0.42, Math.max(30, P.cut * Math.pow(2, P.lfoD * lf * 2)));
+        this.gc = Math.tan(Math.PI * f / sr); this.kk = 2 * (1 - Math.min(0.9, P.res) * 0.97);
+        for (let j = 0; j < 4; j++) {
+          const tg = j < nt ? tones[j] : tones[0], sg = j < nt ? 1 : 0;
+          const tf = mtof(tg) * pm;
+          this.fr[j] = this.init ? this.fr[j] + (tf - this.fr[j]) * gl : tf;
+          this.sg[j] += (sg - this.sg[j]) * 0.05;
+        }
+        this.init = true;
+        this.wph += 16 * 0.45 / sr; if (this.wph >= 1) this.wph -= 1;
+        this.tm = wow ? Math.pow(2, wow * 0.35 / 12 * (Math.sin(TWO * this.wph) + 0.4 * Math.sin(TWO * this.wph * 3.7))) : 1;
+      }
+      this.g += (target - this.g) * (target > this.g ? up : dn);
+      let oL = 0, oR = 0;
+      if (mixPad > 0) {
+        for (let j = 0; j < nt; j++) {
+          const sgj = this.sg[j]; if (sgj < 0.001) continue;
+          for (let u = 0; u < uni; u++) {
+            const k = j * uni + u, off = uni === 1 ? 0 : (u / (uni - 1) * 2 - 1), dt = this.fr[j] * Math.pow(2, off * det) * this.tm / sr;
+            let p = this.ph[k] + dt; if (p >= 1) p -= 1; this.ph[k] = p;
+            let o;
+            if (wv === 'sine') o = Math.sin(TWO * p);
+            else if (wv === 'tri') o = 4 * Math.abs(p - 0.5) - 1;
+            else if (wv === 'sqr') { o = (p < 0.5 ? 1 : -1) + polyblep(p, dt) - polyblep((p + 0.5) % 1, dt); }
+            else o = 2 * p - 1 - polyblep(p, dt);
+            o *= sgj * norm; const pn = uni === 1 ? 0.5 : u / (uni - 1);
+            oL += o * Math.cos(pn * Math.PI / 2); oR += o * Math.sin(pn * Math.PI / 2);
+          }
+        }
+        oL *= mixPad * 0.09; oR *= mixPad * 0.09;
+      }
+      // aire: ruido que pasa por el mismo filtro
+      if (air > 0) { oL += nz(0) * air * 0.35; oR += nz(1) * air * 0.35; }
+      // filtro SVF (pasa bajos) para el pad y el aire
+      if (mixPad > 0 || air > 0) {
+        const g = this.gc, k = this.kk, a1 = 1 / (1 + g * (g + k)), a2 = g * a1, a3 = g * a2;
+        let v3 = oL - this.z2L, v1 = a1 * this.z1L + a2 * v3, v2 = this.z2L + a2 * this.z1L + a3 * v3; this.z1L = 2 * v1 - this.z1L; this.z2L = 2 * v2 - this.z2L; oL = v2;
+        v3 = oR - this.z2R; v1 = a1 * this.z1R + a2 * v3; v2 = this.z2R + a2 * this.z1R + a3 * v3; this.z1R = 2 * v1 - this.z1R; this.z2R = 2 * v2 - this.z2R; oR = v2;
+      }
+      oL *= this.ampM; oR *= this.ampM;
+      // vinilo: chasquidos (Poisson) + polvo continuo; siseo; rumble
+      if (vin > 0) {
+        const pr = (vin * vin * 14 + vin * 1.5) / sr * (bpm > 0 ? 1 : 1);
+        if (nz(2) * 0.5 + 0.5 < pr) this.pop = (nz(3) > 0 ? 1 : -1) * Math.pow(nz(3) * 0.5 + 0.5, 2.2) * (0.25 + vin * 0.75) * 1.5;
+        if (nz(2) * 0.5 + 0.5 < pr) this.popR = (nz(3) > 0 ? 1 : -1) * Math.pow(nz(3) * 0.5 + 0.5, 2.2) * (0.25 + vin * 0.75) * 1.5;
+        const cl = this.pop * 0.9, cr = this.popR * 0.9; this.pop *= 0.55; this.popR *= 0.55;
+        oL += cl * 0.5 + (nz(0) > 0.995 ? nz(1) * 0.12 * vin : 0); oR += cr * 0.5 + (nz(0) > 0.995 ? nz(1) * 0.12 * vin : 0);
+      }
+      if (hiss > 0) {
+        const nl = nz(0), nr = nz(1); // siseo: ruido blanco con pasa altos suave y pasa bajos ~9 kHz
+        this.hl += (nl - this.hl) * 0.55; this.hr += (nr - this.hr) * 0.55; this.hpL += (this.hl - this.hpL) * 0.05; this.hpR += (this.hr - this.hpR) * 0.05;
+        oL += (this.hl - this.hpL) * hiss * 0.07; oR += (this.hr - this.hpR) * hiss * 0.07;
+      }
+      if (rum > 0) {
+        this.rl += (nz(1) - this.rl) * 0.006; this.rr += (nz(0) - this.rr) * 0.006; // ruido muy grave (~40 Hz)
+        this.lL += (this.rl - this.lL) * 0.12; this.lR += (this.rr - this.lR) * 0.12;
+        oL += this.lL * rum * 3.2; oR += this.lR * rum * 3.2;
+      }
+      const gg = this.g * P.lvl;
+      L[s] += oL * gg; R[s] += oR * gg;
+    }
+  }
+}
 class SpecTap {
   constructor(sr, id) {
     this.id = id; this.sr = sr; this.pre = new Float32Array(TAPN); this.post = new Float32Array(TAPN); this.w = 0; this.cnt = 0; this.a = 0;
@@ -619,7 +706,7 @@ class LoopEngine extends AudioWorkletProcessor {
         if (t.once && this.done && o && (sceneChanged || (o.mute && !t.mute) || (o.clip || '') !== (t.clip || ''))) delete this.done[t.id];
         const rvx = t.rvx ? (o && o.rv ? o.rv : new RevFx(this.sr)) : null, dlx = t.dlx ? (o && o.dl ? o.dl : new DlyFx(this.sr)) : null; // reverb / delay propios de la pista (se reservan acá, nunca en process)
         if (rvx) rvx.setP(t.rvx); if (dlx) dlx.setP(t.dlx, m.project.bpm);
-        const nt = { ...t, rv: rvx, rvRet: t.rvx ? t.rvx.ret : 0, dl: dlx, dlRet: t.dlx ? t.dlx.ret : 0, voices: o && o.kind === t.kind ? o.voices : [], vi: o && o.kind === t.kind ? o.vi : 0, last: o && o.kind === t.kind ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, vph: o ? o.vph : 0, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
+        const nt = { ...t, rv: rvx, rvRet: t.rvx ? t.rvx.ret : 0, dl: dlx, dlRet: t.dlx ? t.dlx.ret : 0, av: t.kind === 'atm' ? (o && o.av ? o.av : new AtmVoice(this.sr)) : null, voices: o && o.kind === t.kind ? o.voices : [], vi: o && o.kind === t.kind ? o.vi : 0, last: o && o.kind === t.kind ? o.last : null, duckEnv: 1, meter: 0, ins: o ? o.ins : null, vph: o ? o.vph : 0, pgl: o ? o.pgl : undefined, pgr: o ? o.pgr : undefined };
         // inserto por pista: saturación, filtros pasa altos / pasa bajos y chorus (los buffers se reservan acá, nunca en process)
         const fx = t.fx || {};
         if (!nt.ins) nt.ins = { hpL: new Biquad(), hpR: new Biquad(), lpL: new Biquad(), lpR: new Biquad(), cb: null, ci: 0, cph: 0, ap: null, pph: 0, pfl: 0, pfr: 0, chL: 0, chR: 0, cn: 0 };
@@ -751,6 +838,7 @@ class LoopEngine extends AudioWorkletProcessor {
       if (on && t.auto && t.auto.pitch) pst += (autoAt(t.auto.pitch, k0, k1, fr) * 2 - 1) * 12;
       if (t.vib && t.vib.d) { t.vph = (t.vph || 0) + (N * t.vib.r) / sr; if (t.vph >= 1) t.vph -= Math.floor(t.vph); pst += t.vib.d * Math.sin(TAU * t.vph); }
       const pm = pst ? Math.pow(2, pst / 12) : 1;
+      if (t.av) { const aud = this.playing && this.compiled && !t.mute && (!anySolo || t.solo); t.av.render(B.tL, B.tR, N, t.atmp, t.atmr, !!aud, ps, slen, (this.len || 4) * 16, this.bpm, pm); }
       for (const v of t.voices) {
         if (!v.on) continue;
         const a = v.delay || 0;

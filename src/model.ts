@@ -142,13 +142,49 @@ export const DBUS_PRESETS: Record<string, { label: string; p: Partial<typeof DBU
   smash: { label: 'Aplastada', p: { mix: 0.55, thr: -34, ratio: 12, atk: 3, rel: 60, makeup: 12 } },
   room: { label: 'Sala', p: { mix: 0.35, thr: -30, ratio: 8, atk: 6, rel: 250, makeup: 10 } },
 };
-export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal' | 'fx' | 'sample';
+export type TrackType = 'drum' | 'bass' | 'arp' | 'chords' | 'melody' | 'vocal' | 'fx' | 'sample' | 'atmos';
 /* canal de efectos de sonido (risers, impactos, barridos…): una voz generativa del worklet, sincronizada al tempo.
    env: cómo sube y baja el volumen; mode: tipo de filtro; len: largo en pasos de 16; f0→f1: barrido del filtro (Hz);
    noise: mezcla ruido (1) / tono (0); o0→o1: barrido del tono (Hz); curve: forma del barrido (−1..1);
    lfoS: pasos por ciclo del LFO (0 = apagado), lfoD: profundidad (volumen y filtro), lfoP: vibrato del tono en semitonos */
 export type FxP = { env: 'rise' | 'fall' | 'hit' | 'swell' | 'hold'; mode: 'lp' | 'bp' | 'hp'; len: number; f0: number; f1: number; res: number; noise: number; wave: 'sine' | 'saw' | 'sqr'; o0: number; o1: number; curve: number; lfoS: number; lfoD: number; lfoP: number; drive: number; lvl?: number };
 const fxp = (o: Partial<FxP>): FxP => ({ env: 'rise', mode: 'lp', len: 16, f0: 300, f1: 9000, res: 0.3, noise: 1, wave: 'saw', o0: 220, o1: 220, curve: 0, lfoS: 0, lfoD: 0, lfoP: 0, drive: 0, ...o });
+/* ---------- atmósfera: capa continua (pad, vinilo, ruido, rumble) que sigue una nota o los acordes del loop ---------- */
+export type AtmP = {
+  lvl: number; // nivel calibrado del preset
+  note: number; // nota MIDI base (si no sigue los acordes)
+  follow: boolean; // sigue la fundamental del acorde de cada compás
+  oct: number; // octava (−2..1)
+  chord: 'root' | 'fifth' | 'maj' | 'min' | 'sus2' | 'sus4' | 'm7' | 'maj7'; // notas que suenan sobre la base
+  wave: 'saw' | 'sqr' | 'tri' | 'sine'; uni: number; det: number; // unísono (1..5) y desafinación en cents
+  pad: number; // nivel de la capa tonal 0..1
+  cut: number; res: number; // filtro pasa bajos (Hz) y resonancia 0..0.9
+  lfo: number; lfoD: number; // ciclos del movimiento por vuelta (entero, así empalma) y cuánto abre y cierra el filtro 0..1
+  swell: number; // respiración del volumen con el mismo movimiento 0..1
+  atk: number; glide: number; // entrada al dar play (s) y deslizamiento entre acordes (s)
+  air: number; // ruido de aire 0..1
+  vin: number; hiss: number; rum: number; // vinilo (chasquidos), siseo y rumble 0..1
+  wow: number; // inestabilidad de cinta 0..1
+};
+const atm = (o: Partial<AtmP>): AtmP => ({ lvl: 1, note: 45, follow: true, oct: 0, chord: 'fifth', wave: 'saw', uni: 3, det: 12, pad: 1, cut: 1400, res: 0.15, lfo: 1, lfoD: 0.3, swell: 0.2, atk: 1.2, glide: 0.5, air: 0, vin: 0, hiss: 0, rum: 0, wow: 0, ...o });
+export const ATM_CHORDS: Record<string, { label: string; iv: number[] }> = {
+  root: { label: 'Una nota', iv: [0] }, fifth: { label: 'Quinta', iv: [0, 7, 12] }, maj: { label: 'Mayor', iv: [0, 4, 7, 12] }, min: { label: 'Menor', iv: [0, 3, 7, 12] },
+  sus2: { label: 'Sus2', iv: [0, 2, 7, 12] }, sus4: { label: 'Sus4', iv: [0, 5, 7, 12] }, m7: { label: 'Menor 7', iv: [0, 3, 7, 10] }, maj7: { label: 'Mayor 7', iv: [0, 4, 7, 11] },
+};
+export const ATM_SOUNDS: Record<string, { label: string; group: string; p: AtmP }> = {
+  warm: { label: 'Pad cálido', group: 'Pads', p: atm({ chord: 'min', cut: 1100, lfo: 1, lfoD: 0.25, swell: 0.15 }) },
+  dark: { label: 'Pad oscuro', group: 'Pads', p: atm({ lvl: 1.03, chord: 'fifth', cut: 600, res: 0.2, lfo: 2, lfoD: 0.35, swell: 0.25, oct: -1, det: 18 }) },
+  glass: { label: 'Cristal', group: 'Pads', p: atm({ chord: 'maj7', wave: 'tri', cut: 3800, uni: 4, det: 9, lfo: 2, lfoD: 0.2, swell: 0.1, oct: 1, air: 0.1 }) },
+  choir: { label: 'Coro', group: 'Pads', p: atm({ lvl: 0.69, chord: 'sus2', wave: 'sqr', cut: 1700, res: 0.3, uni: 5, det: 16, lfo: 4, lfoD: 0.3, swell: 0.3, atk: 2 }) },
+  drone: { label: 'Drone grave', group: 'Constantes', p: atm({ lvl: 0.88, chord: 'fifth', cut: 420, wave: 'saw', oct: -2, lfo: 1, lfoD: 0.4, swell: 0.1, rum: 0.15, glide: 1.5 }) },
+  sub: { label: 'Sub constante', group: 'Constantes', p: atm({ lvl: 0.79, chord: 'root', wave: 'sine', uni: 1, det: 0, cut: 400, oct: -2, lfo: 0, lfoD: 0, swell: 0, atk: 0.4, glide: 0.3 }) },
+  tape: { label: 'Pad de cinta', group: 'Texturas', p: atm({ lvl: 1.06, chord: 'm7', cut: 1500, lfo: 1, lfoD: 0.2, swell: 0.1, wow: 0.55, hiss: 0.18 }) },
+  air: { label: 'Aire y viento', group: 'Texturas', p: atm({ lvl: 0.91, pad: 0.12, chord: 'root', cut: 1200, res: 0.5, air: 0.8, lfo: 2, lfoD: 0.6, swell: 0.5, atk: 2.5 }) },
+  vinyl: { label: 'Vinilo', group: 'Vinilo', p: atm({ lvl: 1.4, pad: 0, vin: 0.55, hiss: 0.3, rum: 0.12, wow: 0.1, atk: 0.3 }) },
+  vinylPad: { label: 'Vinilo con pad', group: 'Vinilo', p: atm({ lvl: 0.98, chord: 'min', cut: 900, vin: 0.4, hiss: 0.2, rum: 0.08, wow: 0.4, lfo: 1, lfoD: 0.2, swell: 0.1 }) },
+  dust: { label: 'Polvo (chasquidos suaves)', group: 'Vinilo', p: atm({ lvl: 1.8, pad: 0, vin: 0.3, hiss: 0.1, atk: 0.3 }) },
+  rumble: { label: 'Rumble de sala', group: 'Vinilo', p: atm({ lvl: 0.36, pad: 0, rum: 0.7, hiss: 0.06, air: 0.1, cut: 300, atk: 0.8 }) },
+};
 export const FX_SOUNDS: Record<string, { label: string; group: string; p: FxP }> = {
   riser: { label: 'Riser de ruido', group: 'Subidas', p: fxp({ env: 'rise', mode: 'bp', f0: 300, f1: 9000, res: 0.35 }) },
   riserTone: { label: 'Riser tonal', group: 'Subidas', p: fxp({ lvl: 0.7, env: 'rise', f0: 500, f1: 12000, noise: 0.2, o0: 110, o1: 1760, curve: 0.3 }) },
@@ -174,6 +210,7 @@ export const FX_GROUPS: [string, string[]][] = [['Subidas', ['riser', 'riserTone
 export type Note = { s: number; n: number; l: number; o?: number }; // o = desfase dentro del paso de 16 (0..1): notas de 1/32 o tresillos; l en pasos de 16 (puede ser fraccionario)
 export type Track = {
   id: string; name: string; color: string; type: TrackType;
+  atm?: Partial<AtmP>; // atmósfera: parámetros propios (se parten del preset `sound`)
   fxs?: FxP; // canal de efectos: parámetros del sonido (se parte del preset `sound`)
   rvx?: Partial<RevP>; dlx?: Partial<DlyP>; // reverb y delay propios de la pista (si faltan, la pista manda al reverb y delay del master); `rev` y `dly` siguen siendo cuánto manda
   cut?: { from: number; to?: number }; str?: number; // batería con sample: recorte (inicio y final, fracciones 0..1 del sample) y estirado (duración × str sin cambiar el tono)
@@ -665,6 +702,7 @@ export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   if (type === 'vocal') { const t = mkTrack(id, 'Voz', 'vocal', 'vox', { color: '#e5655b', vol: 0.8, rev: 0.25, dly: 0.3, duck: 0.2 }); t.steps = Array(16).fill(0); t.steps[0] = 2; t.fx = { hp: 110 }; t.vox = { from: 0, rev: false, has: false, pos: 0 }; return t; }
   if (type === 'sample') { const t = mkTrack(id, 'Sample', 'sample', 'sample', { color, vol: 0.7, rev: 0.1 }); t.steps = [1, ...Array(15).fill(0)]; t.vox = { from: 0, rev: false, has: false }; return t; }
   if (type === 'fx') { const k = sound ?? 'riser'; const t = mkTrack(id, 'FX ' + (FX_SOUNDS[k]?.label ?? 'Efecto'), 'fx', k, { color, vol: 0.6, rev: 0.3, dly: 0.15, fxs: { ...FX_SOUNDS[k].p } }); t.steps = Array(64).fill(0); t.steps[48] = 1; return t; }
+  if (type === 'atmos') { const k = sound ?? 'warm'; return mkTrack(id, 'Atmósfera', 'atmos', k, { color, vol: 0.5, rev: 0, dly: 0, atm: { ...ATM_SOUNDS[k].p } }); }
   if (type === 'drum') return mkTrack(id, DRUM_SOUNDS[sound ?? 'conga'] ?? 'Percu', 'drum', sound ?? 'conga', { color, vol: 0.6, rev: 0.15 });
   if (type === 'bass') return mkTrack(id, 'Bajo 2', 'bass', sound ?? 'fmBass', { color, vol: 0.7, duck: 0.5 });
   if (type === 'chords') return mkTrack(id, 'Acordes 2', 'chords', sound ?? 'airy', { color, vol: 0.55, rev: 0.4, duck: 0.4, chordMode: 'pad', steps: [1, ...Array(15).fill(0)] });
@@ -904,6 +942,7 @@ export function clipHas(p: Project, k: string, t: Track): boolean {
   const cur = p.scene ?? 'A', src: any = k === cur ? t : { ...t, ...(p.scenes?.[k]?.t?.[t.id] ?? { mute: true }) };
   if (src.mute) return false;
   if (t.type === 'vocal') return !!t.vox?.has;
+  if (t.type === 'atmos') return true;
   if (t.type === 'sample' && (t.vox?.clip || t.vox?.free)) return !!t.vox?.has;
   if (t.type === 'melody') return !!src.notes?.length;
   if (t.type === 'arp') return !!(src.roll && src.notes?.length) || !!src.arp?.gate?.some(Boolean);
@@ -938,7 +977,7 @@ export function compile(p0: Project) {
   const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !offOf(t)) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
-    let kind = 'synth', synth: Synth | undefined, sample: string | undefined, fxp: FxP | undefined, dsynP: DrumP | undefined;
+    let kind = 'synth', synth: Synth | undefined, sample: string | undefined, fxp: FxP | undefined, atmP: AtmP | undefined, atmR: number[][] | undefined, dsynP: DrumP | undefined;
     if (t.type === 'vocal') {
       // la voz es un clip de hasta 4 compases: suena una vez por vuelta, desde su posición
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
@@ -948,6 +987,14 @@ export function compile(p0: Project) {
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
       if (t.vox?.has && (t.vox.clip || t.vox.free)) { const ps = Math.max(0, Math.min(63.5, t.vox.pos ?? 0)), s0 = Math.floor(ps + 1e-6); ev[s0].push({ v: 0.9, ...(ps - s0 > 1e-6 ? { o: ps - s0 } : {}) }); } // capela / loop largo: suena una sola vez por vuelta
       else if (t.vox?.has) for (const h of stepHits(t)) ev[h.s].push({ v: (h.x ?? (h.v === 2 ? 1 : h.v === 3 ? 0.38 : 0.8)) * (h.m ?? 1), ...(h.p !== undefined ? { p: h.p } : {}), ...(h.o ? { o: h.o } : {}) });
+    } else if (t.type === 'atmos') {
+      kind = 'atm'; atmP = { ...(ATM_SOUNDS[t.sound]?.p ?? ATM_SOUNDS.warm.p), ...t.atm };
+      const iv = ATM_CHORDS[atmP.chord]?.iv ?? [0], base = 12 * atmP.oct;
+      atmR = [0, 1, 2, 3].map((b) => {
+        let r = atmP!.note;
+        if (atmP!.follow) { const c = p.chords[b % 4]?.midi ?? [57]; const pc = ((Math.min(...c) % 12) + 12) % 12; r = 45 + ((pc - 45) % 12 + 12) % 12; r = r > 51 ? r - 12 : r; } // fundamental entre MI2 y SI2
+        return iv.map((x) => r + base + x);
+      });
     } else if (t.type === 'fx') {
       kind = 'fx'; fxp = { ...(FX_SOUNDS[t.sound]?.p ?? FX_SOUNDS.riser.p), ...t.fxs };
       for (const h of stepHits(t)) ev[h.s].push({ v: (h.x ?? (h.v === 2 ? 1 : 0.85)) * (h.m ?? 1), ...(h.p !== undefined ? { p: h.p } : {}), ...(h.o ? { o: h.o } : {}) });
@@ -1010,14 +1057,14 @@ export function compile(p0: Project) {
       clip: t.lch ?? '', cgq: t.type === 'drum' && t.sound === 'open', cg: t.type === 'drum' ? (t.cg === undefined ? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '') : t.cg) : '', tn: t.type === 'drum' || t.type === 'sample' ? t.tone || 0 : 0, at: t.type === 'drum' || t.type === 'sample' ? t.att || 0 : 0, pe: t.type === 'drum' || t.type === 'sample' ? t.pe || 0 : 0,
       drm: t.type === 'drum',
       rvx: t.rvx ? { ...REV_DEF, ret: 1, ...t.rvx } : undefined, dlx: t.dlx ? { ...DLY_DEF, ret: 1, ...t.dlx } : undefined,
-      id: t.id, kind, sample, synth, fxp, dsp: dsynP, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
+      id: t.id, kind, sample, synth, fxp, atmp: atmP, atmr: atmR, dsp: dsynP, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
       rev: clamp(t.rev * sendK + (sp > 0 && t.type !== 'drum' && t.type !== 'bass' ? sp * 0.15 : 0), 0, 1), dly: clamp(t.dly * sendK, 0, 1), duck: t.id === kickId ? 0 : t.duck, isKick: t.id === kickId, play: true,
       auto: t.auto && Object.keys(t.auto).length ? t.auto : undefined,
       eq: t.eq && t.eq.some((b) => Math.abs(b.g) > 0.05) ? t.eq : undefined, fine: t.fine || 0, vib: t.vib && t.vib.d > 0.001 ? t.vib : undefined,
       mono: t.type === 'bass' || (t.type === 'arp' && t.arp?.mode === 'acid') || !!synth?.pro?.mono, fx, groove, choke: t.type === 'vocal' || (t.type === 'sample' && !!(t.vox?.one || t.vox?.clip || t.vox?.free)),
       tr: t.type === 'drum' ? (t.str && t.str !== 1 ? 1 / t.str : 1) : t.type === 'sample' && t.vox?.bpm ? p.bpm / t.vox.bpm : 1, wm: t.type === 'sample' && !t.vox?.rev && (t.vox?.wm?.length ?? 0) >= 2 ? [...t.vox!.wm!].sort((a, b) => a[0] - b[0]) : undefined, abps: t.type === 'sample' ? (t.vox?.bpm ?? p.bpm) / 60 : 1, slice: t.type === 'sample' && t.vox?.gm === 'b' && !!t.vox.keep && !!t.vox.bpm && !t.vox.rev, goff: t.type === 'sample' ? t.vox?.off ?? 0 : 0, wmB: t.type === 'sample' && t.vox?.wm?.length ? [...t.vox.wm].sort((a, b) => a[1] - b[1]) : undefined, keep: (t.type === 'sample' && !!t.vox?.keep) || (t.type === 'drum' && !!t.str && t.str !== 1), once: t.type === 'sample' && !!t.vox?.free, loopv: t.type === 'sample' && !!t.vox?.loop, from: t.type === 'vocal' || t.type === 'sample' ? t.vox?.from ?? 0 : t.type === 'drum' ? t.cut?.from ?? 0 : 0, to: t.type === 'sample' ? t.vox?.to ?? 0 : t.type === 'drum' ? t.cut?.to ?? 0 : 0,
-      spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' || t.type === 'fx' ? 0 : 0.05,
-      cutAmt: t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' || t.type === 'sample' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx' && t.type !== 'sample', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx' && t.type !== 'sample',
+      spread: t.type === 'chords' ? 0.5 : t.type === 'arp' ? 0.15 : 0, human: t.type === 'drum' ? 0.12 : t.type === 'vocal' || t.type === 'fx' || t.type === 'atmos' ? 0 : 0.05,
+      cutAmt: t.type === 'atmos' ? 0.7 : t.type === 'drum' || t.type === 'vocal' || t.type === 'fx' || t.type === 'sample' ? 0 : t.type === 'bass' ? 0.5 : 1, macDrive: t.type !== 'drum' && t.type !== 'fx' && t.type !== 'sample', spAdd: t.type !== 'drum' && t.type !== 'bass' && t.type !== 'fx' && t.type !== 'sample',
     };
   });
   // capas: la pista con capa extra manda a la mezcla una segunda pista compilada con los mismos golpes y su propio sonido

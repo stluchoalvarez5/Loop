@@ -23,7 +23,7 @@ import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
   type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, setSound, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, sceneList, hasAudio, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  FX_SOUNDS, FX_GROUPS, type FxP, clipHas, WORDS, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType, sampleKey } from './model';
+  FX_SOUNDS, FX_GROUPS, type FxP, ATM_SOUNDS, ATM_CHORDS, type AtmP, clipHas, WORDS, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType, sampleKey } from './model';
 
 const engine = new Engine();
 const clone = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
@@ -236,6 +236,7 @@ const Ic = {
   arp: sv(<path d="M3 19h4v-4h4v-4h4V7h4V3" />),
   chords: sv(<><rect x="4" y="5" width="16" height="3" rx="1" /><rect x="4" y="10.5" width="16" height="3" rx="1" /><rect x="4" y="16" width="16" height="3" rx="1" /></>),
   melody: sv(<><path d="M9 18V5l10-2v13" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" /></>),
+  atmos: sv(<path d="M3 15c3-5 6-5 9 0s6 5 9 0M3 9c3-5 6-5 9 0s6 5 9 0" />),
   fx: sv(<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M18 6l-2.5 2.5M8.5 15.5L6 18" />),
   mic: sv(<><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>),
   wave: sv(<path d="M3 12h2l2-6 3 12 3-9 2 5 2-2h4" />),
@@ -243,7 +244,7 @@ const Ic = {
   more: sv(<><circle cx="6" cy="12" r="1.3" fill="currentColor" /><circle cx="12" cy="12" r="1.3" fill="currentColor" /><circle cx="18" cy="12" r="1.3" fill="currentColor" /></>),
 };
 const diff4 = (a?: any[]) => !!a && a.length === 64 && a.some((v, i) => v !== a[i % 16]); // la pista tiene compases distintos
-const trackIcon = (t: Track) => t.type === 'sample' ? Ic.wave : t.type === 'fx' ? Ic.fx : t.type === 'vocal' ? Ic.mic : t.type === 'bass' ? Ic.bass : t.type === 'arp' ? Ic.arp : t.type === 'chords' ? Ic.chords : t.type === 'melody' ? Ic.melody
+const trackIcon = (t: Track) => t.type === 'atmos' ? Ic.atmos : t.type === 'sample' ? Ic.wave : t.type === 'fx' ? Ic.fx : t.type === 'vocal' ? Ic.mic : t.type === 'bass' ? Ic.bass : t.type === 'arp' ? Ic.arp : t.type === 'chords' ? Ic.chords : t.type === 'melody' ? Ic.melody
   : t.sound === 'kick' ? Ic.kick : ['hat', 'open', 'ride', 'crash'].includes(t.sound) ? Ic.hat : ['clap', 'snare', 'snare808', 'snareSoft', 'rim', 'rim2'].includes(t.sound) ? Ic.snare : Ic.perc;
 
 /* ---------- panel plegable (como los de Ableton): título con flecha, botones a la derecha y "?" para la ayuda ----------
@@ -294,7 +295,7 @@ function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }
   const canGrid = t.type === 'drum' || t.type === 'bass' || t.type === 'fx' || (t.type === 'sample' && !t.vox?.clip && !t.vox?.free) || (t.type === 'chords' && (t.chordMode ?? 'pad') !== 'pad');
   const tabs: [DTab, string, any][] = [['snd', 'Sonido', Ic.wave], ...(canGrid ? [['rit', 'Ritmo', Ic.grid] as [DTab, string, any]] : []), ...(hasNotes ? [['notes', 'Notas', Ic.notes] as [DTab, string, any]] : []), ['eq', 'EQ', Ic.eq], ...(adv && t.type !== 'vocal' ? [['move', 'Movimiento', Ic.curve] as [DTab, string, any]] : []), ['more', 'Más', Ic.more]];
   const cur = tabs.some((x) => x[0] === tab) ? tab : 'snd';
-  const canVary = t.type !== 'vocal' && t.type !== 'fx' && t.type !== 'sample' && !(t.roll && t.type !== 'melody');
+  const canVary = t.type !== 'vocal' && t.type !== 'atmos' && t.type !== 'fx' && t.type !== 'sample' && !(t.roll && t.type !== 'melody');
   return (
     <aside class={'detail' + (help ? ' help' : '')} style={{ '--c': t.color } as any} aria-label={'Editor de ' + t.name}>
       <div class="dh">
@@ -617,7 +618,10 @@ function App() {
                 <button class="btn" disabled={ti === 0} aria-label={'Subir ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k > 0) [d.tracks[k - 1], d.tracks[k]] = [d.tracks[k], d.tracks[k - 1]]; }))}>▲ Subir</button>
                 <button class="btn" disabled={ti === p.tracks.length - 1} aria-label={'Bajar ' + t.name} {...tap(() => up((d) => { const k = d.tracks.findIndex((x) => x.id === t.id); if (k >= 0 && k < d.tracks.length - 1) [d.tracks[k + 1], d.tracks[k]] = [d.tracks[k], d.tracks[k + 1]]; }))}>▼ Bajar</button>
                 {t.group && <span class="gtag">{p.groups?.find((g) => g.id === t.group)?.name}</span>}
-              </div> : t.type === 'vocal' || (t.type === 'sample' && (t.vox?.clip || t.vox?.free)) ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => { setSel(t.id); setDetail(true); }}>
+              </div> : t.type === 'atmos' ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => { setSel(t.id); setDetail(true); }}>
+                {[0, 1, 2, 3].map((b) => <i style={{ left: b * 25 + '%' }} />)}
+                <b style={{ left: 0 }}>{ATM_SOUNDS[t.sound]?.label ?? 'Atmósfera'} · constante · {(t.atm?.follow ?? true) ? 'sigue los acordes' : noteName(t.atm?.note ?? 45)}</b>
+              </button> : t.type === 'vocal' || (t.type === 'sample' && (t.vox?.clip || t.vox?.free)) ? <button class="pads vrow" style={{ '--c': t.color } as any} aria-label={'Editar ' + t.name} onClick={() => { setSel(t.id); setDetail(true); }}>
                 {[0, 1, 2, 3].map((b) => <i style={{ left: b * 25 + '%' }} />)}
                 {t.vox?.has ? <b style={{ left: ((t.vox.pos ?? 0) / 64) * 100 + '%' }}>{t.type === 'sample' ? (t.vox.name || 'sample') + (t.vox.free ? ' · de largo' : ' · una vez por vuelta') : t.vox.rev ? 'voz al revés' : 'voz · 4 compases'}</b> : <b style={{ left: 0, opacity: 0.6 }}>tocá para grabar</b>}
               </button> : <div class={'pads' + (narrow ? ' p8' : '')}>
@@ -732,7 +736,7 @@ function AddTrack({ onAdd, full }: { onAdd: (t: TrackType, s?: string) => void; 
   return <div style={{ marginTop: '10px' }}>
     <div class="chips">
       <button class={'chip' + (drums ? ' on' : '')} onClick={() => setDrums(!drums)}>Batería / percusión</button>
-      {([['sample', 'Sample propio (subí un audio)'], ['fx', 'Efectos (risers, impactos…)'], ['vocal', 'Voz (grabá tu voz)'], ['bass', 'Bajo'], ['arp', 'Arpegio'], ['chords', 'Acordes'], ['melody', 'Melodía (piano roll)']] as [TrackType, string][]).map(([k, l]) => <button class="chip" onClick={() => { onAdd(k); setOpen(false); }}>{l}</button>)}
+      {([['atmos', 'Atmósfera (pad, vinilo, constante)'], ['sample', 'Sample propio (subí un audio)'], ['fx', 'Efectos (risers, impactos…)'], ['vocal', 'Voz (grabá tu voz)'], ['bass', 'Bajo'], ['arp', 'Arpegio'], ['chords', 'Acordes'], ['melody', 'Melodía (piano roll)']] as [TrackType, string][]).map(([k, l]) => <button class="chip" onClick={() => { onAdd(k); setOpen(false); }}>{l}</button>)}
       <button class="chip" onClick={() => { setOpen(false); setDrums(false); }}>Cancelar</button>
     </div>
     {drums && DRUM_GROUPS.map(([g, list]) => <><div class="sub">{g}</div><div class="chips">{list.map((k) => <button class="chip" onClick={() => { onAdd('drum', k); setOpen(false); setDrums(false); }}>{DRUM_SOUNDS[k]}</button>)}</div></>)}
@@ -1183,7 +1187,59 @@ function FxEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => vo
     <div class="hint">Cada golpe de la grilla dispara el efecto, que dura "Largo" pasos y siempre sigue el tempo. Para un riser, poné el golpe en el paso donde arranca (por ejemplo el 49, el comienzo del último compás) y dejá el Largo en 16: llega a su punto más fuerte justo cuando empieza el compás siguiente. Elegí un efecto y después cambialo: la envolvente decide cómo sube o baja el volumen; el filtro y el tono hacen un barrido de "inicio" a "final" (la curva decide si pasa rápido al principio o al final); el ruido y el tono se mezclan; el LFO hace pulsos, wobble o sirena. El volumen, el paneo, la reverb y el delay son los de cualquier instrumento.</div>
   </>;
 }
+const ATM_GROUPS: [string, string[]][] = [['Pads', ['warm', 'dark', 'glass', 'choir']], ['Constantes', ['drone', 'sub']], ['Texturas', ['tape', 'air']], ['Vinilo', ['vinyl', 'vinylPad', 'dust', 'rumble']]];
+function AtmEditor({ t, upT }: { t: Track; upT: (id: string, fn: (t: Track) => void) => void }) {
+  const base = ATM_SOUNDS[t.sound]?.p ?? ATM_SOUNDS.warm.p, P: AtmP = { ...base, ...t.atm };
+  const set = (k: keyof AtmP, v: any) => upT(t.id, (x) => { x.atm = { ...(x.atm ?? base), [k]: v }; });
+  const pick = (k: string) => upT(t.id, (x) => { const old = ATM_SOUNDS[x.sound]; x.sound = k; x.atm = { ...ATM_SOUNDS[k].p, follow: x.atm?.follow ?? true, note: x.atm?.note ?? 45 }; if (!old || x.name === old.label || x.name === 'Atmósfera') x.name = ATM_SOUNDS[k].label; });
+  const hzf = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : Math.round(v) + '');
+  const seg = (k: keyof AtmP, list: [string, string][]) => <div class="seg">{list.map(([v, l]) => <button class={P[k] === v ? 'on' : ''} onClick={() => set(k, v)}>{l}</button>)}</div>;
+  const kn = (k: keyof AtmP, label: string, min: number, max: number, fmt: (v: number) => string, extra: any = {}) => <Knob label={label} value={P[k] as number} min={min} max={max} def={base[k] as number} color={t.color} fmt={fmt} onChange={(v) => set(k, extra.step ? v : +v.toFixed(3))} {...extra} />;
+  return <>
+    <LevelRow t={t} upT={upT} />
+    <div class="sub">Atmósfera</div>
+    {ATM_GROUPS.map(([g, list]) => <><div class="sub2">{g}</div><div class="chips">{list.map((k) => <button class={'chip' + (t.sound === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => pick(k)}>{ATM_SOUNDS[k].label}</button>)}</div></>)}
+    <div class="chips" style={{ marginTop: '10px' }}><button class="chip" onClick={() => upT(t.id, (x) => { x.atm = { ...(ATM_SOUNDS[x.sound]?.p ?? ATM_SOUNDS.warm.p) }; })}>Restablecer sonido</button></div>
+    <div class="sub">Nota</div>
+    <div class="sub2">De dónde sale la nota</div>
+    <div class="seg"><button class={P.follow ? 'on' : ''} onClick={() => set('follow', true)}>Sigue los acordes</button><button class={!P.follow ? 'on' : ''} onClick={() => set('follow', false)}>Nota fija</button></div>
+    {!P.follow && <div class="chips" style={{ marginTop: '6px' }}>{NOTE_ES.map((n, i) => <button class={'chip' + (((P.note % 12) + 12) % 12 === i ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => set('note', 45 + ((i - 9 + 12) % 12))}>{n}</button>)}</div>}
+    <div class="sub2">Notas que suenan</div>
+    <div class="chips">{Object.entries(ATM_CHORDS).map(([k, c]) => <button class={'chip' + (P.chord === k ? ' on' : '')} style={{ '--c': t.color } as any} onClick={() => set('chord', k)}>{c.label}</button>)}</div>
+    <div class="knobs">
+      {kn('oct', 'Octava', -2, 1, (v) => (v > 0 ? '+' : '') + v, { step: 1 })}
+      {kn('glide', 'Deslizar entre acordes', 0.02, 4, (v) => v.toFixed(1) + ' s', {})}
+      {kn('atk', 'Entrada', 0.05, 6, (v) => v.toFixed(1) + ' s', {})}
+    </div>
+    <div class="sub">Capa tonal</div>
+    <div class="knobs">
+      {kn('pad', 'Nivel', 0, 1, pct)}
+      {kn('uni', 'Voces', 1, 5, (v) => v + '', { step: 1 })}
+      {kn('det', 'Apertura', 0, 40, (v) => Math.round(v) + ' cents')}
+    </div>
+    <div class="sub2">Onda</div>
+    {seg('wave', [['sine', 'Seno'], ['tri', 'Triángulo'], ['saw', 'Sierra'], ['sqr', 'Cuadrada']])}
+    <div class="sub">Filtro y movimiento</div>
+    <div class="knobs">
+      {kn('cut', 'Corte', 80, 12000, (v) => hzf(v) + 'Hz', { log: true })}
+      {kn('res', 'Resonancia', 0, 0.9, pct)}
+      {kn('lfo', 'Vueltas del movimiento', 0, 8, (v) => (v === 0 ? 'quieto' : v + ' por vuelta'), { step: 1 })}
+      {kn('lfoD', 'Cuánto abre el filtro', 0, 1, pct)}
+      {kn('swell', 'Respiración', 0, 1, pct)}
+    </div>
+    <div class="sub">Aire, vinilo y rumble</div>
+    <div class="knobs">
+      {kn('air', 'Aire', 0, 1, pct)}
+      {kn('vin', 'Chasquidos de vinilo', 0, 1, pct)}
+      {kn('hiss', 'Siseo', 0, 1, pct)}
+      {kn('rum', 'Rumble', 0, 1, pct)}
+      {kn('wow', 'Inestabilidad', 0, 1, pct)}
+    </div>
+    <div class="hint">La atmósfera suena sin parar mientras el loop está en play, sin grilla: entra con un fundido al dar play y sale al parar. "Sigue los acordes" toma la fundamental del acorde de cada compás (lo que elegiste en Armar) y se desliza de uno a otro; con "Nota fija" queda siempre en la nota que elijas. El movimiento del filtro y la respiración dan un número entero de vueltas por vuelta del loop, así empalman sin saltos. Los sonidos de Vinilo son casi puro ruido: chasquidos, siseo y rumble. Subí la reverb en el Mixer para que se pierda en el fondo.</div>
+  </>;
+}
 function TrackEditor({ p, t, upT, up, part, adv }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; part: 'snd' | 'notes'; adv: boolean }) {
+  if (t.type === 'atmos') return <AtmEditor t={t} upT={upT} />;
   if (t.type === 'fx') return <FxEditor t={t} upT={upT} />;
   if (t.type === 'sample') return <SampleEditor p={p} t={t} upT={upT} />;
   if (t.type === 'drum') {
