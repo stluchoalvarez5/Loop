@@ -246,6 +246,13 @@ async function synthShots(sr: number) {
   // ---- kit Electro: bombo corto tipo 808, snare "zap" y hats metálicos ----
   S.kElectro = norm(await shot(0.5, (c, o, N) => kick(c, o, N, { f0: 190, f1: 62, fe: 50, tp: 0.03, dur: 0.5, hold: 0.05, tau: 0.09, click: 0.25, clickF: 2500, drive: 1.5 })), 0.5);
   S.snareZap = norm(await shot(0.3, (c, o, N) => { const z = c.createOscillator(); z.type = 'triangle'; z.frequency.setValueAtTime(1600, 0); z.frequency.exponentialRampToValueAtTime(140, 0.05); const g = env(c, 0, 0.0005, 0.9, 0.09); z.connect(g); g.connect(o); z.start(0); z.stop(0.12); nz(c, o, N, 0, 0.14, 'highpass', 2500, 0.7, 0.45, 0.001); }), 0.8);
+  // ---- kits Trap (808 largo), Breakbeat (bombo y caja de break) y Latino (bombo suave + percusión real) ----
+  S.kTrap = norm(await shot(1.6, (c, o, N) => kick(c, o, N, { f0: 130, f1: 44, fe: 48, tp: 0.06, dur: 1.6, hold: 0.3, tau: 0.5, click: 0.12, clickF: 1800, drive: 1.8 })), 0.55);
+  S.snareTrap = norm(await shot(0.3, (c, o, N) => { const z = c.createOscillator(); z.frequency.setValueAtTime(260, 0); z.frequency.exponentialRampToValueAtTime(190, 0.03); const g = env(c, 0, 0.0005, 0.7, 0.07); z.connect(g); g.connect(o); z.start(0); z.stop(0.1); [0, 0.008, 0.016].forEach((t) => nz(c, o, N, t, 0.12, 'bandpass', 2200, 0.8, 0.6, 0.0006)); }), 0.8);
+  S.hatTrap = norm(await shot(0.08, (c, o) => hat(c, o, 0.03, 1.5)), 0.7);
+  S.kBreak = norm(await shot(0.4, (c, o, N) => kick(c, o, N, { f0: 150, f1: 58, fe: 52, tp: 0.025, dur: 0.4, hold: 0.04, tau: 0.1, click: 0.4, clickF: 3000, drive: 2.2 })), 0.6);
+  S.snareBreak = norm(await shot(0.5, (c, o, N) => { [[210, 0.6, 0.1], [380, 0.3, 0.06]].forEach(([fr, pk, d]) => { const s2 = c.createOscillator(); s2.frequency.setValueAtTime(fr * 1.3, 0); s2.frequency.exponentialRampToValueAtTime(fr, 0.02); const g = env(c, 0, 0.0006, pk, d); s2.connect(g); g.connect(o); s2.start(0); s2.stop(d + 0.03); }); nz(c, o, N, 0, 0.26, 'bandpass', 2800, 0.5, 0.9, 0.0008); nz(c, o, N, 0, 0.1, 'highpass', 6000, 0.7, 0.35, 0.0008); }), 0.85);
+  S.kLatin = norm(await shot(0.5, (c, o, N) => kick(c, o, N, { f0: 120, f1: 60, fe: 60, tp: 0.04, dur: 0.5, hold: 0.06, tau: 0.14, click: 0.1, clickF: 1500, drive: 0.6 })), 0.5);
   S.hatDark = norm(await shot(0.12, (c, o, N) => nz(c, o, N, 0, 0.085, 'bandpass', 7000, 0.9, 1, 0.002)), 0.95);
   return S;
 }

@@ -1,5 +1,6 @@
 /* Modelo de datos, teoría musical, presets y compilación a eventos para el motor. */
 import { mkPro, osc, M, PRO_LIB } from './presets';
+import { PRO_LIB2 } from './presets2';
 import { GENRES, MEL_STYLES, GENRE_WEIGHTS, parseDrum, parseBass, parseGate } from './genres';
 export { GENRES };
 
@@ -59,7 +60,7 @@ export const PRO_PRESETS: Record<string, { label: string; for: TrackType[]; p: P
   choir: { label: 'Coro vocal', for: ['chords', 'melody'], p: mkPro({ a: osc({ table: 'vocal', pos: 0.5, uni: 4, det: 14, width: 0.9 }), cut: 3500, res: 0.1, lfo1: { shape: 'sine', rate: 32, trig: false }, mods: [M('lfo1', 'posA', 0.35)], env1: { a: 0.7, d: 1, s: 0.85, r: 1.3 }, gain: 1.274 }) },
   stab: { label: 'Stab filtrado', for: ['chords'], p: mkPro({ a: osc({ pos: 0.5, uni: 3, det: 12, width: 0.6 }), b: osc({ pos: 0.75, uni: 2, det: 8, level: 0.5 }), fType: 'lp24', cut: 500, res: 0.4, fEnv: 0.5, env2: { a: 0.001, d: 0.14, s: 0, r: 0.1 }, env1: { a: 0.003, d: 0.25, s: 0, r: 0.12 }, gain: 1.06 }) },
 };
-Object.assign(PRO_PRESETS, PRO_LIB);
+Object.assign(PRO_PRESETS, PRO_LIB, PRO_LIB2);
 /* automatización: qué se puede mover a lo largo de los 4 compases y en qué rango */
 export type AutoKey = 'lp' | 'vol' | 'rev' | 'dly' | 'drive' | 'pan' | 'hp' | 'pitch';
 export const AUTO_PARAMS: { k: AutoKey; label: string; lo: number; hi: number; fmt: (v: number) => string }[] = [
@@ -165,8 +166,9 @@ export type AtmP = {
   air: number; // ruido de aire 0..1
   vin: number; hiss: number; rum: number; // vinilo (chasquidos), siseo y rumble 0..1
   wow: number; // inestabilidad de cinta 0..1
+  sweep: number; // barrido del filtro a lo largo de la escena: −1 (cierra) .. 1 (abre)
 };
-const atm = (o: Partial<AtmP>): AtmP => ({ lvl: 1, note: 45, follow: true, oct: 0, chord: 'fifth', wave: 'saw', uni: 3, det: 12, pad: 1, cut: 1400, res: 0.15, lfo: 1, lfoD: 0.3, swell: 0.2, atk: 1.2, glide: 0.5, air: 0, vin: 0, hiss: 0, rum: 0, wow: 0, ...o });
+const atm = (o: Partial<AtmP>): AtmP => ({ lvl: 1, note: 45, follow: true, oct: 0, chord: 'fifth', wave: 'saw', uni: 3, det: 12, pad: 1, cut: 1400, res: 0.15, lfo: 1, lfoD: 0.3, swell: 0.2, atk: 1.2, glide: 0.5, air: 0, vin: 0, hiss: 0, rum: 0, wow: 0, sweep: 0, ...o });
 export const ATM_CHORDS: Record<string, { label: string; iv: number[] }> = {
   root: { label: 'Una nota', iv: [0] }, fifth: { label: 'Quinta', iv: [0, 7, 12] }, maj: { label: 'Mayor', iv: [0, 4, 7, 12] }, min: { label: 'Menor', iv: [0, 3, 7, 12] },
   sus2: { label: 'Sus2', iv: [0, 2, 7, 12] }, sus4: { label: 'Sus4', iv: [0, 5, 7, 12] }, m7: { label: 'Menor 7', iv: [0, 3, 7, 10] }, maj7: { label: 'Mayor 7', iv: [0, 4, 7, 11] },
@@ -183,6 +185,8 @@ export const ATM_SOUNDS: Record<string, { label: string; group: string; p: AtmP 
   vinyl: { label: 'Vinilo', group: 'Vinilo', p: atm({ lvl: 1.4, pad: 0, vin: 0.55, hiss: 0.3, rum: 0.12, wow: 0.1, atk: 0.3 }) },
   vinylPad: { label: 'Vinilo con pad', group: 'Vinilo', p: atm({ lvl: 0.98, chord: 'min', cut: 900, vin: 0.4, hiss: 0.2, rum: 0.08, wow: 0.4, lfo: 1, lfoD: 0.2, swell: 0.1 }) },
   dust: { label: 'Polvo (chasquidos suaves)', group: 'Vinilo', p: atm({ lvl: 1.8, pad: 0, vin: 0.3, hiss: 0.1, atk: 0.3 }) },
+  rise: { label: 'Subida continua', group: 'Texturas', p: atm({ pad: 0.5, chord: 'fifth', air: 0.6, cut: 500, res: 0.35, sweep: 1, lfo: 0, lfoD: 0, swell: 0, atk: 0.3, lvl: 0.8 }) },
+  room: { label: 'Sala (ambiente)', group: 'Vinilo', p: atm({ pad: 0, rum: 0.3, air: 0.25, hiss: 0.1, cut: 700, lfo: 1, lfoD: 0.3, swell: 0.1, atk: 0.8, lvl: 0.7 }) },
   rumble: { label: 'Rumble de sala', group: 'Vinilo', p: atm({ lvl: 0.36, pad: 0, rum: 0.7, hiss: 0.06, air: 0.1, cut: 300, atk: 0.8 }) },
 };
 export const FX_SOUNDS: Record<string, { label: string; group: string; p: FxP }> = {
@@ -230,6 +234,7 @@ export type Track = {
   synth?: Synth;
   arp?: { mode: string; rate: '16' | '8' | '4' | 'tr' | '32' | 't8' | 't16'; oct: number; gate: boolean[]; pat?: ArpPat; len?: number; reg?: number }; // pat: arpegiador que sigue los acordes (len = largo de nota, reg = registro −1/0/1)
   chordMode?: 'pad' | 'stab' | 'gate';
+  voic?: string; strum?: number; // acordes: voicing (VOICINGS) y strum 0..1 (cuánto del paso se reparte entre las notas)
   chordLen?: number; // largo de cada golpe de acorde en pasos (stab y gate)
   bassLine?: number[]; // bajo: semitonos sobre la fundamental en cada paso (0, 12 = octava, 7 = quinta…)
   bassLen?: number; // bajo: largo de cada nota en pasos
@@ -244,7 +249,7 @@ export type Track = {
   group?: string; // id del grupo al que pertenece
   roll?: boolean; // bajo, arpegio o acordes editados a mano en el piano roll: suenan las notas de `notes` en vez de lo generado
   auto?: Partial<Record<AutoKey, number[]>>; // automatización: 64 valores 0..1 (uno por paso de los 4 compases)
-  vox?: { from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number; to?: number; db?: number; clip?: boolean; free?: boolean; loop?: boolean; keep?: boolean; bpm?: number; off?: number; wm?: [number, number][]; gm?: 'b'; conf?: number }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
+  vox?: { keys?: boolean; root?: number; from: number; rev: boolean; has: boolean; pos?: number; one?: boolean; name?: string; sec?: number; to?: number; db?: number; clip?: boolean; free?: boolean; loop?: boolean; keep?: boolean; bpm?: number; off?: number; wm?: [number, number][]; gm?: 'b'; conf?: number }; // `one`: cada golpe corta el anterior (sample propio); name y sec: archivo y duración del sample
   // // voz grabada: recorte del inicio (0..1), al revés, si ya hay audio y en qué paso de los 64 arranca
   notes?: Note[]; // melodía: s = paso 0-63, n = nota MIDI, l = largo en pasos
   autoMelody?: boolean; // true mientras la melodía sea la generada por el nombre (se regenera si cambia la armonía)
@@ -252,7 +257,7 @@ export type Track = {
 /* ---------- escenas: lo que cambia entre A, B, C y D (patrones, notas, encendido y automatización; la mezcla es la misma) ---------- */
 export const SCENES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']; // las 8 escenas posibles; se ven las primeras 4 y las que se sumen con "+" (`p.nScenes`) o ya estén usadas
 export const sceneList = (p: Project) => { let n = Math.max(4, Math.min(SCENES.length, p.nScenes ?? 4)); SCENES.forEach((k, i) => { if (i >= n && sceneUsed(p, k)) n = i + 1; }); return SCENES.slice(0, n); };
-const SK = ['steps', 'vel', 'velG', 'prob', 'probG', 'rat', 'ratG', 'nud', 'nudG', 'div', 'grid', 'mute', 'arp', 'notes', 'roll', 'rollEdited', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'auto', 'autoMelody'] as const;
+const SK = ['steps', 'vel', 'velG', 'prob', 'probG', 'rat', 'ratG', 'nud', 'nudG', 'div', 'grid', 'mute', 'arp', 'notes', 'roll', 'rollEdited', 'bassLine', 'bassLen', 'chordMode', 'chordLen', 'voic', 'strum', 'auto', 'autoMelody'] as const;
 export type SceneSnap = { t: Record<string, Partial<Track>>; macros?: Project['macros']; macroAuto?: Project['macroAuto']; fill?: boolean };
 const cl = <T,>(o: T): T => (o === undefined ? o : JSON.parse(JSON.stringify(o)));
 export function snapScene(p: Project): SceneSnap {
@@ -665,6 +670,9 @@ export const KITS: Record<string, { label: string; map: Record<string, string> }
   melodic: { label: 'Kit Melodic', map: { kick: 'kMelodic', clap: 'snap', hat: 'rHat', open: 'rOpen', snare: 'snareSoft', rim: 'rim' } },
   prog: { label: 'Kit Progressive', map: { kick: 'kProg', clap: 'clap1', hat: 'rHat', open: 'rOpen', snare: 'snare', rim: 'rim' } },
   synth80: { label: 'Kit Synthwave 80s', map: { kick: 'k80s', clap: 'clapGated', hat: 'hatTight', open: 'openH', snare: 'snareGated', rim: 'rim' } },
+  trap: { label: 'Kit Trap', map: { kick: 'kTrap', clap: 'clap808', hat: 'hatTrap', open: 'open808', snare: 'snareTrap', rim: 'clave' } },
+  breakbeat: { label: 'Kit Breakbeat', map: { kick: 'kBreak', clap: 'clap2', hat: 'rHat', open: 'rOpen', snare: 'snareBreak', rim: 'rim' } },
+  latin: { label: 'Kit Latino', map: { kick: 'kLatin', clap: 'tamb', hat: 'shaker', open: 'ride', snare: 'conga', rim: 'clave' } },
   electro: { label: 'Kit Electro', map: { kick: 'kElectro', clap: 'clap808', hat: 'hat808', open: 'open808', snare: 'snareZap', rim: 'clave' } },
   real: { label: 'Kit Real (acústico)', map: { kick: 'kProg', clap: 'rClap', hat: 'rHat', open: 'rOpen', snare: 'rSnare', rim: 'rRim' } },
   lofi: { label: 'Kit Lo-Fi', map: { kick: 'lofiKick', clap: 'lofiClap', hat: 'lofiHat', open: 'lofiOpen', snare: 'lofiSnare', rim: 'rim' } },
@@ -696,6 +704,42 @@ const mkTrack = (id: string, name: string, type: TrackType, sound: string, extra
   id, name, color: COLORS[id], type, steps: Array(16).fill(0), sound, pitch: 0, decay: 1, vol: 0.8, pan: 0, mute: false, solo: false, duck: 0, ...extra, rev: 0, dly: 0, // todo instrumento nuevo arranca sin reverb ni delay (pedido de Luc)
 });
 
+/* acordes: voicing (cómo se ordenan las notas) y strum (las notas entran una detrás de otra dentro del paso) */
+export const VOICINGS: Record<string, string> = { close: 'Cerrado', inv1: '1ª inversión', inv2: '2ª inversión', drop2: 'Drop 2', open: 'Abierto', wide: 'Ancho', shell: 'Esqueleto (1-3-7)' };
+export function voiceChord(m: number[], v?: string): number[] {
+  const a = [...m].sort((x, y) => x - y), n = a.length; if (n < 2 || !v || v === 'close') return a;
+  if (v === 'inv1') return [...a.slice(1), a[0] + 12];
+  if (v === 'inv2') return n > 2 ? [...a.slice(2), a[0] + 12, a[1] + 12] : [a[1], a[0] + 12];
+  if (v === 'drop2') return n > 2 ? [a[n - 2] - 12, ...a.slice(0, n - 2), a[n - 1]].sort((x, y) => x - y) : a;
+  if (v === 'open') return a.map((x, i) => (i % 2 === 1 ? x + 12 : x)).sort((x, y) => x - y);
+  if (v === 'wide') return [a[0] - 12, ...a.slice(1, n - 1), a[n - 1] + (n > 2 ? 12 : 0)];
+  if (v === 'shell') return n > 3 ? [a[0], a[1], a[n - 1]] : a.slice(0, 2).concat(a[n - 1] === a[1] ? [] : [a[n - 1]]);
+  return a;
+}
+const strumO = (o: number | undefined, i: number, n: number, st: number) => Math.min(0.97, (o ?? 0) + (n > 1 ? (i / (n - 1)) * st * 0.9 : 0));
+/* "Build": arma de una vez la transición al final de la escena: un riser en el último compás, un impacto al empezar la vuelta y el redoble */
+export function addBuild(p: Project) {
+  const nb = sceneBars(p), a = Math.max(0, nb - 1) * 16;
+  let r = p.tracks.find((t) => t.id === 'build-riser'), im = p.tracks.find((t) => t.id === 'build-impact');
+  if (!r) { r = newTrack(p, 'fx', 'riserTone'); r.id = 'build-riser'; r.name = 'Build ↑'; r.rev = 0.25; p.tracks.push(r); }
+  if (!im) { im = newTrack(p, 'fx', 'impact'); im.id = 'build-impact'; im.name = 'Impacto'; im.rev = 0.2; p.tracks.push(im); }
+  r.mute = false; im.mute = false;
+  r.steps = Array(64).fill(0); r.steps[a] = 1; r.fxs = { ...FX_SOUNDS.riserTone.p, len: nb === 1 ? 12 : 16 };
+  im.steps = Array(64).fill(0); im.steps[0] = 2;
+  p.fill = true;
+}
+/* bajo: notas fantasma (golpes suaves en los "y" de semicorchea) y huecos para que respire con el bombo */
+export function bassGhost(t: Track) {
+  const n = t.steps.length >= 64 ? 64 : 16; t.steps = Array.from({ length: n }, (_, i) => t.steps[i] ?? 0);
+  t.bassLine = Array.from({ length: n }, (_, i) => t.bassLine?.[i % (t.bassLine?.length || 1)] ?? 0);
+  const v = Array.from({ length: n }, (_, i) => t.vel?.[i] ?? 0); let k = 0;
+  for (let i = 0; i < n; i++) if (!t.steps[i] && i % 4 === 3 && (i + k) % 3 !== 1) { t.steps[i] = 1; v[i] = 0.26 + ((i * 7) % 5) * 0.02; t.bassLine[i] = 0; k++; }
+  t.vel = v; t.div = undefined;
+}
+export function bassSpace(p: Project, t: Track) {
+  const kick = p.tracks.find((x) => x.type === 'drum' && x.sound === 'kick' && !x.mute); if (!kick) return false;
+  t.steps = t.steps.map((v, i) => (kick.steps[i % kick.steps.length] && i % 16 !== 0 ? 0 : v)); t.div = undefined; return true;
+}
 const PALETTE = ['#e5655b', '#e98a5f', '#e9c46a', '#d6cf7e', '#a7c973', '#6fbf86', '#e3b04b', '#8fc7a0', '#c97a6e', '#b8d39a', '#f0d99a', '#5fa877'];
 export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   const n = p.tracks.length, id = type + '-' + Date.now().toString(36), color = PALETTE[n % PALETTE.length];
@@ -986,6 +1030,7 @@ export function compile(p0: Project) {
       // sample propio (audio que subió el usuario): suena como una percusión en los golpes de la grilla
       kind = 'sample'; sample = 'vox:' + t.id + (t.vox?.rev ? ':r' : '');
       if (t.vox?.has && (t.vox.clip || t.vox.free)) { const ps = Math.max(0, Math.min(63.5, t.vox.pos ?? 0)), s0 = Math.floor(ps + 1e-6); ev[s0].push({ v: 0.9, ...(ps - s0 > 1e-6 ? { o: ps - s0 } : {}) }); } // capela / loop largo: suena una sola vez por vuelta
+      else if (t.vox?.has && t.vox.keys) (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ v: 0.85, pt: nt.n - (t.vox!.root ?? 60), l: Math.max(0.25, nt.l), ...(nt.o ? { o: nt.o } : {}) }); });
       else if (t.vox?.has) for (const h of stepHits(t)) ev[h.s].push({ v: (h.x ?? (h.v === 2 ? 1 : h.v === 3 ? 0.38 : 0.8)) * (h.m ?? 1), ...(h.p !== undefined ? { p: h.p } : {}), ...(h.o ? { o: h.o } : {}) });
     } else if (t.type === 'atmos') {
       kind = 'atm'; atmP = { ...(ATM_SOUNDS[t.sound]?.p ?? ATM_SOUNDS.warm.p), ...t.atm };
@@ -1034,9 +1079,9 @@ export function compile(p0: Project) {
       (t.notes ?? []).forEach((nt) => { if (nt.s >= 0 && nt.s < 64) ev[nt.s].push({ n: nt.n, v: 0.85, l: Math.max(Math.min(0.5, nt.l), nt.l - 0.1), ...(nt.o ? { o: nt.o } : {}) }); });
     } else {
       const base = t.synth ?? SYNTHS[t.sound]?.p ?? SYNTHS.strings.p;
-      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); if (synth.pro && synth !== base) synth.pro = { ...base.pro!, env1: { a: 0.004, d: Math.min(base.pro!.env1.d, 0.4), s: 0, r: 0.15 } }; for (const { s, o, x, p: pp, m: mm } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m, v: (x ?? 0.8) * (mm ?? 1), l: t.chordLen ?? 1, o, ...(pp !== undefined ? { p: pp } : {}) })); }
-      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05), pro: base.pro && { ...base.pro, env1: { ...base.pro.env1, a: Math.min(base.pro.env1.a, 0.004), r: Math.min(base.pro.env1.r, 0.05) } } }; for (const { s, o, x, p: pp, m: mm } of stepHits(t)) p.chords[Math.floor(s / 16)].midi.forEach((m) => ev[s].push({ n: m - 12, v: (x ?? 0.8) * (mm ?? 1), l: t.chordLen ?? 0.8, o, ...(pp !== undefined ? { p: pp } : {}) })); }
-      else { synth = base; for (let b = 0; b < 4; b++) p.chords[b].midi.forEach((m) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5 })); }
+      if (t.chordMode === 'stab') { synth = t.chordLen && t.chordLen > 1.2 ? base : STAB(base); if (synth.pro && synth !== base) synth.pro = { ...base.pro!, env1: { a: 0.004, d: Math.min(base.pro!.env1.d, 0.4), s: 0, r: 0.15 } }; for (const { s, o, x, p: pp, m: mm } of stepHits(t)) voiceChord(p.chords[Math.floor(s / 16)].midi, t.voic).forEach((m, ci, ar) => ev[s].push({ n: m, v: (x ?? 0.8) * (mm ?? 1), l: t.chordLen ?? 1, o: strumO(o, ci, ar.length, t.strum ?? 0), ...(pp !== undefined ? { p: pp } : {}) })); }
+      else if (t.chordMode === 'gate') { synth = { ...base, attack: Math.min(base.attack, 0.004), release: Math.min(base.release, 0.05), pro: base.pro && { ...base.pro, env1: { ...base.pro.env1, a: Math.min(base.pro.env1.a, 0.004), r: Math.min(base.pro.env1.r, 0.05) } } }; for (const { s, o, x, p: pp, m: mm } of stepHits(t)) voiceChord(p.chords[Math.floor(s / 16)].midi, t.voic).forEach((m, ci, ar) => ev[s].push({ n: m - 12, v: (x ?? 0.8) * (mm ?? 1), l: t.chordLen ?? 0.8, o: strumO(o, ci, ar.length, t.strum ?? 0), ...(pp !== undefined ? { p: pp } : {}) })); }
+      else { synth = base; for (let b = 0; b < 4; b++) voiceChord(p.chords[b].midi, t.voic).forEach((m, ci, ar) => ev[b * 16].push({ n: m - 12, v: 0.8, l: 15.5, ...(t.strum ? { o: strumO(0, ci, ar.length, t.strum) } : {}) })); }
     }
     if (t.id === fillId) for (let s = NB * 16 - 8; s < NB * 16; s++) ev[s] = [{ v: 0.3 + 0.7 * ((s - (NB * 16 - 8)) / 7) ** 1.3 }]; // redoble: semicorcheas que crecen en los últimos 2 tiempos
     if (p.fill && t.type === 'drum' && t.sound !== 'kick' && t.id !== fillId && ['hat', 'open'].includes(t.sound)) for (let s = NB * 16 - 4; s < NB * 16; s++) ev[s] = [];

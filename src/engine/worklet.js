@@ -562,7 +562,7 @@ class AtmVoice {
         const ps = ps0 + s / slen, lp = len > 0 ? (ps / len) : 0, ph = cyc ? ((lp * cyc) % 1 + 1) % 1 : 0;
         const lf = cyc ? Math.sin(TWO * ph) : 0;
         this.ampM = 1 - P.swell * 0.5 * (1 - (cyc ? Math.cos(TWO * ph) : 1));
-        const f = Math.min(sr * 0.42, Math.max(30, P.cut * Math.pow(2, P.lfoD * lf * 2)));
+        const f = Math.min(sr * 0.42, Math.max(30, P.cut * Math.pow(2, P.lfoD * lf * 2 + (P.sweep ? P.sweep * 4 * ((lp % 1) - 0.5) : 0))));
         this.gc = Math.tan(Math.PI * f / sr); this.kk = 2 * (1 - Math.min(0.9, P.res) * 0.97);
         for (let j = 0; j < 4; j++) {
           const tg = j < nt ? tones[j] : tones[0], sg = j < nt ? 1 : 0;
@@ -771,7 +771,8 @@ class LoopEngine extends AudioWorkletProcessor {
       // voz: corta la anterior (choke) para que una palabra no se pise con la siguiente
       if (t.choke) for (const x of t.voices) if (x.on && x !== v) x.hold = Math.min(x.hold, x.n + offset);
       const hum = 1 + (Math.random() * 2 - 1) * (t.human || 0);
-      v.start(buf, Math.pow(2, (t.pitch || 0) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0, t.to || 0);
+      v.start(buf, Math.pow(2, ((t.pitch || 0) + (ev.pt || 0)) / 12), ev.v * hum, t.decay ?? 1, pan, this.sr, t.from || 0, t.to || 0);
+      if (ev.pt !== undefined && ev.l) v.hold = Math.min(v.hold, ev.l * this.stepLen()); // sample por notas: dura lo que dura la nota
       v.tr = t.tr || 1; v.keep = !!t.keep; v.loop = !!t.loopv; v.tn = Math.max(-0.9, Math.min(0.9, t.tn || 0)); v.at = t.at || 0; v.pe = t.pe || 0;
       if (t.slice) { v.slice = true; v.bInit = false; v.bm = { wm: t.wmB, off: t.goff || 0, abps: t.abps || 2 }; v.start0 = v.pos; }
       v.delay = offset;
