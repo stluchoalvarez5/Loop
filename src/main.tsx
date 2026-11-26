@@ -496,6 +496,8 @@ function App() {
     remember(p, true); flushSave(); setP(np); engine.update(np); save(np);
     setTimeout(() => { goTab('pat'); flash(drums ? 'Loop nuevo con la batería del género: sumale bajo, acordes y melodía.' : 'Loop vacío: tocá los casilleros para armar tu ritmo.', 3500); }, 0);
   };
+  // proyecto nuevo rápido, vacío, para armar a mano (botón "+" de arriba): conserva los sonidos del género del loop abierto y el tempo
+  const newBlank = () => fromScratch({ tonic: 9, mode: 'min', degrees: [0, 5, 2, 6], ext: 7 }, p.genre, false, '');
   const tr = p.tracks.find((t) => t.id === sel) ?? p.tracks[0];
   const [toast, setToast] = useState('');
   const toastT = useRef<any>(0);
@@ -540,6 +542,7 @@ function App() {
       <header class="top">
         <div class="logo" aria-label="Loop">LOOP<i class={playing ? 'on' : ''} /></div>
         <button class="tb proj" onClick={() => setLoopsOpen(true)} aria-label="Mis loops">{Ic.folder}<span>{titleOf(p)}</span></button>
+        <button class="tb newp" onClick={newBlank} aria-label="Proyecto nuevo, vacío" title="Proyecto nuevo, vacío">+</button>
         <div class="sp" />
         <button class="tb" disabled={!hist.current.past.length} onClick={undo} aria-label="Deshacer">{Ic.undo}</button>
         <button class="tb" disabled={!hist.current.future.length} onClick={redo} aria-label="Rehacer">{Ic.redo}</button>

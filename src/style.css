@@ -726,3 +726,5 @@ img,svg{-webkit-user-drag:none}
 .gt-b{padding:0 14px 8px 14px;font-size:13.5px;line-height:1.55;color:#d6d6d6}
 .gtour{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid #333}
 .txt.desc{resize:vertical;min-height:54px;line-height:1.4}
+
+.tb.newp{font-size:18px;font-weight:600;line-height:1;padding:0 10px}
