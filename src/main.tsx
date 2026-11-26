@@ -23,7 +23,7 @@ import { midi, connectMidi, saveMidi, useMidiPing, type MidiMsg } from './midi';
 import {
   type Pro, type ProOsc, type ProEnv, type ProLfo, type WTable, mkPro, proFrom, PRO_PRESETS, setSound, WTABLES, MOD_SRC, MOD_DST, LFO_RATES, type Manual, PROGS, ROMAN, NOTE_ES, blankProject, applyGenreSound, manualHarmony, manualFrom, type EqBand, EQ_DEF, SCENES, switchScene, sceneUsed, sceneBars, copyScene, sceneList, hasAudio, nextScene, clearScene, varyTrack, type MacroKey, rollFromTrack, type Group, MACROS, AUTO_PARAMS, AUTO_SHAPES, autoShape, type AutoKey,
   type Project, type Track, SYNTHS, KITS, DRUM_SOUNDS, GENRES, newProject, projectFromName, applyGenre, harmonyFromName, applyHarmony,
-  FX_SOUNDS, FX_GROUPS, type FxP, ATM_SOUNDS, ATM_CHORDS, type AtmP, VOICINGS, addBuild, bassGhost, bassSpace, clipHas, WORDS, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType, sampleKey } from './model';
+  FX_SOUNDS, FX_GROUPS, type FxP, ATM_SOUNDS, ATM_CHORDS, type AtmP, VOICINGS, addBuild, bassGhost, bassSpace, duplicateTrack, clipHas, WORDS, DBUS_DEF, DBUS_PRESETS, type DrumP, DRUM_SYNTHS, DRUM_SYNTH_GROUPS, type RevP, type DlyP, REV_DEF, DLY_DEF, REV_TYPES, DLY_TYPES, DLY_TIMES, DIVS, fineArr, initFine, stepHits, expand64, arpSeq, arpFineHits, ARP_FINE, ARP_PATS, ARP_RHYTHMS, arpPlays, arpPreview, noteName, letterNote, clean, newTrack, generateMelody, nameScale, DRUM_GROUPS, type TrackType, sampleKey } from './model';
 
 const engine = new Engine();
 const clone = <T,>(o: T): T => JSON.parse(JSON.stringify(o));
@@ -289,7 +289,7 @@ function Sheet({ title, icon, onClose, children }: { title: string; icon?: any; 
 }
 /* vista de detalle del instrumento (abajo, como en Ableton): pestañas Sonido, Notas, Movimiento y Más */
 type DTab = 'snd' | 'rit' | 'notes' | 'eq' | 'move' | 'more';
-function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; adv: boolean; playing: boolean; onClose: () => void; onDelete: () => void; init?: DTab }) {
+function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, onDuplicate, init = 'snd' }: { p: Project; t: Track; upT: (id: string, fn: (t: Track) => void) => void; up: (fn: (d: Project) => void) => void; adv: boolean; playing: boolean; onClose: () => void; onDelete: () => void; onDuplicate: () => void; init?: DTab }) {
   const [tab, setTab] = useState<DTab>(init), [help, setHelp] = useState(false);
   const hasNotes = (t.type === 'sample' && !!t.vox?.keys) || t.type === 'melody' || t.type === 'bass' || t.type === 'arp' || t.type === 'chords';
   const canGrid = t.type === 'drum' || t.type === 'bass' || t.type === 'fx' || (t.type === 'sample' && !t.vox?.clip && !t.vox?.free && !t.vox?.keys) || (t.type === 'chords' && (t.chordMode ?? 'pad') !== 'pad');
@@ -317,7 +317,7 @@ function Detail({ p, t, upT, up, adv, playing, onClose, onDelete, init = 'snd' }
         {cur === 'more' && <>
           <TrackTools p={p} t={t} upT={upT} />
           {adv && <GroupPick p={p} t={t} upT={upT} />}
-          <div class="chips" style={{ marginTop: '12px' }}><DeleteBtn onDelete={onDelete} /></div>
+          <div class="chips" style={{ marginTop: '12px' }}><button class="chip ic" onClick={onDuplicate}>{Ic.copy}Duplicar instrumento</button><DeleteBtn onDelete={onDelete} /></div>
           <div class="hint">"Copiar patrón" lo guarda y "Pegar" lo pone en otra pista, incluso en otro loop. El dado de arriba (Variación) le da otro patrón a este instrumento.</div>
         </>}
       </div>
@@ -534,6 +534,16 @@ function App() {
   const [detail, setDetail] = useState(false), [loopsOpen, setLoopsOpen] = useState(false), [dTab, setDTab] = useState<DTab>('snd');
   const pick = (id: string, tb: DTab = 'snd') => { if (id === sel && detail && tb === dTab) setDetail(false); else { setSel(id); setDTab(tb); setDetail(true); } };
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDetail(false); setLoopsOpen(false); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
+  // duplicar: copia el instrumento (y su audio si es voz o sample) justo debajo, en la escena abierta
+  const dupTrack = () => {
+    if (!tr) return; if (p.tracks.length >= 16) { flash('Ya hay 16 instrumentos: borrá alguno para duplicar'); return; }
+    const o = tr; let nid = ''; up((d) => { const nt = duplicateTrack(d, o.id); if (nt) nid = nt.id; });
+    setTimeout(async () => {
+      if (!nid) return; setSel(nid);
+      if (hasAudio(o)) { const v = await loadVox(o.id).catch(() => undefined); if (v) { await saveVox(nid, v).catch(() => {}); engine.setVox(nid, v.data, v.sr); } }
+      flash('Duplicaste ' + o.name + ' (en las otras escenas queda apagado)');
+    }, 0);
+  };
   const delTrack = () => { if (!tr) return; const left = p.tracks.filter((x) => x.id !== tr.id); if (!left.length) return; up((d) => { d.tracks = d.tracks.filter((x) => x.id !== tr.id); }); setSel(left[0].id); setDetail(false); flash(tr.name + ' eliminada'); };
   const showDetail = detail && (tab === 'pat' || tab === 'mix') && !!tr;
   // al abrir el editor, la fila del instrumento elegido queda a la vista arriba de él
@@ -661,7 +671,7 @@ function App() {
           <div class="hint">Tocá el nombre de un instrumento para abrir su editor abajo (sonido, notas y más). El botón de color de la izquierda lo enciende o apaga. En la grilla, un toque prende el golpe, otro lo acentúa y el tercero lo apaga; los casilleros tenues son golpes suaves. Arriba a la derecha: redoble al final de cada vuelta y vaciar la batería.</div>
         </Panel>
       </div>}
-      {showDetail && tr && <Detail key={tr.id + dTab} init={dTab} p={p} t={tr} upT={upT} up={up} adv={adv} playing={playing} onClose={() => setDetail(false)} onDelete={delTrack} />}
+      {showDetail && tr && <Detail key={tr.id + dTab} init={dTab} p={p} t={tr} upT={upT} up={up} adv={adv} playing={playing} onClose={() => setDetail(false)} onDelete={delTrack} onDuplicate={dupTrack} />}
       {toast && <div class="toast">{toast}</div>}
       {noAudio && <div class="toast">Este navegador no puede reproducir el audio de la app. En iPhone hace falta iOS 14.5 o más nuevo: actualizá el sistema o probá con otro navegador.</div>}
 

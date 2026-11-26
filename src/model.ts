@@ -740,6 +740,18 @@ export function bassSpace(p: Project, t: Track) {
   const kick = p.tracks.find((x) => x.type === 'drum' && x.sound === 'kick' && !x.mute); if (!kick) return false;
   t.steps = t.steps.map((v, i) => (kick.steps[i % kick.steps.length] && i % 16 !== 0 ? 0 : v)); t.div = undefined; return true;
 }
+/* duplica un instrumento en la escena abierta (queda justo debajo del original; en las otras escenas existe pero apagado). Los audios de voz y samples los copia quien llama (viven en IndexedDB). */
+export function duplicateTrack(p: Project, id: string): Track | undefined {
+  const i = p.tracks.findIndex((t) => t.id === id); if (i < 0 || p.tracks.length >= 16) return undefined;
+  const o = p.tracks[i], nt: Track = cl(o), cur = p.scene ?? 'A';
+  nt.id = o.type + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); nt.solo = false;
+  const m = /^(.*?)(?: (\d+))?$/.exec(o.name) ?? [], base = m[1] || o.name; let k = m[2] ? +m[2] + 1 : 2; while (p.tracks.some((t) => t.name === base + ' ' + k)) k++;
+  nt.name = base + ' ' + k;
+  p.tracks.splice(i + 1, 0, nt);
+  // en las demás escenas existe pero apagado (si no, aparecería sonando en todas)
+  Object.keys(p.scenes ?? {}).forEach((sc) => { if (sc === cur) return; const sn = p.scenes![sc], o2: any = {}; SK.forEach((key) => { if (nt[key] !== undefined) o2[key] = cl(nt[key]); }); o2.mute = true; sn.t[nt.id] = o2; });
+  return nt;
+}
 const PALETTE = ['#e5655b', '#e98a5f', '#e9c46a', '#d6cf7e', '#a7c973', '#6fbf86', '#e3b04b', '#8fc7a0', '#c97a6e', '#b8d39a', '#f0d99a', '#5fa877'];
 export function newTrack(p: Project, type: TrackType, sound?: string): Track {
   const n = p.tracks.length, id = type + '-' + Date.now().toString(36), color = PALETTE[n % PALETTE.length];
