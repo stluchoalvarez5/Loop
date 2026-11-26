@@ -159,6 +159,7 @@ export class Engine {
     });
   }
   stop() { this.node?.port.postMessage({ type: 'stop' }); this.playing = false; }
+  fillNow() { if (this.playing) this.node?.port.postMessage({ type: 'fill' }); } // redoble en el momento
   preview(id: string, note: number) { this.node?.port.postMessage({ type: 'preview', id, note }); }
 }
 

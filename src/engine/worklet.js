@@ -668,6 +668,7 @@ class LoopEngine extends AudioWorkletProcessor {
     this.compEnv = 0; this.limG = 1; this.LA = 64; this.laL = new Float32Array(this.LA); this.laR = new Float32Array(this.LA); this.laI = 0;
     this.pkWin = new Float32Array(this.LA); this.pkBlk = new Float32Array(this.LA >> 3); this.ceil = dbToGain(-1); this.limAtk = 1 - Math.exp(-5 / this.LA);
     this.duck = 1; this.duckTarget = 1; this.meterN = 0; this.peak = 0; this.revRet = 0.8; this.dlyRet = 0.6;
+    this.fillLeft = 0;
     this.buf = { L: new Float32Array(128), R: new Float32Array(128), rL: new Float32Array(128), rR: new Float32Array(128), dL: new Float32Array(128), dR: new Float32Array(128), tL: new Float32Array(128), tR: new Float32Array(128), bL: new Float32Array(128), bR: new Float32Array(128), kd: new Float32Array(128) };
     this.stepAt = -1; this.clock = 0; this.freezeAt = 0; this.quiet = false;
     this.port.onmessage = (e) => this.onMsg(e.data);
@@ -739,6 +740,7 @@ class LoopEngine extends AudioWorkletProcessor {
       return;
     }
     if (m.type === 'tap') { this.tap = m.id ? new SpecTap(this.sr, m.id) : null; return; }
+    if (m.type === 'fill') { if (this.playing) this.fillLeft = 8; return; } // redoble en el momento: 8 semicorcheas que crecen desde el próximo paso
     if (m.type === 'play') { const f = m.from | 0, sl = this.stepLen(); this.playing = true; this.done = {}; this.pos = f * sl; this.next = f; this.nextT = f * sl; this.step = -1; return; }
     if (m.type === 'stop') { this.playing = false; this.tracks.forEach((t) => t.voices.forEach((v) => { if (v.stage !== undefined) v.stage = 2; else fastRelease(v, this.sr); })); return; }
     if (m.type === 'preview') { for (const id of [m.id, m.id + ':L', m.id + ':O']) { const t = this.tracks.find((x) => x.id === id); if (t) this.trigger(t, { n: m.note, v: 1, l: 4 }, 0); } }
@@ -801,9 +803,14 @@ class LoopEngine extends AudioWorkletProcessor {
           const st = this.next; this.step = st;
           // escena en cola: entra justo en el paso 0 (antes se cambiaba al empezar el paso 63 y un toque en el último paso esperaba otra vuelta entera)
           if (this.pendingProj && (st === 0 || (this.pendingProj.q === 'bar' && st % 16 === 0))) { const pp = this.pendingProj; this.pendingProj = null; this.onMsg({ type: 'project', project: pp.project }); tracks = this.tracks; }
-          for (const t of tracks) { if (!t.play) continue; const evs = t.ev[st]; if (!evs || !evs.length) continue; if (t.once) { const dn = this.done || (this.done = {}); if (dn[t.id]) continue; dn[t.id] = 1; } // sample "de largo": suena una vez y sigue, no vuelve a arrancar en cada vuelta
+          const fl = this.fillLeft > 0 && this.compiled ? this.compiled.fillTrack : undefined, fk = 8 - this.fillLeft; // fl: pista del redoble que está sonando "en el momento"
+          for (const t of tracks) { if (!t.play) continue; let evs = t.ev[st];
+            if (fl !== undefined && (t.id === fl || t.id === fl + ':L' || t.id === fl + ':O')) evs = [{ v: 0.3 + 0.7 * Math.pow(fk / 7, 1.3) }]; // el golpe del redoble reemplaza lo de la grilla
+            else if (fl !== undefined && t.hatFill && this.fillLeft <= 4) continue; // los hats se callan en el último tiempo
+            if (!evs || !evs.length) continue; if (t.once) { const dn = this.done || (this.done = {}); if (dn[t.id]) continue; dn[t.id] = 1; } // sample "de largo": suena una vez y sigue, no vuelve a arrancar en cada vuelta
           const off = t.groove ? Math.round(t.groove[st % t.groove.length] * sl) : 0; { let roll = -1; for (const ev of evs) { if (ev.p !== undefined) { if (roll < 0) roll = Math.random(); if (roll > ev.p) continue; } this.trigger(t, ev, i + off + (ev.o ? Math.round(ev.o * sl) : 0)); } } // ev.p: probabilidad del golpe (una tirada por pista y paso: un acorde entra o no entero)
           } // ev.o: desfase dentro del paso (grilla fina)
+          if (this.fillLeft > 0) this.fillLeft--;
           if (!this.quiet) this.port.postMessage({ type: 'step', step: st, frame: currentFrame + i }); this.stepAt = i;
           this.next = st + 1;
           if (this.next >= LEN) { this.next = 0; this.pos -= loopLen; if (this.arr) { const np = this.arr[++this.arrI]; if (np) { this.onMsg({ type: 'project', project: np }); tracks = this.tracks; } } }
@@ -904,6 +911,9 @@ class LoopEngine extends AudioWorkletProcessor {
         }
         if (tp && !this.quiet) { tp.cnt += N; if (tp.cnt >= 2048) { tp.cnt -= 2048; const pre = new Float32Array(TAPB), post = new Float32Array(TAPB); tp.fft(tp.pre, pre); tp.fft(tp.post, post); this.port.postMessage({ type: 'spec', id: tp.id, pre, post }, [pre.buffer, post.buffer]); } }
       }
+      // redoble: la pista que lo toca baja sus envíos de reverb y delay mientras dura (8 golpes seguidos al delay lo llenaban de repeticiones)
+      { const cp = this.compiled, isF = !!cp && cp.fillTrack !== undefined && (t.id === cp.fillTrack || t.id === cp.fillTrack + ':L' || t.id === cp.fillTrack + ':O'); const act = isF && on && (this.fillLeft > 0 || (cp.fillOn && this.step >= (this.len || 4) * 16 - 8));
+        t.fsm = (t.fsm === undefined ? 1 : t.fsm) + ((act ? 0.2 : 1) - (t.fsm === undefined ? 1 : t.fsm)) * 0.12; if (t.fsm < 0.999) { aRev *= t.fsm; aDly *= t.fsm; } }
       if (MD && MD.sk) { aRev = Math.min(1, aRev * mSk + (t.spAdd && mSadd > 0 ? mSadd : 0)); aDly = Math.min(1, aDly * mSk); }
       const audible = !t.mute && (!anySolo || t.solo);
       const g = audible ? t.gain * aVol : 0, gl = g * Math.cos((aPan + 1) * Math.PI / 4) * 1.414, gr = g * Math.sin((aPan + 1) * Math.PI / 4) * 1.414;

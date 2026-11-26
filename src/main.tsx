@@ -336,7 +336,8 @@ function SceneBar({ p, go, queued, up, adv, onCopy }: { p: Project; go: (k: stri
     <div class="seg sbars">{[1, 2, 3, 4].map((n) => <button class={sceneBars(p) === n ? 'on' : ''} aria-label={`Escena ${cur} de ${n} compás${n > 1 ? 'es' : ''}`} onClick={() => up((d) => { d.bars = { ...d.bars, [cur]: n }; })}>{n}</button>)}</div></div>
     <div class="sp" />
     {adv && <button class={'ib sm' + (p.chain ? ' on' : '')} onClick={() => up((d) => { d.chain = !d.chain; })} aria-label="Cadena: pasar solas las escenas" aria-pressed={!!p.chain} title="Cadena">{Ic.chain}</button>}
-    <button class={'ib sm' + (p.fill ? ' on' : '')} onClick={() => up((d) => { d.fill = !d.fill; })} aria-label="Redoble al final" aria-pressed={!!p.fill} title="Redoble">{Ic.fill}</button>
+    <button class={'ib sm' + (p.fill ? ' on' : '')} onClick={() => { const on = !p.fill; up((d) => { d.fill = on; }); if (on) engine.fillNow(); }} aria-label="Redoble al final de cada vuelta (al prenderlo suena ya)" aria-pressed={!!p.fill} title="Redoble: prendido suena al final de cada vuelta, y al prenderlo entra en el momento">{Ic.fill}</button>
+    <button class="ib sm" onClick={() => engine.fillNow()} aria-label="Redoble ahora (una vez)" title="Redoble ahora, una sola vez">!</button>
     <button class="ib sm" onClick={() => { up((d) => addBuild(d)); }} aria-label="Armar build: riser, impacto y redoble" title="Build: riser + impacto + redoble">{Ic.fx}</button>
     <button class={'ib sm' + (cp ? ' on' : '')} onClick={() => setCp(!cp)} aria-label="Copiar escenas" aria-pressed={cp} title="Copiar escenas">{Ic.copy ?? 'Cop'}</button>
     {cp && <div class="sbcopy">
@@ -458,7 +459,7 @@ function App() {
     if (kind === 'scene') goScene(arg);
     else if (kind === 'mute') up((d) => { const x = d.tracks.find((y) => y.id === arg); if (x) x.mute = !x.mute; });
     else if (kind === 'play') toggle();
-    else if (kind === 'fill') up((d) => { d.fill = !d.fill; });
+    else if (kind === 'fill') engine.fillNow();
     else if (kind === 'undo') undo();
   };
   midi.onLearned = (mp) => flash('Asignado: ' + midiLabel(pRef.current, mp.target));

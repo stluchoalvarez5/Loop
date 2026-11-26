@@ -1017,7 +1017,7 @@ export function compile(p0: Project) {
   const G = new Map((p.groups ?? []).map((g) => [g.id, g]));
   const offOf = (t: Track) => t.mute || !!(t.group && G.get(t.group)?.mute), soloOf = (t: Track) => t.solo || !!(t.group && G.get(t.group)?.solo);
   const NB = sceneBars(p);
-  const fillId = p.fill ? (FILL_SOUNDS.map((snd) => p.tracks.find((t) => t.type === 'drum' && t.sound === snd && !offOf(t))).find(Boolean) ?? p.tracks.find((t) => t.type === 'drum' && t.sound !== 'kick' && !offOf(t)))?.id : undefined;
+  const fillCand = (FILL_SOUNDS.map((snd) => p.tracks.find((t) => t.type === 'drum' && t.sound === snd && !offOf(t))).find(Boolean) ?? p.tracks.find((t) => t.type === 'drum' && t.sound !== 'kick' && !offOf(t)))?.id, fillId = p.fill ? fillCand : undefined; // instrumento que hace el redoble (fillTrack lo usa el motor para dispararlo en el momento)
   const kickId = (p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick' && !offOf(t)) ?? p.tracks.find((t) => t.type === 'drum' && t.sound === 'kick'))?.id;
   const tracks = p.tracks.map((t) => {
     const ev: any[][] = Array.from({ length: 64 }, () => []);
@@ -1099,7 +1099,7 @@ export function compile(p0: Project) {
       for (let s = 0; s < 64; s++) for (const e of ev[s]) { const L = LY[LY.length === 1 ? 0 : Math.min(LY.length - 1, Math.floor(e.v * LY.length * 0.999))]; e.k = L[rr++ % L.length]; }
     }
     return {
-      clip: t.lch ?? '', cgq: t.type === 'drum' && t.sound === 'open', cg: t.type === 'drum' ? (t.cg === undefined ? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '') : t.cg) : '', tn: t.type === 'drum' || t.type === 'sample' ? t.tone || 0 : 0, at: t.type === 'drum' || t.type === 'sample' ? t.att || 0 : 0, pe: t.type === 'drum' || t.type === 'sample' ? t.pe || 0 : 0,
+      hatFill: t.type === 'drum' && (t.sound === 'hat' || t.sound === 'open'), clip: t.lch ?? '', cgq: t.type === 'drum' && t.sound === 'open', cg: t.type === 'drum' ? (t.cg === undefined ? (t.sound === 'hat' || t.sound === 'open' ? 'A' : '') : t.cg) : '', tn: t.type === 'drum' || t.type === 'sample' ? t.tone || 0 : 0, at: t.type === 'drum' || t.type === 'sample' ? t.att || 0 : 0, pe: t.type === 'drum' || t.type === 'sample' ? t.pe || 0 : 0,
       drm: t.type === 'drum',
       rvx: t.rvx ? { ...REV_DEF, ret: 1, ...t.rvx } : undefined, dlx: t.dlx ? { ...DLY_DEF, ret: 1, ...t.dlx } : undefined,
       id: t.id, kind, sample, synth, fxp, atmp: atmP, atmr: atmR, dsp: dsynP, ev, pitch: t.pitch, decay: t.decay, gain: anyGain(t.vol), pan: t.pan, mute: offOf(t), solo: soloOf(t),
@@ -1124,5 +1124,5 @@ export function compile(p0: Project) {
     }
   });
   const swingA = MA?.groove ? S64.map((s) => clamp(p.swing + mAt('groove', s) * 0.36, 0, 0.45)) : undefined;
-  return { scene: p.scene ?? 'A', bars: NB, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8), rv: { ...REV_DEF, ...p.fx.rv, decay: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), damp: p.fx.revDamp, ret: p.fx.revRet }, dl: { ...DLY_DEF, ...p.fx.dl, fb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.92), ret: p.fx.dlyRet } }, master: p.master, drumBus: p.drumBus?.on ? { ...DBUS_DEF, ...p.drumBus } : undefined, tracks: withLayers };
+  return { scene: p.scene ?? 'A', bars: NB, fillTrack: fillCand, fillOn: !!p.fill, bpm: p.bpm, swing: clamp(p.swing + gr * 0.36, 0, 0.45), swingA, mod: Object.keys(mod).length ? mod : undefined, fx: { ...p.fx, revSize: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), dlyFb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.8), rv: { ...REV_DEF, ...p.fx.rv, decay: clamp(p.fx.revSize + sp * 0.16, 0.3, 0.97), damp: p.fx.revDamp, ret: p.fx.revRet }, dl: { ...DLY_DEF, ...p.fx.dl, fb: clamp(p.fx.dlyFb + sp * 0.12, 0, 0.92), ret: p.fx.dlyRet } }, master: p.master, drumBus: p.drumBus?.on ? { ...DBUS_DEF, ...p.drumBus } : undefined, tracks: withLayers };
 }
