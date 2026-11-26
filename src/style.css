@@ -728,3 +728,11 @@ img,svg{-webkit-user-drag:none}
 .txt.desc{resize:vertical;min-height:54px;line-height:1.4}
 
 .tb.newp{font-size:18px;font-weight:600;line-height:1;padding:0 10px}
+
+/* escenario: gestos táctiles y controles de color */
+.stage{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+.stage:active{cursor:grabbing}
+.stage-ctl{position:absolute;right:8px;bottom:36px;display:flex;gap:6px;align-items:center;z-index:2}
+.stage-ctl .sc{font:600 11px 'JetBrains Mono',monospace;color:var(--txt);background:rgba(20,20,20,.78);border:1px solid var(--line);border-radius:3px;padding:6px 9px;min-height:30px;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.stage-ctl .sc.on{background:var(--hot);border-color:var(--hot);color:#111}
+.stage-ctl .sw{width:12px;height:12px;border-radius:50%;display:inline-block}
